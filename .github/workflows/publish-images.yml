@@ -1,4 +1,4 @@
-name: Publish Private Images
+name: Publish Images
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: publish-private-images-${{ github.ref }}
+  group: publish-images-${{ github.ref }}
   cancel-in-progress: false
 
 env:

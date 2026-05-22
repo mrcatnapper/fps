@@ -66,11 +66,11 @@ Date: 2026-05-17
    cache; durable replay state remains a production-hardening option after beta
    protocol review.
 
-10. **Remaining beta gates are mostly process gates.** The private GitHub remote
-    is configured and the operator reported that initial CI passed. The main
-    blockers are external protocol review, branch protection/release workflow,
-    repeated release-candidate soak and operator onboarding feedback, not
-    another local protocol rewrite.
+10. **Remaining beta gates are mostly process gates.** The public GitHub remote,
+    CI matrix and `main` branch protection are configured. The main blockers are
+    external protocol review, release/signing workflow, repeated
+    release-candidate soak and operator onboarding feedback, not another local
+    protocol rewrite.
 
 11. **Manual real-origin carrier UX is now documented, but not automated.** A
     historical real-origin flow showed that ordinary WebSocket clients can hold
@@ -119,9 +119,9 @@ Date: 2026-05-17
   privileged scheduled runner when the environment is stable enough.
 - Decide after protocol review whether durable replay cache persistence is
   necessary for production server restarts.
-- Enable private branch protection before inviting more contributors.
-- Use the manual private GHCR workflow with `publish=false` for release
-  candidate image dry runs and `publish=true` for private publication.
+- Keep `main` protected before inviting more contributors.
+- Use the manual GHCR workflow with `publish=false` for release candidate image
+  dry runs and `publish=true` for image publication.
 - Keep `doctor` and deployment bundle tooling deferred until another manual UX
   pass confirms which checks and file layout operators actually need.
 - Treat router/LAN-gateway mode as a documented experimental pattern until it

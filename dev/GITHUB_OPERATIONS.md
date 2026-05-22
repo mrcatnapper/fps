@@ -1,19 +1,19 @@
-# Private GitHub Operations
+# GitHub Operations
 
-This note covers the private GitHub repository phase after the first successful
-remote CI run. It does not publish public releases, public images or signed
-artifacts.
+This note covers the current public GitHub repository operations. It does not
+replace the public release checklist in `docs/release.md`.
 
 Current baseline:
 
-- private remote: `git@github.com:mrcatnapper/fps.git`;
-- local baseline after squash: `b47de84 Init`;
-- initial remote CI: reported green by the operator;
-- publishing: intentionally disabled until the release policy is settled.
+- public remote: `git@github.com:mrcatnapper/fps.git`;
+- default branch: `main`;
+- working branch: `develop`;
+- GitHub Pages source: `main:/docs`;
+- image publishing: manual `Publish Images` workflow only.
 
-## Routine Private Checks
+## Routine Checks
 
-Before opening or merging a private pull request:
+Before opening or merging a pull request:
 
 ```sh
 git status --short
@@ -59,7 +59,7 @@ command should normally print nothing.
 
 ## Current Branch Protection
 
-Current private `main` branch protection:
+Current `main` branch protection:
 
 - branch is protected;
 - required status checks are strict, so branches must be up to date before
@@ -70,7 +70,8 @@ Current private `main` branch protection:
   - `docker-smoke / ubuntu-gcc`;
   - `docker-smoke / ubuntu-clang`;
   - `docker-smoke / alpine-gcc`;
-- pull request review protection is enabled with one approving review;
+- pull request review protection is enabled with zero required approvals while
+  there are no write-access collaborators;
 - admin enforcement is disabled, so repository admins keep an emergency bypass;
 - force-pushes and branch deletion are disabled;
 - linear history and conversation resolution are required.
@@ -78,10 +79,10 @@ Current private `main` branch protection:
 Repository merge policy:
 
 - squash merge: enabled;
-- rebase merge: enabled;
+- rebase merge: disabled;
 - merge commits: disabled;
 - update branch button: enabled;
-- delete branch on merge: disabled, because `develop` is a long-lived branch.
+- delete branch on merge: enabled for short-lived PR branches.
 
 Keep `Quality` manual/scheduled rather than required for every PR until runtime
 is stable enough to absorb its cost.
@@ -90,10 +91,8 @@ Security settings currently enabled:
 
 - Dependabot vulnerability alerts;
 - Dependabot automated security fixes.
-
-Secret scanning and secret scanning push protection are not available for this
-private repository under the current GitHub plan/settings. Continue using the
-manual artifact and secret scan commands below before release candidates.
+- secret scanning;
+- secret scanning push protection.
 
 ## CI Budget And Push Discipline
 
@@ -127,17 +126,16 @@ cleanup or replacing noisy intermediate commits. Do not force-push `main`, and
 do not rewrite commits that another contributor or agent may have based work on
 without coordination.
 
-## Private Image Publication
+## Image Publication
 
-The repository includes one manual `Publish Private Images` workflow. It
-performs the Docker runtime smoke first. With `publish=false`, it is a
-release-candidate dry run and does not log in to GHCR or publish images. With
-`publish=true`, it pushes Ubuntu and Alpine runtime images to GitHub Container
-Registry.
+The repository includes one manual `Publish Images` workflow. It performs the
+Docker runtime smoke first. With `publish=false`, it is a release-candidate dry
+run and does not log in to GHCR or publish images. With `publish=true`, it
+pushes Ubuntu and Alpine runtime images to GitHub Container Registry.
 
-Start private-only:
+Current image policy:
 
-- image registry: GitHub Container Registry under the private repository owner;
+- image registry: GitHub Container Registry under the repository owner;
 - tags: one Ubuntu runtime tag and one explicit Alpine runtime tag, for example
   `ghcr.io/<owner>/fps:v0.1.0-beta.1`,
   `ghcr.io/<owner>/fps:v0.1.0-beta.1-alpine`, or when no version is supplied,
@@ -145,13 +143,13 @@ Start private-only:
   `ghcr.io/<owner>/fps:<short-sha>-alpine`;
 - images: Ubuntu runtime and Alpine runtime in the same package;
 - publishing trigger: manual only;
-- no `latest`, no public releases, no public tags and no signed artifacts until
-  release policy is approved.
+- no `latest`, public GitHub Release or signed artifacts until release policy is
+  approved.
 
-The private beta workflow explicitly sets `provenance: false` and `sbom: false`
-on `docker/build-push-action`. This avoids extra untagged OCI package versions
-in GHCR during private experiments. Re-enable provenance/SBOM only as part of a
-separate signing/attestation policy review.
+The workflow explicitly sets `provenance: false` and `sbom: false` on
+`docker/build-push-action`. This avoids extra untagged OCI package versions in
+GHCR. Re-enable provenance/SBOM only as part of a separate
+signing/attestation policy review.
 
 Required workflow permissions when publication is enabled:
 
@@ -197,7 +195,7 @@ permissions. If a future workspace lacks GitHub access, provide one of:
 - installed and authenticated `gh` CLI with repository access; or
 - `GH_TOKEN`/`GITHUB_TOKEN` in the environment.
 
-Minimum useful scopes for a fine-grained private-repo token:
+Minimum useful scopes for a fine-grained repository token:
 
 - repository contents: read;
 - actions/workflows: read, and write only if the agent should dispatch

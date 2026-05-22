@@ -4,6 +4,32 @@
 
 ## 2026-05-22
 
+### Rename publish workflow for public repository
+
+Goal:
+
+- Remove private-repository wording from the active GHCR image publication
+  workflow and documentation before publishing the first public package.
+
+Done:
+
+- Renamed `.github/workflows/publish-private-images.yml` to
+  `.github/workflows/publish-images.yml`.
+- Renamed the workflow from `Publish Private Images` to `Publish Images`.
+- Updated release/testing/beta-status docs and GitHub operations notes for the
+  public repository state.
+- Tightened `main` branch protection to require pull requests with zero
+  approvals while there are no write-access collaborators.
+
+Planned verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- PR CI before merge
+- manual `Publish Images` dispatch with `publish=true`
+
 ### Prepare article/docs PR
 
 Goal:

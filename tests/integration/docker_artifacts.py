@@ -141,7 +141,7 @@ def main():
             "Release Checklist",
             "python3 tests/integration/docker_artifacts.py --repo /workspaces",
             "Docker Images",
-            "Publish Private Images",
+            "Publish Images",
             "ghcr.io/OWNER/fps:v0.1.0-beta.1",
             "two-host soak",
             "v0.1.0-beta.1",
@@ -212,18 +212,23 @@ def main():
     )
     reject_secrets(ci_local, "CI local runner")
 
-    publish_workflow_path = repo / ".github/workflows/publish-private-images.yml"
+    publish_workflow_path = repo / ".github/workflows/publish-images.yml"
+    old_publish_workflow_path = repo / ".github/workflows/publish-private-images.yml"
     release_candidate_workflow_path = repo / ".github/workflows/release-candidate.yml"
     require(
+        not old_publish_workflow_path.exists(),
+        "old private image workflow path must not reappear",
+    )
+    require(
         not release_candidate_workflow_path.exists(),
-        "release-candidate workflow is intentionally folded into Publish Private Images publish=false",
+        "release-candidate workflow is intentionally folded into Publish Images publish=false",
     )
     if publish_workflow_path.exists():
         publish_workflow = read(publish_workflow_path)
         require_all(
             publish_workflow,
             [
-                "Publish Private Images",
+                "Publish Images",
                 "workflow_dispatch",
                 "packages: write",
                 "publish:",
@@ -240,9 +245,9 @@ def main():
                 "sbom: false",
                 "cache-to: type=gha,mode=max",
             ],
-            "private image publish workflow",
+            "image publish workflow",
         )
-        reject_secrets(publish_workflow, "private image publish workflow")
+        reject_secrets(publish_workflow, "image publish workflow")
 
     quality_checks = read(repo / "tools/run_quality_checks.sh")
     require_all(

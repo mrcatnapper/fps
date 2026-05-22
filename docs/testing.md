@@ -102,9 +102,9 @@ The repository ships three GitHub Actions workflows:
   `tools/run_quality_checks.sh --all` inside the same `Dockerfile` `ci` stage,
   including clang-20, ASan/UBSan, Valgrind, llvm-cov and bounded libFuzzer
   smoke.
-- `Publish Private Images`: runs on manual dispatch only. It first runs the
-  same Docker runtime smoke, then can publish Ubuntu and Alpine images to GHCR
-  when `publish=true`. With the default `publish=false`, it is a build-only
+- `Publish Images`: runs on manual dispatch only. It first runs the same Docker
+  runtime smoke, then can publish Ubuntu and Alpine images to GHCR when
+  `publish=true`. With the default `publish=false`, it is a build-only
   deployment dry run.
 
 The `ci` stage keeps package installation in the repository Dockerfile instead
@@ -130,12 +130,12 @@ The CI matrix intentionally excludes root/TUN, pcap and long Docker soak tests.
 Those remain opt-in operator checks until they are safe and stable enough for a
 dedicated privileged runner.
 
-Private repository operations are intentionally conservative: branch protection
-keeps `main` behind pull requests and required CI checks, image publication
-stays manual, and release artifacts should be scanned for accidental secrets
-before they are shared.
+Repository operations are intentionally conservative: branch protection keeps
+`main` behind pull requests and required CI checks, image publication stays
+manual, and release artifacts should be scanned for accidental secrets before
+they are shared.
 
-The private publish workflow writes to GitHub Container Registry with only:
+The publish workflow writes to GitHub Container Registry with only:
 
 ```yaml
 permissions:
@@ -156,10 +156,10 @@ The unsuffixed tag points to the Ubuntu image. Alpine is always explicit. When
 same two-tag shape. Do not publish `latest` until public release policy is
 defined.
 
-Private beta image publication disables Buildx provenance and SBOM attestations
+Image publication disables Buildx provenance and SBOM attestations
 (`provenance: false`, `sbom: false`) to avoid extra untagged OCI package
 versions in GHCR. Supply-chain attestations and image signing are future release
-policy items, not implicit side effects of the private publish workflow.
+policy items, not implicit side effects of the publish workflow.
 
 Alpine Docker smoke can be repeated locally with:
 
