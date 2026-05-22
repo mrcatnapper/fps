@@ -1,0 +1,37 @@
+name: Quality
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: scheduled quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build quality image
+        run: |
+          docker buildx build --load \
+            --target ci \
+            --build-arg FPS_COMPILER=clang \
+            -t fps:quality .
+
+      - name: Run quality suite
+        env:
+          FPS_FUZZ_RUNS: "64"
+          FPS_JOBS: "2"
+        run: |
+          docker run --rm \
+            -e FPS_FUZZ_RUNS="${FPS_FUZZ_RUNS}" \
+            -e FPS_JOBS="${FPS_JOBS}" \
+            fps:quality \
+            tools/run_quality_checks.sh --all

@@ -1,0 +1,129 @@
+name: Publish Private Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag suffix. Defaults to the short commit SHA."
+        required: false
+        type: string
+      package_name:
+        description: "GHCR package path without registry. Defaults to OWNER/fps."
+        required: false
+        type: string
+      publish:
+        description: "Push images to GHCR. Leave false for a build-only dry run."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-private-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  image:
+    name: publish-image / ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: ubuntu
+            dockerfile: Dockerfile
+            compiler: gcc
+          - variant: alpine
+            dockerfile: Dockerfile.alpine
+            compiler: gcc
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve image names
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package="${{ inputs.package_name }}"
+          if [[ -z "$package" ]]; then
+            package="${GITHUB_REPOSITORY_OWNER}/fps"
+          fi
+          package="${package,,}"
+
+          version_tag="${{ inputs.image_tag }}"
+          if [[ -z "$version_tag" ]]; then
+            version_tag="${GITHUB_SHA::12}"
+          fi
+
+          image="${REGISTRY}/${package}"
+          short_sha="${GITHUB_SHA::12}"
+
+          {
+            printf 'package=%s\n' "$package"
+            printf 'image=%s\n' "$image"
+            printf 'version_tag=%s\n' "$version_tag"
+            printf 'short_sha=%s\n' "$short_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Runtime smoke before publish
+        env:
+          FPS_DOCKER_COMPILER: ${{ matrix.compiler }}
+          FPS_DOCKERFILE: ${{ matrix.dockerfile }}
+          FPS_DOCKER_IMAGE: fps:publish-${{ matrix.variant }}-${{ steps.image.outputs.short_sha }}
+        run: tools/run_quality_checks.sh --docker
+
+      - name: Login to GHCR
+        if: ${{ inputs.publish }}
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.image }}
+          tags: |
+            type=raw,value=${{ steps.image.outputs.version_tag }},enable=${{ matrix.variant == 'ubuntu' }}
+            type=raw,value=${{ steps.image.outputs.version_tag }}-alpine,enable=${{ matrix.variant == 'alpine' }}
+
+      - name: Build image and optionally push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            FPS_COMPILER=${{ matrix.compiler }}
+          platforms: linux/amd64
+          push: ${{ inputs.publish }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=fps-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=fps-${{ matrix.variant }}
+
+      - name: Summarize image tags
+        shell: bash
+        run: |
+          {
+            printf '### FPS %s image\n\n' "${{ matrix.variant }}"
+            printf 'Publish enabled: `%s`\n\n' "${{ inputs.publish }}"
+            printf 'Image: `%s`\n\n' "${{ steps.image.outputs.image }}"
+            printf 'Tags:\n\n```text\n%s\n```\n' "${{ steps.meta.outputs.tags }}"
+          } >> "$GITHUB_STEP_SUMMARY"

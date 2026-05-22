@@ -1,0 +1,136 @@
+# FPS Productization Roadmap
+
+The near-term goal is to turn the verified v2 beta candidate into a deployable
+Linux-first client/server VPN framework. Docker is the primary runtime path.
+Native distro packaging is intentionally deferred unless it later provides a
+clear operational advantage over containers.
+
+Advanced full-flow shaping remains future work. The current priority is a
+reliable tunnel, clear operator workflow and TLS-record-shaped wire behavior
+without claiming resistance to advanced timing/size traffic analysis.
+
+## Phase 1: Linux Runtime Basics
+
+- [x] Narrow production identity UX to client UUID, server inline base64 keypair
+  and `allowed_client_uuids`.
+- [x] Remove pre-production key-file/client-key/public-key allowlist modes from
+  user-facing config.
+- [x] Remove pre-production config/log migration adapters before public release
+  promises exist.
+- [x] Split platform-neutral core from Linux runtime seams so Android can later
+  reuse crypto/session/TUN framing without Linux `ip` or TUN wrapper code.
+- [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
+  summaries and example client/server configs.
+- [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
+  basic address assignment without DHCP.
+- [x] Document Linux route/DNS workflow for TUN addresses, policy routing,
+  split/full tunnel modes and cleanup.
+- [x] Document the beta carrier-hostname workflow: explicit `/etc/hosts` mapping
+  to the local client listener instead of a magical DNS proxy.
+
+## Phase 2: Docker Runtime
+
+- [x] Add Docker runtime baseline: one multi-stage image, entrypoint, compose
+  examples for server and host-network client, static artifact tests.
+- [x] Add smaller Alpine production Dockerfile with the same FPS runtime tools.
+- [x] Add reusable WSS debug carrier generator in the common Docker image and
+  integration tests.
+- [x] Keep proxy daemons out of the base FPS image and document overlay proxy
+  patterns; official Docker example uses a derivative Dante SOCKS5 image.
+- [x] Harden L3 lease allocator: source-IP enforcement, destination lease
+  routing, lease revoke/prune and operator listing.
+
+## Phase 3: Documentation And Beta UX
+
+- [x] Move active user/operator docs into `docs/`.
+- [x] Move developer/agent working artifacts into `dev/`.
+- [x] Remove stale research and duplicate crypto-review artifacts.
+- [x] Translate active user docs and root README to English.
+- [x] Implement server-generated client JSON profiles.
+- [x] Implement an importable `fps://` client URI format.
+- [x] Add safe profile `--output` and URI write-to-file import helpers.
+- [x] Add a public beta quickstart that ties together Docker server/client,
+  self-hosted carrier, `/etc/hosts`, status checks and proxy overlay.
+- [x] Document real-origin carrier operation without FPS-specific carrier
+  tooling, including persistent WebSocket carriers and SOCKS readiness signals.
+- [x] Document router/LAN-gateway carrier DNS override as an experimental
+  deployment pattern.
+
+## Phase 4: Reliability And Operations
+
+- [x] Add structured health/status surface: carriers, bytes, TUN drops,
+  shaper/backpressure counters and session lifecycle.
+- Add richer health/status surface: reconnect history and queue saturation
+  history. Replay rejects and envelope failures are now exposed as status
+  counters.
+- Add operator `doctor` tooling and deployment bundle generation after more
+  user-flow feedback; keep the current increment documentation-only.
+- Add graceful reload for allowlist/config parts where it is safe without
+  recreating active sessions.
+- Implement reconnect/backoff and resilient client daemon mode for carrier,
+  origin or server loss.
+- [x] Enforce duplicate-UUID handling with the single supported policy:
+  `replace_old`, where a new active device/profile supersedes older carriers for
+  the same UUID.
+- [x] Add a short Docker/TUN resilience soak smoke for carrier loss/recovery,
+  spoof-drop liveness, mixed UDP/TCP traffic and status-counter assertions.
+- [x] Keep Docker strict `write_queue_full` as diagnostic until saturation is
+  deterministic; cover lease-aware queue overflow in unit tests.
+- [x] Run a two-host 30-minute Docker/TUN soak on a weak remote Linux host for
+  the current beta candidate.
+- Repeat two-host soak for release candidates until it is promoted to a
+  privileged scheduled runner.
+
+## Phase 5: Security Hardening
+
+- [x] Prepare an external protocol review brief for Zero-RTT precheck,
+  envelope mode, replay policy, lease enforcement and known risks.
+- Run independent crypto/protocol review of Zero-RTT precheck and envelope mode.
+- [x] Document UUID/client revocation and server-key rotation workflows beyond
+  the lease tools.
+- [x] Exercise UUID/client revocation and server-key rotation on a Docker
+  candidate deployment.
+- Repeat the rotation drill for release candidates or after changing
+  profile/lease tooling.
+- Keep UUIDs as per-device/per-profile bearer secrets; do not add group/shared
+  UUID semantics for L3 VPN mode.
+- [x] Clarify replay-cache persistence policy: daemon-wide in-memory baseline;
+  durable cache for production server restarts remains optional future work.
+- [x] Add first adversarial local tests for no-upgrade passthrough,
+  unknown-client, captured-prefix replay and post-auth envelope tamper.
+- Expand negative integration tests into longer tamper/drop/replay/unknown-client
+  storms and CPU-budget behavior without logging secrets.
+
+## Phase 6: Platform And CI
+
+- [x] Add GitHub Actions baseline for `ubuntu-24.04 x gcc/clang`, Docker
+  build/smoke for both compilers and scheduled/manual quality checks.
+- [x] Configure the private GitHub remote and pass the initial CI matrix.
+- [x] Add private GitHub operations notes for artifact/secret scans, branch
+  protection, private image publication planning and protocol review packet.
+- [x] Select MIT license and add a beta release checklist.
+- [x] Add a manual private GHCR image workflow with `publish=false` dry runs and
+  `publish=true` publication after tag policy and permissions review.
+- Add release signing/publishing, release upgrade docs and an opt-in privileged
+  root/TUN CI job before public beta.
+- Check Linux distro compatibility: Ubuntu LTS first, then Debian stable.
+- Document minimal kernel capabilities and deployment topology.
+- Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
+  target before calling it supported.
+
+## Phase 7: Fuzzing And Soak
+
+- [x] Add first bounded libFuzzer smoke for FPS-owned parsers/codecs.
+- Expand fuzz corpora and add nightly long-running fuzz/minimization jobs.
+- [x] Add Docker multi-client soak smoke with reconnect, backpressure and
+  sustained traffic.
+- [x] Validate one distributed two-host Docker/TUN soak over a real published
+  `:443` carrier port.
+- Promote Docker/TUN soak to scheduled/manual privileged CI after repeated
+  stable release-candidate runs.
+
+## Deferred: Advanced Shaping
+
+- Full-flow visible TLS record size/timing shaping.
+- Profile capture tooling and classifier regression lab.
+- Statistical assertions for long-running traffic distributions.

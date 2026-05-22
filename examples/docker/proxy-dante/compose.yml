@@ -1,0 +1,19 @@
+services:
+  fps-dante-proxy:
+    image: fps-dante-proxy:local
+    build:
+      context: ../../..
+      dockerfile: examples/docker/proxy-dante/Dockerfile
+      args:
+        FPS_BASE_IMAGE: ${FPS_BASE_IMAGE:-fps:local}
+    depends_on:
+      - fps-server
+    network_mode: "service:fps-server"
+    restart: unless-stopped
+    environment:
+      FPS_SOCKS_LISTEN_ADDRESS: ${FPS_SOCKS_LISTEN_ADDRESS:-10.66.0.1}
+      FPS_SOCKS_PORT: ${FPS_SOCKS_PORT:-1080}
+      FPS_SOCKS_ALLOWED_CIDR: ${FPS_SOCKS_ALLOWED_CIDR:-10.66.0.0/24}
+      FPS_SOCKS_EXTERNAL_INTERFACE: ${FPS_SOCKS_EXTERNAL_INTERFACE:-eth0}
+    security_opt:
+      - no-new-privileges:true

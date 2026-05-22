@@ -1,0 +1,33 @@
+{
+  "network": {
+    "listen": "127.0.0.1:7443",
+    "server": "203.0.113.10:8443",
+    "read_buffer_size": 65536
+  },
+  "security": {
+    "zero_rtt": {
+      "enabled": true,
+      "profile_id": "example-origin-v2",
+      "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
+      "server_public_key_base64": "PASTE_server_public_key_base64_HERE"
+    }
+  },
+  "codec": {
+    "max_frame_payload": 1280,
+    "max_frame_padding": 64,
+    "allow_fragmentation": true
+  },
+  "tun": {
+    "enabled": true,
+    "name": "fpsc0",
+    "mtu": 1280,
+    "max_write_queue_packets": 64,
+    "auto_configure": true
+  },
+  "logging": {
+    "level": "info"
+  },
+  "ops": {
+    "status_socket": "/run/fps/client.status"
+  }
+}

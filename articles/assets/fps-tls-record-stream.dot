@@ -1,0 +1,34 @@
+digraph fps_tls_record_stream {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    margin=0.15,
+    nodesep=0.28,
+    ranksep=0.4,
+    fontname="Inter,Arial,sans-serif"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#2f3a4a",
+    penwidth=1.2,
+    fillcolor="#f6f8fb",
+    fontname="Inter,Arial,sans-serif",
+    fontsize=11,
+    margin="0.11,0.07"
+  ];
+  edge [
+    color="#667085",
+    arrowsize=0.65,
+    penwidth=1.1
+  ];
+
+  r1 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>TLS<SUB>n-2</SUB></TD></TR></TABLE>>];
+  r2 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>TLS<SUB>n-1</SUB></TD></TR></TABLE>>];
+  z [label="TLS-like Zero-RTT\nupgrade candidate", fillcolor="#fff7e6", color="#b54708"];
+  e1 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n</SUB>   + TUN frames</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
+  e2 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n+1</SUB>   + padding</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
+  e3 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n+2</SUB>   + control</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
+
+  r1 -> r2 -> z -> e1 -> e2 -> e3;
+}

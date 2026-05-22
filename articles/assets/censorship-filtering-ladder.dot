@@ -1,0 +1,40 @@
+digraph censorship_filtering_ladder {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    margin=0.15,
+    nodesep=0.42,
+    ranksep=0.48,
+    fontname="Inter,Arial,sans-serif"
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#2f3a4a",
+    penwidth=1.2,
+    fillcolor="#f6f8fb",
+    fontname="Inter,Arial,sans-serif",
+    fontsize=12,
+    margin="0.12,0.08"
+  ];
+  edge [
+    color="#667085",
+    arrowsize=0.7,
+    penwidth=1.2,
+    fontname="Inter,Arial,sans-serif",
+    fontsize=10
+  ];
+
+  dns [label="DNS filtering\npoison / hijack / refuse"];
+  ip [label="IP / CIDR filtering\nblacklist or whitelist"];
+  proto [label="Protocol and port policy\nTCP/443 allowed, UDP cut"];
+  sni [label="SNI / ClientHello checks\nhostnames before ECH"];
+  sig [label="Handshake fingerprints\nTLS, HTTP/2, proxy quirks"];
+  probe [label="Active probing\nserver behavior under tests"];
+  flow [label="Continuous flow analysis\nrecords, timing, sizes, resets"];
+
+  { rank=same; dns; proto; sig; flow; }
+  { rank=same; ip; sni; probe; }
+
+  dns -> ip -> proto -> sni -> sig -> probe -> flow;
+}

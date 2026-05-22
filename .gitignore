@@ -1,0 +1,38 @@
+# Build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+CTestTestfile.cmake
+Testing/
+
+# Local binaries and generated files
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+captures/
+*.pcap
+*.pcapng
+*.cap
+*.profraw
+*.profdata
+*.status
+*.sock
+leases.json
+leases.json.tmp
+crash-*
+leak-*
+oom-*
+timeout-*
+
+# Editor/system noise
+.cache/
+.vscode/
+.idea/
+__pycache__/
+*.swp
+*~
+.clang-format

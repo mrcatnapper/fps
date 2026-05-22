@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+
+import argparse
+import socket
+import ssl
+import sys
+import tempfile
+import threading
+from pathlib import Path
+
+from fps_https_harness import (
+    free_port,
+    generate_cert,
+    read_http_response,
+    response_body,
+    start_https_origin,
+    start_process,
+    stop_and_read,
+    stop_origin,
+    wait_for_tcp,
+    prepare_zero_rtt_fixture_dir,
+    write_zero_rtt_relay_config,
+)
+
+
+def https_worker(port, paths, barrier, results, errors, index):
+    try:
+        context = ssl._create_unverified_context()
+        bodies = []
+        with socket.create_connection(("127.0.0.1", port), timeout=5.0) as raw:
+            raw.settimeout(5.0)
+            with context.wrap_socket(raw, server_hostname="localhost") as sock:
+                sock.settimeout(5.0)
+                fileobj = sock.makefile("rb")
+                barrier.wait(timeout=5.0)
+                for path in paths:
+                    request = (
+                        f"GET {path} HTTP/1.1\r\n"
+                        "Host: localhost\r\n"
+                        "Connection: keep-alive\r\n"
+                        "\r\n"
+                    ).encode("ascii")
+                    sock.sendall(request)
+                    bodies.append(read_http_response(fileobj))
+        results[index] = bodies
+    except BaseException as error:
+        errors[index] = error
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fps-client", required=True)
+    parser.add_argument("--fps-server", required=True)
+    args = parser.parse_args()
+
+    server_proc = None
+    client_proc = None
+    server_log = ""
+    client_log = ""
+    with tempfile.TemporaryDirectory() as tmpdir_str:
+        tmpdir = Path(tmpdir_str)
+        cert, key = generate_cert(tmpdir)
+        prepare_zero_rtt_fixture_dir(tmpdir)
+
+        origin_port = free_port()
+        server_port = free_port()
+        client_port = free_port()
+        origin = start_https_origin(cert, key, origin_port)
+
+        server_config = tmpdir / "server-v2.json"
+        client_config = tmpdir / "client-v2.json"
+        write_zero_rtt_relay_config(
+            server_config, server_port, "origin", origin_port, "server"
+        )
+        write_zero_rtt_relay_config(
+            client_config, client_port, "server", server_port, "client"
+        )
+
+        try:
+            server_proc = start_process(
+                [args.fps_server, "--config", str(server_config), "--log-level", "debug"]
+            )
+            wait_for_tcp("127.0.0.1", server_port, server_proc)
+
+            client_proc = start_process(
+                [args.fps_client, "--config", str(client_config), "--log-level", "debug"]
+            )
+            wait_for_tcp("127.0.0.1", client_port, client_proc)
+
+            paths = [
+                ["/v2/session/a/0", "/v2/session/a/1", "/v2/session/a/2"],
+                ["/v2/session/b/0", "/v2/session/b/1", "/v2/session/b/2"],
+            ]
+            barrier = threading.Barrier(2)
+            results = [None, None]
+            errors = [None, None]
+            threads = [
+                threading.Thread(
+                    target=https_worker,
+                    args=(client_port, paths[index], barrier, results, errors, index),
+                )
+                for index in range(2)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10.0)
+            for thread in threads:
+                if thread.is_alive():
+                    raise RuntimeError("HTTPS Zero-RTT multi-session worker timed out")
+            for error in errors:
+                if error is not None:
+                    raise error
+
+            for index, session_paths in enumerate(paths):
+                expected = [response_body(path) for path in session_paths]
+                if results[index] != expected:
+                    raise RuntimeError(
+                        f"session {index} received unexpected bodies: {results[index]!r}"
+                    )
+
+            expected_paths = sorted(path for session_paths in paths for path in session_paths)
+            if sorted(origin.request_paths) != expected_paths:
+                raise RuntimeError(f"unexpected origin paths: {origin.request_paths!r}")
+        finally:
+            client_log = stop_and_read(client_proc)
+            server_log = stop_and_read(server_proc)
+            stop_origin(origin)
+
+    logs = client_log + "\n" + server_log
+    if logs.count("event=zero_rtt_authenticated") < 4:
+        raise RuntimeError(f"expected both relays to authenticate two sessions:\n{logs}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

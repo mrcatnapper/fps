@@ -1,0 +1,85 @@
+services:
+  fps-carrier-origin:
+    image: fps:local
+    build:
+      context: ../../..
+      dockerfile: ${FPS_DOCKERFILE:-Dockerfile}
+    command:
+      - fps_carrier
+      - origin
+      - --listen
+      - 0.0.0.0:9443
+      - --cert
+      - /tmp/fps-carrier/cert.pem
+      - --key
+      - /tmp/fps-carrier/key.pem
+      - --generate-self-signed
+      - --path
+      - /fps-carrier
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  fps-server:
+    image: fps:local
+    build:
+      context: ../../..
+      dockerfile: ${FPS_DOCKERFILE:-Dockerfile}
+    depends_on:
+      - fps-carrier-origin
+    restart: unless-stopped
+    environment:
+      FPS_ROLE: server
+      FPS_CONFIG: /etc/fps/server.json
+      FPS_LOG_LEVEL: info
+    volumes:
+      - ./config/server.json:/etc/fps/server.json:ro
+      - fps-server-run:/run/fps
+    security_opt:
+      - no-new-privileges:true
+
+  fps-client:
+    image: fps:local
+    build:
+      context: ../../..
+      dockerfile: ${FPS_DOCKERFILE:-Dockerfile}
+    depends_on:
+      - fps-server
+    restart: unless-stopped
+    environment:
+      FPS_ROLE: client
+      FPS_CONFIG: /etc/fps/client.json
+      FPS_LOG_LEVEL: info
+    volumes:
+      - ./config/client.json:/etc/fps/client.json:ro
+      - fps-client-run:/run/fps
+    security_opt:
+      - no-new-privileges:true
+
+  fps-carrier-client:
+    image: fps:local
+    build:
+      context: ../../..
+      dockerfile: ${FPS_DOCKERFILE:-Dockerfile}
+    command:
+      - fps_carrier
+      - client
+      - --connect
+      - fps-client:7443
+      - --path
+      - /fps-carrier
+      - --client-bps
+      - "4096"
+      - --frame-rate
+      - "4"
+      - --seed
+      - "2026"
+    depends_on:
+      - fps-client
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  fps-server-run:
+  fps-client-run:

@@ -1,0 +1,83 @@
+# syntax=docker/dockerfile:1
+
+ARG ALPINE_VERSION=3.22
+
+FROM alpine:${ALPINE_VERSION} AS builder
+
+ARG FPS_COMPILER=gcc
+
+RUN apk add --no-cache \
+      boost-dev \
+      build-base \
+      ca-certificates \
+      cmake \
+      linux-headers \
+      openssl-dev
+
+WORKDIR /src
+
+COPY CMakeLists.txt ./
+COPY include ./include
+COPY src ./src
+COPY tools/fps_linux_route.sh ./tools/fps_linux_route.sh
+COPY tools/fps_carrier.py ./tools/fps_carrier.py
+
+RUN set -eux; \
+    case "$FPS_COMPILER" in \
+      gcc) cxx=g++ ;; \
+      *) echo "Dockerfile.alpine currently supports FPS_COMPILER=gcc" >&2; exit 2 ;; \
+    esac; \
+    cmake -Wno-dev -S . -B /build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DFPS_BUILD_TESTS=OFF \
+      -DCMAKE_CXX_COMPILER="$cxx" \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /build -j "$(nproc)" \
+    && cmake --install /build --prefix /opt/fps/usr/local
+
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+ENV FPS_ROLE=server
+ENV FPS_CONFIG=/etc/fps/server.json
+
+COPY requirements-runtime.txt /tmp/fps-requirements-runtime.txt
+
+RUN apk add --no-cache \
+      bash \
+      boost1.84-atomic \
+      boost1.84-chrono \
+      boost1.84-container \
+      boost1.84-filesystem \
+      boost1.84-json \
+      boost1.84-log \
+      boost1.84-log_setup \
+      boost1.84-program_options \
+      boost1.84-regex \
+      boost1.84-system \
+      boost1.84-thread \
+      ca-certificates \
+      iperf3 \
+      iproute2 \
+      libcrypto3 \
+      libgcc \
+      libssl3 \
+      libstdc++ \
+      openssl \
+      python3 \
+      tini \
+    && apk add --no-cache --virtual .fps-pip py3-pip \
+    && python3 -m pip install --break-system-packages --no-cache-dir \
+      -r /tmp/fps-requirements-runtime.txt \
+    && apk del .fps-pip \
+    && rm -f /tmp/fps-requirements-runtime.txt \
+    && mkdir -p /etc/fps /var/lib/fps /var/log/fps /run/fps
+
+COPY --from=builder /opt/fps/usr/local/ /usr/local/
+COPY docker/fps-entrypoint.sh /usr/local/bin/fps-entrypoint.sh
+
+RUN chmod 0755 /usr/local/bin/fps-entrypoint.sh
+
+EXPOSE 8443/tcp
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/fps-entrypoint.sh"]
+CMD ["run"]

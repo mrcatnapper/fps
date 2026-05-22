@@ -1,0 +1,27 @@
+{
+  "network": {
+    "listen": "0.0.0.0:8443",
+    "origin": "fps-carrier-origin:9443",
+    "read_buffer_size": 65536
+  },
+  "security": {
+    "zero_rtt": {
+      "enabled": true,
+      "profile_id": "debug-carrier-v2",
+      "server_private_key_base64": "PASTE_server_private_key_base64_HERE",
+      "server_public_key_base64": "PASTE_server_public_key_base64_HERE",
+      "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"]
+    }
+  },
+  "codec": {
+    "max_frame_payload": 1280,
+    "max_frame_padding": 64,
+    "allow_fragmentation": true
+  },
+  "logging": {
+    "level": "info"
+  },
+  "ops": {
+    "status_socket": "/run/fps/server.status"
+  }
+}

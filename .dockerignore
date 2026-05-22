@@ -1,0 +1,15 @@
+.git
+.github
+.cache
+build
+cmake-build-*
+captures
+*.pcap
+*.profraw
+*.profdata
+coverage-summary.*
+coverage-html
+__pycache__
+*.pyc
+.pytest_cache
+NETWORK_RECOVERY.md

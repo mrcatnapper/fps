@@ -1,0 +1,101 @@
+digraph fps_architecture {
+  graph [
+    rankdir=LR,
+    bgcolor="transparent",
+    margin=0.15,
+    nodesep=0.45,
+    ranksep=0.72,
+    fontname="Inter,Arial,sans-serif",
+  ];
+  node [
+    shape=box,
+    style="rounded,filled",
+    color="#2f3a4a",
+    penwidth=1.2,
+    fillcolor="#f6f8fb",
+    fontname="Inter,Arial,sans-serif",
+    fontsize=12,
+    margin="0.14,0.09"
+  ];
+  edge [
+    color="#667085",
+    arrowsize=0.75,
+    penwidth=1.25,
+    fontname="Inter,Arial,sans-serif",
+    fontsize=10
+  ];
+
+  subgraph cluster_client_side_margin {
+    style=invis
+    margin=10.0
+    subgraph cluster_client_side {
+      label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="gray"><TR><TD>client side</TD></TR></TABLE>>;
+      color="#d0d5dd";
+      style="rounded,dashed";
+      fontname="Inter,Arial,sans-serif";
+      fontsize=11;
+      browser [label="Browser / carrier app\nreal HTTPS or WSS session"];
+      client [label="fps_client\ntransparent relay + TUN"];
+      client_tun [label="client TUN\nleased IPv4"];
+      { rank=same; browser; client_tun; client; }
+    }
+  }
+
+  subgraph cluster_server_side_margin {
+    style=invis
+    margin=10.0
+    subgraph cluster_server_side {
+      label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="gray"><TR><TD>server / origin side</TD></TR></TABLE>>;
+      color="#d0d5dd";
+      style="rounded,dashed";
+      fontname="Inter,Arial,sans-serif";
+      fontsize=11;
+      server [label="fps_server\npre-reverse-proxy + TUN"];
+      server_tun [label="server TUN\nlease router"];
+      tcp_proxy [label="optional L4 / TCP proxy\nTLS passthrough / SNI router"];
+      reverse_proxy [label="real reverse proxy\nTLS terminates here"];
+      backend [label="origin backend"];
+      { rank=same; server; server_tun; }
+      { rank=same; tcp_proxy; reverse_proxy; backend; }
+    }
+  }
+
+  browser -> client [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>real TLS bytes</TD></TR></TABLE>>
+  ];
+  client -> server [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>TLS Application Data shaped FPS link</TD></TR><TR><TD>late upgrade, encrypted envelopes</TD></TR></TABLE>>,
+    color="#0b6bcb",
+    penwidth=1.7
+  ];
+  server -> tcp_proxy [
+    dir=both,
+    weight=999999,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>same carrier TCP stream</TD></TR></TABLE>>
+  ];
+  tcp_proxy -> reverse_proxy [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>still not terminated</TD></TR></TABLE>>
+  ];
+  reverse_proxy -> backend [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>HTTP / app traffic</TD></TR></TABLE>>
+  ];
+
+  client -> client_tun [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>IP packets</TD></TR></TABLE>>
+  ];
+  server -> server_tun [
+    dir=both,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>IP packets</TD></TR></TABLE>>
+  ];
+
+  #browser -> reverse_proxy [
+  #  dir=both,
+  #  style=dashed,
+  #  label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>"As if" TLS session</TD></TR></TABLE>>
+  #];
+}

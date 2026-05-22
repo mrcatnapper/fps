@@ -1,0 +1,132 @@
+# FPS Self Review
+
+Date: 2026-05-17
+
+## Findings
+
+0. **C++ boilerplate hotspots are shrinking.** Enum stringification/numeric
+   validation moved to Boost.Describe helpers, CLI tokenization moved to
+   Boost.Program_options, wire-endian helpers moved to `fps/core/wire.hpp`,
+   structured operational log tails use Describe-to-JSON, config parsing is
+   split from shaper parsing, bridge IO is split from bridge lifecycle, and test
+   CLI boilerplate is now centralized. The largest remaining hotspots are
+   command-heavy relay CLI tests and relay CLI command execution, not protocol
+   core.
+
+1. **The project is beta-candidate, not production-ready.** Core v2 protocol,
+   Docker runtime, leased TUN routing, source-IP enforcement and quality checks
+   are solid enough for controlled Linux/Docker trials. A 30-minute two-host
+   soak has now validated the current candidate over a real published `:443`
+   carrier path. Public beta still needs release work, independent protocol
+   review, rotation workflow and repeatable release-candidate soak policy.
+
+2. **Lease enforcement is a security contract.** Server-side carrier metadata
+   includes the assigned client IPv4. Inbound client TUN packets are dropped when
+   IPv4 source does not match that lease, and server-to-client packets are routed
+   by destination lease owner. Unit tests plus Docker multi-client simulation
+   guard this behavior.
+
+3. **Multi-client support is usable but still young.** Multiple UUID-backed
+   clients can authenticate, receive distinct leases and share one server. The
+   Docker multi-client smoke covers owner routing, spoof drop and liveness; the
+   two-host soak additionally covered sustained mixed traffic, server-to-client
+   lease routing, spoof drop and carrier restart/recovery for two clients.
+
+4. **Fuzzing now protects the right parser edges.** TLS record framing, covert
+   frame decode, FPS envelope decode, Zero-RTT candidate verify and TUN/control
+   parsing have libFuzzer smoke targets. This does not replace protocol review
+   or OpenSSL fuzzing.
+
+5. **Documentation needed structure more than more pages.** Active public docs
+   now live in `docs/`, developer/agent history lives in `dev/`, duplicate
+   crypto/research artifacts were removed, and the root README is only a short
+   entry point.
+
+6. **Pre-production adapters are gone.** The active parser and Docker tooling no
+   longer carry migration branches for removed config fields or old log counter
+   layouts. That matches the current product stage, but public releases will
+   need an explicit versioning policy before compatibility promises begin.
+
+7. **Close diagnostics are now visible without a debugger.** Bridge sessions
+   report non-secret close metadata, relay logs include `event=session_closed
+   reason=...`, and status JSON carries `sessions.last_closed` plus a bounded
+   `recent_closed` list. UUID generation is now raw-only through
+   `fps_client --generate-client-uuid`, which keeps scripts and docs simpler.
+
+8. **Auth and envelope failures now have operator-visible counters.** Status
+   JSON no longer keeps auth under `sessions`; it exposes `auth` and `envelope`
+   groups for candidates, authenticated sessions, precheck/unknown/decrypt/replay
+   misses and envelope encode/decode/tamper counters. A new local adversarial
+   integration test exercises no-upgrade passthrough, unknown clients, replayed
+   upgrade bytes and post-auth tampering against live daemons.
+
+9. **Replay state is daemon-wide but not durable.** Loaded relay config now
+   shares one in-memory replay cache across session engines, so a replay against
+   a different TCP connection is rejected. Restarting the daemon clears this
+   cache; durable replay state remains a production-hardening option after beta
+   protocol review.
+
+10. **Remaining beta gates are mostly process gates.** The private GitHub remote
+    is configured and the operator reported that initial CI passed. The main
+    blockers are external protocol review, branch protection/release workflow,
+    repeated release-candidate soak and operator onboarding feedback, not
+    another local protocol rewrite.
+
+11. **Manual real-origin carrier UX is now documented, but not automated.** A
+    historical real-origin flow showed that ordinary WebSocket clients can hold
+    stable carriers and carry SOCKS traffic, but users need explicit guidance:
+    an assigned lease is not enough, `carriers_current` must be positive, and
+    public echo origins are smoke targets rather than production dependencies.
+
+12. **Router-hosted client looks plausible but remains unvalidated.** Running
+    `fps_client` on a home router and using router DNS to point carrier
+    hostnames at the router LAN address matches the current architecture. It
+    still needs real OpenWrt/router validation for container runtime, CPU
+    architecture, TUN support, capabilities and port binding before it can be
+    marketed as supported.
+
+## Decisions Captured
+
+- `security.zero_rtt` remains the only carrier authentication mechanism.
+- Client identity remains UUID-only in user-facing config; server keys remain
+  inline base64.
+- Docker is the primary Linux deployment/runtime story.
+- The base Docker image should stay FPS-only; application proxies belong in
+  derivative overlay examples such as Dante, not in the core runtime contract.
+- Native distro packaging is deferred.
+- Product-level multi-client regression is Docker opt-in rather than ordinary
+  local CTest.
+- Client onboarding should move toward server-generated profiles and `fps://`
+  URIs implemented in C++ CLI code, not broad helper scripts.
+- Runtime health should stay local and metadata-only: `ops.status_socket` is
+  read-only JSON with bounded recent close diagnostics and auth/envelope
+  counters, not a management API.
+- Structured log serialization should remain opt-in through described
+  non-secret structs or non-secret views; secrets, UUIDs, keys, ClientID values
+  and raw payloads must not become described log fields.
+- Prefer Boost facilities when they reduce project-owned boilerplate without
+  moving protocol semantics out of typed FPS code. Current good fits:
+  Boost.Describe for enums/log labels, Boost.Program_options for argv parsing,
+  Boost.JSON for config and Boost.Endian for wire integers.
+- Do not add config/log migration branches until FPS has an external release
+  that users could reasonably depend on.
+
+## Recommended Next Actions
+
+- Reuse the versioned `fps://` URI shape in future Android/GUI QR flows.
+- Add CI jobs for GCC, clang, ASan/UBSan, Valgrind, coverage and fuzz smoke.
+- Repeat the two-host Docker/TUN soak for release candidates and promote it to a
+  privileged scheduled runner when the environment is stable enough.
+- Decide after protocol review whether durable replay cache persistence is
+  necessary for production server restarts.
+- Enable private branch protection before inviting more contributors.
+- Use the manual private GHCR workflow with `publish=false` for release
+  candidate image dry runs and `publish=true` for private publication.
+- Keep `doctor` and deployment bundle tooling deferred until another manual UX
+  pass confirms which checks and file layout operators actually need.
+- Treat router/LAN-gateway mode as a documented experimental pattern until it
+  passes a real hardware or close VM validation run.
+- Continue splitting relay runtime helpers by responsibility, starting with
+  CLI/profile/status/lease command helpers if `tcp_relay_app.cpp` grows again.
+- Plan UUID/key rotation and revocation workflow beyond basic lease
+  prune/revoke.
