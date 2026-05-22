@@ -66,10 +66,10 @@ deliberately deferred until the private release policy is settled.
 - GitHub Actions workflow files exist for `ubuntu-24.04 x gcc/clang` local
   CTest and Docker smoke, plus scheduled/manual quality checks for sanitizers,
   Valgrind, coverage and bounded fuzzing.
-- A manual private GHCR publishing workflow exists for Ubuntu and Alpine runtime
+- A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
-  dispatch input before pushing images. It publishes only two private beta tags
-  per run: the unsuffixed Ubuntu image tag and the `-alpine` image tag.
+  dispatch input before pushing images. It publishes only two tags per run: the
+  unsuffixed Ubuntu image tag and the `-alpine` image tag.
 - Regression coverage includes local unit/integration tests, clang-20,
   ASan/UBSan, Valgrind unit checks, llvm-cov, bounded libFuzzer smoke, opt-in
   TUN tests and opt-in Docker simulations.
@@ -98,27 +98,26 @@ deliberately deferred until the private release policy is settled.
 
 Current state:
 
-- The repository is hosted on GitHub for private beta development.
-- Basic branch protection is configured for `main` in the current private
-  repository: pull requests, current CI status checks, linear history and no
-  force-pushes/deletions.
-- No public release tags, public images or signed artifacts are expected yet.
-- Private image publication, when used, is manual GHCR publication with explicit
+- The repository is hosted publicly on GitHub.
+- Branch protection is configured for `main`: pull requests, current CI status
+  checks, linear history, resolved conversations and no force-pushes/deletions.
+- Public release tags and signed artifacts are not expected yet.
+- Image publication, when used, is manual GHCR publication with explicit
   pre-release tags, no `latest` and no implicit provenance/SBOM package
-  artifacts during private beta.
+  artifacts.
 
-Next private-repository actions:
+Next release-readiness actions:
 
 - Keep the ordinary local suite and Docker artifact check from
   [testing.md](./testing.md) as the pre-PR baseline.
 - Run artifact and secret scans before publishing release candidates.
 - Trigger the scheduled/manual `Quality` workflow at least once for release
   candidate branches or before sharing images with external beta users.
-- Keep release image publication manual and private-only until public release
-  policy, tag aliases and signing are reviewed.
+- Keep release image publication manual until tag aliases and signing are
+  reviewed.
 
-This private phase does not require signed images or privileged root/TUN CI.
-Those are release/public-beta concerns.
+The current beta phase does not require signed images or privileged root/TUN CI.
+Those remain release-hardening concerns.
 
 ## Beta Risks
 

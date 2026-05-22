@@ -2,7 +2,7 @@
 
 FPS is an experimental Linux-first VPN framework: a hidden L3 TUN tunnel carried
 inside live TLS cover sessions. These pages are the public operator and project
-documentation for the current private beta candidate.
+documentation for the current beta candidate.
 
 Start with the quickstart if you want to run the stack. Use the reference pages
 when you need exact CLI, Docker, routing, protocol or testing details.

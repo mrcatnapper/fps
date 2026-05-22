@@ -105,11 +105,11 @@ without claiming resistance to advanced timing/size traffic analysis.
 
 - [x] Add GitHub Actions baseline for `ubuntu-24.04 x gcc/clang`, Docker
   build/smoke for both compilers and scheduled/manual quality checks.
-- [x] Configure the private GitHub remote and pass the initial CI matrix.
-- [x] Add private GitHub operations notes for artifact/secret scans, branch
-  protection, private image publication planning and protocol review packet.
+- [x] Configure the GitHub remote and pass the initial CI matrix.
+- [x] Add GitHub operations notes for artifact/secret scans, branch protection,
+  image publication planning and protocol review packet.
 - [x] Select MIT license and add a beta release checklist.
-- [x] Add a manual private GHCR image workflow with `publish=false` dry runs and
+- [x] Add a manual GHCR image workflow with `publish=false` dry runs and
   `publish=true` publication after tag policy and permissions review.
 - Add release signing/publishing, release upgrade docs and an opt-in privileged
   root/TUN CI job before public beta.
