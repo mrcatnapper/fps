@@ -66,19 +66,27 @@ Date: 2026-05-17
    cache; durable replay state remains a production-hardening option after beta
    protocol review.
 
-10. **Remaining beta gates are mostly process gates.** The public GitHub remote,
+10. **The next protocol simplification should be transcript-bound, not only
+    previous-record-bound.** Binding Zero-RTT candidates to the full carrier
+    byte-stream prefix would remove the current visible public-key-shaped
+    handshake material and make replay depend on reproducing the same carrier
+    transcript. This is promising, but it should go through protocol review
+    before implementation because false-positive/false-negative classifier
+    behavior can break the real browser/origin TLS stream.
+
+11. **Remaining beta gates are mostly process gates.** The public GitHub remote,
     CI matrix and `main` branch protection are configured. The main blockers are
     external protocol review, release/signing workflow, repeated
     release-candidate soak and operator onboarding feedback, not another local
     protocol rewrite.
 
-11. **Manual real-origin carrier UX is now documented, but not automated.** A
+12. **Manual real-origin carrier UX is now documented, but not automated.** A
     historical real-origin flow showed that ordinary WebSocket clients can hold
     stable carriers and carry SOCKS traffic, but users need explicit guidance:
     an assigned lease is not enough, `carriers_current` must be positive, and
     public echo origins are smoke targets rather than production dependencies.
 
-12. **Router-hosted client looks plausible but remains unvalidated.** Running
+13. **Router-hosted client looks plausible but remains unvalidated.** Running
     `fps_client` on a home router and using router DNS to point carrier
     hostnames at the router LAN address matches the current architecture. It
     still needs real OpenWrt/router validation for container runtime, CPU

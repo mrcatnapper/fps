@@ -2,6 +2,44 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-28
+
+### Document transcript-bound Zero-RTT direction
+
+Goal:
+
+- Analyze the proposed protocol direction: replace previous-record-only
+  Zero-RTT binding with full carrier transcript binding, and evaluate whether it
+  should become the next technical increment.
+
+Done:
+
+- Updated `docs/specification.md` with a future transcript-bound wire revision:
+  per-direction incremental transcript hash, public domain-separated seed
+  material, transcript byte count and record index binding.
+- Documented that transcript binding makes organic cross-session replay
+  impractical under an honest/non-malicious origin, but does not remove the need
+  for timestamp and replay-cache checks.
+- Added a candidate server/client hint classifier design and explicitly marked
+  it as a passive/random-traffic filter rather than a complete active DoS
+  defense.
+- Captured handshake-less envelope classification as a larger v3 research path
+  with strict false-positive/false-negative and transcript-state requirements.
+- Updated the protocol review brief, beta status, roadmap and self-review so an
+  external reviewer can evaluate this direction before code changes.
+
+Decision:
+
+- Treat transcript-bound Zero-RTT as the right next protocol simplification
+  direction, but do not implement it until the exact transcript state, hint
+  derivation and failure behavior are specified and tested.
+- Keep explicit upgrade/envelope mode as the safer beta baseline until
+  handshake-less classification is reviewed separately.
+
+Verification:
+
+- `git diff --check`
+
 ## 2026-05-22
 
 ### Rename publish workflow for public repository

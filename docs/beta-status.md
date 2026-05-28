@@ -141,6 +141,10 @@ Those remain release-hardening concerns.
   API.
 - The indexed precheck avoids allowlist scanning but is not a full CPU DoS
   defense: plausible candidates still cost one X25519 and a small AEAD attempt.
+- The current Zero-RTT candidate binding uses the previous TLS record hash plus
+  replay cache. A future wire revision should bind candidates to the full
+  carrier byte-stream transcript before the candidate and remove visible
+  public-key-shaped handshake material.
 - Operational status is still minimal: it is a local JSON snapshot with bounded
   recent close metadata and auth/envelope counters, not a metrics endpoint,
   management API or historical time series.
@@ -162,8 +166,8 @@ Before public beta or public release, finish:
   release should not rely on a single historical pass.
 - **Independent protocol review:** send the protocol packet, specification and
   relevant tests to an external reviewer, then resolve findings around Zero-RTT
-  precheck, envelope mode, replay cache policy and visible handshake-prefix
-  risk.
+  precheck, envelope mode, replay cache policy, visible handshake-prefix risk
+  and the proposed transcript-bound wire revision.
 - **Operator onboarding feedback:** run the documented quickstart with beta
   operators and reduce friction found in real deployments.
 - **Rotation repeat policy:** repeat the UUID revoke/reissue and server-key

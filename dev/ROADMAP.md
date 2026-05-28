@@ -86,6 +86,13 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Prepare an external protocol review brief for Zero-RTT precheck,
   envelope mode, replay policy, lease enforcement and known risks.
 - Run independent crypto/protocol review of Zero-RTT precheck and envelope mode.
+- Design the next Zero-RTT wire revision around a full per-direction carrier
+  transcript hash, removing visible public-key-shaped handshake material and
+  reducing replay surface before changing production code.
+- After review, decide whether transcript-bound one-time hints can evolve into
+  a handshake-less FPS envelope classifier inspired by stream-transcript covert
+  channels, or whether explicit upgrade/envelope mode remains the safer product
+  baseline.
 - [x] Document UUID/client revocation and server-key rotation workflows beyond
   the lease tools.
 - [x] Exercise UUID/client revocation and server-key rotation on a Docker

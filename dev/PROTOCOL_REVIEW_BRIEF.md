@@ -67,6 +67,27 @@ high-priority visible-prefix review item because it is easier to classify than
 timing. The next wire revision should hide or replace it with a short
 time/window-bound opaque lookup hint.
 
+Candidate next direction: bind candidates to a per-direction transcript hash of
+all carrier bytes observed before the candidate record, seeded and
+domain-separated by server public key, profile id, role, direction and protocol
+version. This would make ordinary cross-session replay depend on reproducing the
+same carrier byte prefix, which should be infeasible with an honest/non-malicious
+origin once real TLS Application Data has started. Timestamp and replay-cache
+checks should remain defense-in-depth for artificially replayed prefixes,
+daemon restarts and implementation bugs.
+
+The same transcript-bound material may also support a future CPU-friendly
+classifier:
+
+- reject records whose server-side transcript hint does not match;
+- scan the allowlist only for records whose client-side transcript hint matches;
+- run full cryptographic verification only for the likely client.
+
+This is not a full active DoS defense because public hints can be forged by an
+attacker that knows the construction. Its main value is removing the visible
+public-key-shaped prefix and avoiding full decrypt work for ordinary random
+carrier records.
+
 Reviewer questions:
 
 - Is the channel binding sufficient for the late-upgrade transparent relay
@@ -79,6 +100,10 @@ Reviewer questions:
   replay state acceptable for controlled deployments?
 - Should the visible-prefix refactor block public beta or be tracked as a
   post-beta wire revision?
+- Should the next wire revision use a full carrier transcript hash rather than
+  only the previous TLS record hash?
+- Can transcript-bound server/client hints be designed without creating a
+  durable client identifier or fragile false-positive classifier?
 
 ## Envelope Mode
 
@@ -101,6 +126,10 @@ Reviewer questions:
   stream?
 - Are metadata boundaries sufficient, or should more fields be padded/hidden in
   the next wire revision?
+- Is a future handshake-less mode viable, where each TLS Application Data record
+  is classified as ordinary carrier bytes or an FPS envelope using
+  transcript-bound one-time hints plus AEAD verification, without first switching
+  the whole carrier into envelope mode?
 
 ## Lease Routing And Client Isolation
 

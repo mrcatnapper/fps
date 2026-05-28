@@ -199,6 +199,61 @@ does the client switch that carrier fully into envelope mode. Treating the first
 peer-direction record as mandatory confirmation is a correctness bug and can
 break otherwise valid cover sessions.
 
+### 4.3 Future Transcript-Bound Wire Revision
+
+The next protocol revision should replace the current previous-record hash with
+a transcript commitment over the visible carrier byte stream that exists before
+the FPS candidate record. The goal is to make a captured upgrade attempt useless
+outside the exact carrier session prefix that created it.
+
+Candidate direction:
+
+- Maintain a per-direction incremental cryptographic transcript hash over the
+  outer TCP/TLS bytes already observed on the FPS link.
+- Seed and domain-separate the transcript with server public key, profile id,
+  role, direction and protocol version. The seed is public binding material, not
+  a secret authenticator.
+- For a candidate record, bind the encrypted upgrade to transcript hash,
+  transcript byte count and record index before the candidate bytes are added.
+- Keep timestamp and replay-cache checks. Transcript binding makes organic
+  cross-session replay impractical under a non-malicious origin, but it does not
+  remove the value of replay defense against artificially replayed prefixes,
+  daemon restarts, implementation bugs or weak carrier entropy.
+
+A possible CPU-friendly candidate classifier is a short opaque hint derived from
+the transcript and server/client public identities:
+
+```text
+server_hint = H("fps/v3/server-hint" || transcript || server_public_key ||
+                profile_id || time_bucket)[0..N]
+client_hint = H("fps/v3/client-hint" || transcript || client_public_key ||
+                server_public_key || profile_id || time_bucket)[0..M]
+```
+
+The server can reject random carrier records if the server hint does not match,
+then scan the small allowlist for a matching client hint and run a full
+cryptographic verification only for the likely client. These hints must be
+window-bound and transcript-bound so they do not become durable client
+identifiers. They are not a complete active DoS defense because an attacker that
+knows the public construction can still create plausible server hints; they are
+primarily a passive-classification and ordinary-random-traffic filter.
+
+The same idea can become a later handshake-less envelope classifier: every
+visible TLS Application Data record could be tested as either ordinary carrier
+bytes or an FPS envelope candidate using transcript-bound one-time hints and a
+final AEAD verification. This is a larger v3 design, not a beta patch. It must
+prove:
+
+- extremely low false positives, because swallowing a real carrier TLS record
+  would break the browser/origin TLS stream;
+- extremely low false negatives, because forwarding a real FPS envelope to the
+  browser/origin would also break the stream;
+- deterministic transcript-state agreement across both FPS peers despite TCP
+  direction races;
+- safe nonce/key derivation without an explicit upgrade state;
+- clear behavior for idle periods where FPS wants to send data while the carrier
+  application has no bytes to forward.
+
 ## 5. Envelope Mode
 
 After upgrade, each visible FPS record carries an AEAD-encrypted envelope:
@@ -497,6 +552,10 @@ Near productionization gaps:
 
 - QR/mobile onboarding on top of the existing `fps://v1` profile URI;
 - deeper Zero-RTT DoS review beyond indexed precheck;
+- transcript-bound Zero-RTT wire revision that removes the visible public-key
+  prefix and binds candidates to the full carrier byte-stream prefix;
+- research-grade handshake-less envelope classification where FPS records and
+  ordinary carrier records can coexist without an explicit upgrade state;
 - adversarial active-probe/tamper/drop test plan;
 - automated pcap/tshark regression checks in CI-capable environments;
 - production key/UUID rotation docs;
