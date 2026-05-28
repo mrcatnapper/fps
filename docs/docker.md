@@ -181,7 +181,7 @@ behave as expected. `sessions.last_closed` and
 `sessions.recent_closed` explain the last bounded set of close reasons, such as
 peer EOF, target connect failure, envelope decode failure or write queue
 saturation. It is a local read-only health surface, not a management API. It
-never prints UUIDs, keys, ClientID values or payload bytes.
+never prints UUIDs, keys or payload bytes.
 
 `write_queue_full` means FPS could not enqueue more bytes for that carrier
 without exceeding the configured per-session queue budget. For TUN packets this
@@ -368,7 +368,7 @@ FPS_DOCKER_SUDO=1 tools/docker_duplicate_uuid_sim.py --build
 ```
 
 The status check asserts a non-secret `duplicate_client_replacements` counter
-without exposing UUIDs, keys, ClientID or raw client instance ids.
+without exposing UUIDs, keys or raw client instance ids.
 
 ## Dante Proxy Overlay Smoke
 

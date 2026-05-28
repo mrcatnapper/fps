@@ -268,7 +268,7 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
             return false;
         }
 
-        auto result = zero_rtt_controller_->process_inbound_tls(direction, bytes, now_seconds());
+        auto result = zero_rtt_controller_->process_inbound_tls(direction, bytes);
         auto forward_bytes = std::move(result.forward_bytes);
         const auto authenticated = result.session_keys.has_value();
         if(authenticated && !zero_rtt_authenticated_) {
@@ -300,15 +300,13 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
         return false;
     }
 
-    auto observed = zero_rtt_controller_->observe_tls(bytes);
+    auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
     emit_zero_rtt_observe_result(direction, observed);
 
     std::optional<ByteVector> upgrade_record;
     if(config_.zero_rtt->auto_start_client && !zero_rtt_client_upgrade_sent_ && observed.pending_tls_bytes == 0U &&
        zero_rtt_controller_->has_channel_binding()) {
-        auto built = zero_rtt_controller_->build_client_upgrade_record(
-            now_seconds(), config_.zero_rtt->client_upgrade_padding, config_.zero_rtt->client_ephemeral_key_pair, config_.zero_rtt->client_replay_nonce
-        );
+        auto built = zero_rtt_controller_->build_client_upgrade_record(config_.zero_rtt->client_upgrade_padding, config_.zero_rtt->client_ephemeral_key_pair);
         if(built) {
             upgrade_record = std::move(built).value();
             zero_rtt_client_upgrade_sent_ = true;
@@ -342,15 +340,6 @@ auto TcpBridgeSession::zero_rtt_peer_direction() const noexcept -> Direction {
         return Direction::client_to_server;
     }
     return Direction::server_to_client;
-}
-
-auto TcpBridgeSession::now_seconds() const -> std::uint64_t {
-    if(config_.zero_rtt.has_value() && config_.zero_rtt->timestamp_provider) {
-        return config_.zero_rtt->timestamp_provider();
-    }
-
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(now).count());
 }
 
 void TcpBridgeSession::activate_zero_rtt_envelope_pipelines(const SessionKeys& session_keys) {

@@ -43,8 +43,8 @@ def main():
             args.carrier, cert, key, origin_port, "/fps-carrier-zero-rtt"
         )
 
-        server_config = tmpdir / "server-v2.json"
-        client_config = tmpdir / "client-v2.json"
+        server_config = tmpdir / "server-v3.json"
+        client_config = tmpdir / "client-v3.json"
         write_zero_rtt_relay_config(
             server_config, server_port, "origin", origin_port, "server"
         )

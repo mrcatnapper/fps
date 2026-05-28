@@ -2,6 +2,141 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-28
+
+### Run PR-readiness checks after Zero-RTT v3
+
+Goal:
+
+- Recheck documents/source/tests after transcript-bound Zero-RTT v3 and run a
+  short remote soak before preparing a PR.
+
+Done:
+
+- Rechecked active public docs and source tree for stale v2/ClientID/replay
+  contract wording. Remaining matches are historical worklog entries, negative
+  removed-field tests, or explicit secret-leak guards.
+- Fixed a race in `https_zero_rtt_adversarial.py`: the tampered-envelope probe
+  now first establishes an authenticated keep-alive carrier and only then arms
+  the proxy to mutate the next server-to-client FPS envelope. This makes the
+  ASan/UBSan run deterministic instead of occasionally tampering pre-upgrade TLS
+  Application Data.
+- Added coverage for the `Repeater::maybe_do(interval, fn)` convenience
+  overload so the coverage gate stays above the function threshold.
+- Ran a 5-minute remote Docker/TUN resilience soak on `fpshop` using image
+  `fps:soak-pr-v3`; temporary remote files and image tag were removed
+  afterwards.
+
+Remote soak result:
+
+- Main mixed client-to-server UDP: 300.05 seconds, 14,649 packets, 0 lost,
+  0.0% loss, about 0.20 Mbit/s.
+- Concurrent HTTP probe: 543 successful requests.
+- Server-to-client UDP probes to both leased clients: 489 packets each, 0 lost,
+  0.0% loss.
+- Spoofed source was dropped once and valid post-spoof UDP remained healthy.
+- Carrier stop/start recovery passed; recovered UDP had 489 packets, 0 lost.
+- Final status showed two active carriers, non-zero TUN traffic counters and all
+  six services still running.
+
+Verification:
+
+- `tools/run_quality_checks.sh --all`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- Remote:
+  `ssh fpshop 'cd /tmp/fps-soak-pr-v3 && python3 tools/docker_resilience_soak.py --image fps:soak-pr-v3 --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90'`
+
+Commit:
+
+- Local commit: `Stabilize PR readiness checks`.
+
+### Implement transcript-bound Zero-RTT v3
+
+Goal:
+
+- Replace previous-record-only Zero-RTT binding with full carrier transcript
+  binding and remove active timestamp/replay-cache mechanics from the
+  pre-production protocol.
+
+Done:
+
+- Changed Zero-RTT candidate wire shape to
+  `server_hint[8] | client_hint[8] | encrypted_capsule | tag`.
+- Moved the client ephemeral public key into the encrypted capsule, removing
+  the visible public-key-shaped prefix.
+- Added per-direction transcript tracking in `FpsUpgradeController`, binding
+  candidates to transcript hash, transcript byte count, record index, direction
+  and profile id.
+- Removed active timestamp/replay nonce/replay cache fields from core structs,
+  relay config parsing, generated profiles, status counters and tests.
+- Fixed Zero-RTT config to accept only v3 when `security.zero_rtt.version` is
+  present, and renamed active examples/fixtures away from stale `v2` profile
+  ids.
+- Updated local adversarial integration coverage from replay-cache observation
+  to transcript-prefix mismatch observation.
+- Updated public and developer docs for the v3 no-timestamp/no-cache replay
+  model and remaining protocol-review questions.
+
+Decision:
+
+- Keep explicit upgrade/envelope mode as the beta baseline. Handshake-less
+  classification remains a separate protocol-review item.
+- Do not keep compatibility for removed `timestamp_window_sec`,
+  `replay_cache_size` or `trial_decrypt_limit` config fields; they now fail
+  config validation as invalid Zero-RTT v3 fields.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+Commit:
+
+- Local commit: `Implement transcript-bound Zero-RTT v3` (see `git log --oneline -1`).
+
+### Document transcript-bound Zero-RTT direction
+
+Goal:
+
+- Analyze the proposed protocol direction: replace previous-record-only
+  Zero-RTT binding with full carrier transcript binding, and evaluate whether it
+  should become the next technical increment.
+
+Done:
+
+- Updated `docs/specification.md` with a future transcript-bound wire revision:
+  per-direction incremental transcript hash, public domain-separated seed
+  material, transcript byte count and record index binding.
+- Documented that transcript binding makes organic cross-session replay
+  impractical under an honest/non-malicious origin, but does not remove the need
+  for timestamp and replay-cache checks.
+- Added a candidate server/client hint classifier design and explicitly marked
+  it as a passive/random-traffic filter rather than a complete active DoS
+  defense.
+- Captured handshake-less envelope classification as a larger v3 research path
+  with strict false-positive/false-negative and transcript-state requirements.
+- Updated the protocol review brief, beta status, roadmap and self-review so an
+  external reviewer can evaluate this direction before code changes.
+
+Decision:
+
+- Treat transcript-bound Zero-RTT as the right next protocol simplification
+  direction, but do not implement it until the exact transcript state, hint
+  derivation and failure behavior are specified and tested.
+- Keep explicit upgrade/envelope mode as the safer beta baseline until
+  handshake-less classification is reviewed separately.
+
+Verification:
+
+- `git diff --check`
+
 ## 2026-05-22
 
 ### Rename publish workflow for public repository

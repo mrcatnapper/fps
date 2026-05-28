@@ -8,9 +8,9 @@ should be reviewed before public beta.
 
 ## Review Scope
 
-- Zero-RTT carrier authentication and indexed precheck.
+- Zero-RTT carrier authentication and transcript-bound hint precheck.
 - Encrypted FPS envelope mode over TLS Application Data shaped records.
-- Replay cache and channel-binding policy.
+- Transcript binding and no-cache replay policy.
 - Carrier pool and leased-client TUN routing semantics.
 - Metadata-only logging/status rules.
 
@@ -46,39 +46,34 @@ Current construction:
   internal X25519 client key pair.
 - Server identity is an inline base64 X25519 key pair plus an allowlist of
   client UUIDs.
-- The client sends one encrypted upgrade candidate after observing a previous
-  real TLS record.
-- Upgrade associated data binds the attempt to direction, role, TLS record
-  index, previous-record hash and profile id.
-- Server-side indexed precheck decrypts a small capsule, maps internal ClientID
-  to one allowlisted client public key and then attempts one full decrypt.
+- The client sends one encrypted upgrade candidate after observing enough real
+  carrier TLS records to form a transcript binding.
+- Upgrade associated data binds the attempt to direction, TLS record index,
+  transcript byte count, transcript hash and profile id.
+- The auth record starts with `server_hint[8] | client_hint[8]`; the client
+  ephemeral public key is inside the encrypted capsule, not visible at a fixed
+  wire offset.
+- Server-side precheck rejects wrong server hints, scans the UUID allowlist for
+  a matching client hint and then attempts one capsule decrypt for the likely
+  client.
 - The server confirmation envelope is race-safe: the client trial-decrypts
   plausible peer records and forwards non-confirmation records as cover traffic
   until confirmation succeeds or policy expires.
-- Replay protection targets captured-prefix replay. Replaying only an auth
-  record into another organic TLS context should fail channel binding because
-  `hash(previous TLS record)` and record index differ. Replaying the previously
-  captured previous-record plus auth-record prefix can reconstruct the same
-  channel binding, so the daemon-wide in-memory replay cache must reject it.
-
-Known risk: the current candidate starts with a fixed-position 32-byte
-ephemeral public key. Even if intended to be fresh random material, this is a
-high-priority visible-prefix review item because it is easier to classify than
-timing. The next wire revision should hide or replace it with a short
-time/window-bound opaque lookup hint.
+- Timestamp and replay-cache fields are removed from active v3. Replay
+  resistance relies on reproducing the exact carrier transcript prefix before
+  the candidate; durable replay state is left for reviewer feedback if this
+  model is insufficient.
 
 Reviewer questions:
 
 - Is the channel binding sufficient for the late-upgrade transparent relay
   topology?
-- Is the precheck capsule acceptable as a CPU-friendly lookup without becoming a
-  durable client identifier?
-- Are timestamp/replay cache semantics sufficient when the current cache is
-  daemon-process memory and intentionally clears on restart?
-- Is captured-prefix replay the right beta threat to cover, and is restart-clear
-  replay state acceptable for controlled deployments?
-- Should the visible-prefix refactor block public beta or be tracked as a
-  post-beta wire revision?
+- Are transcript-bound hints acceptable as a CPU-friendly lookup without
+  becoming durable client identifiers?
+- Is the no-timestamp/no-cache replay model acceptable for controlled beta
+  deployments, or should bounded/durable replay state return?
+- Can transcript-bound server/client hints be designed without creating a
+  durable client identifier or fragile false-positive classifier?
 
 ## Envelope Mode
 
@@ -101,6 +96,10 @@ Reviewer questions:
   stream?
 - Are metadata boundaries sufficient, or should more fields be padded/hidden in
   the next wire revision?
+- Is a future handshake-less mode viable, where each TLS Application Data record
+  is classified as ordinary carrier bytes or an FPS envelope using
+  transcript-bound one-time hints plus AEAD verification, without first switching
+  the whole carrier into envelope mode?
 
 ## Lease Routing And Client Isolation
 
@@ -126,9 +125,9 @@ Reviewer questions:
 
 ## Logging And Status Secrecy
 
-Logs/status must not include UUIDs, private keys, derived keys, ClientID values,
-nonces, session keys, raw upgrade material, raw TLS payloads, raw TUN packets or
-IP payload bytes.
+Logs/status must not include UUIDs, private keys, derived keys, nonces, session
+keys, raw upgrade material, raw TLS payloads, raw TUN packets or IP payload
+bytes.
 
 Status is a local UNIX-socket JSON snapshot, not a management API. It exposes
 session counters, recent close metadata, auth and envelope counters, TUN
@@ -141,12 +140,11 @@ Reviewer questions:
 
 ## Evidence Already Available
 
-- Unit coverage for Zero-RTT success/failure, replay, timestamp expiry, indexed
-  precheck, shared daemon replay cache behavior, envelope roundtrip/tamper and
-  lease routing.
+- Unit coverage for Zero-RTT success/failure, transcript mismatch, hint
+  precheck, envelope roundtrip/tamper and lease routing.
 - Local integration coverage for HTTPS/WSS passthrough, Zero-RTT chains,
   large/coalesced responses, multi-session carriers, unknown clients,
-  captured-prefix replay and post-auth envelope tamper.
+  transcript-prefix mismatch and post-auth envelope tamper.
 - TUN/netns coverage for loopback, burst, fragmentation and shaper-adjacent
   paths.
 - Docker simulations for multi-client lease routing, duplicate UUID replacement,
@@ -159,9 +157,10 @@ Reviewer questions:
 ## Known Non-Blocking Beta Risks
 
 - No formal proof of the Zero-RTT/envelope construction.
-- Visible Zero-RTT public-key-shaped prefix needs a future wire revision.
-- Indexed precheck is not a full CPU DoS defense; plausible candidates still
-  cost one X25519 and one small AEAD attempt.
-- Replay cache persistence across server restarts is not yet configurable; the
-  beta baseline is shared in-memory daemon state.
+- Transcript-bound hints remove the visible public-key-shaped prefix, but the
+  construction has not had independent review.
+- Precheck is not a full CPU DoS defense; plausible server hints still force
+  allowlist hint checks and one small AEAD attempt for a likely client.
+- No timestamp or replay cache is active in v3; replay assumptions depend on
+  carrier transcript uniqueness under honest origins.
 - Advanced timing/size traffic shaping is deferred.

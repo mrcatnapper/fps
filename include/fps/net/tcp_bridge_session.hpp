@@ -26,10 +26,8 @@ using TcpSocket = boost::asio::ip::tcp::socket;
 
 struct TcpBridgeZeroRttOptions {
     FpsUpgradeControllerConfig controller_config;
-    std::function<std::uint64_t()> timestamp_provider;
     ByteVector client_upgrade_padding;
     std::optional<X25519KeyPair> client_ephemeral_key_pair;
-    std::optional<Nonce32> client_replay_nonce;
     bool auto_start_client = true;
     std::size_t max_inner_tls_bytes = 64U * 1024U;
     std::size_t max_frame_payload_size = 16U * 1024U;
@@ -221,7 +219,6 @@ private:
     void handle_read(Direction direction, const boost::system::error_code& error, std::size_t bytes_read);
     [[nodiscard]] auto process_zero_rtt_if_needed(Direction direction, std::span<const std::byte> bytes) -> bool;
     [[nodiscard]] auto zero_rtt_peer_direction() const noexcept -> Direction;
-    [[nodiscard]] auto now_seconds() const -> std::uint64_t;
     void activate_zero_rtt_envelope_pipelines(const SessionKeys& session_keys);
     [[nodiscard]] auto send_zero_rtt_key_confirmation(Direction upgrade_direction) -> bool;
     [[nodiscard]] auto can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool;

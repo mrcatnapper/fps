@@ -320,7 +320,6 @@ def write_zero_rtt_relay_config(
     target_port,
     role,
     decoy_allowed_clients=0,
-    trial_decrypt_limit=8,
     read_buffer_size=4096,
     client_uuid=ZERO_RTT_CLIENT_UUID,
     status_socket=None,
@@ -363,13 +362,10 @@ def write_zero_rtt_relay_config(
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "integration-origin-v2",
-%s      "timestamp_window_sec": 30,
-      "version": 2,
+      "profile_id": "integration-origin-v3",
+%s      "version": 3,
       "capabilities": 1,
       "max_padding_size": 64,
-      "replay_cache_size": 64,
-      "trial_decrypt_limit": %d,
       "min_records_before_trial": 1,
       "upgrade_direction": "client_to_server"
     }
@@ -387,7 +383,6 @@ def write_zero_rtt_relay_config(
            target_port,
            read_buffer_size,
            key_config,
-           trial_decrypt_limit,
            ops_config),
         encoding="utf-8",
     )

@@ -7,13 +7,11 @@
 
 #include <algorithm>
 #include <charconv>
-#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -35,7 +33,6 @@ using detail::load_json_file;
 using detail::load_shaper_profile_file;
 using detail::optional_array_config;
 using detail::optional_bool_config;
-using detail::optional_int64_config;
 using detail::optional_object_config;
 using detail::optional_size_config;
 using detail::optional_string_config;
@@ -137,41 +134,34 @@ struct AllowedClientConfig {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::success(std::nullopt);
     }
 
+    for(const auto* removed_field :
+        {"security.zero_rtt.timestamp_window_sec", "security.zero_rtt.replay_cache_size", "security.zero_rtt.trial_decrypt_limit"}) {
+        if(detail::find_json_value(tree, removed_field) != nullptr) {
+            return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(std::string{removed_field} + " is not a valid Zero-RTT v3 field");
+        }
+    }
+
     auto profile_id = require_string_config(tree, "security.zero_rtt.profile_id");
     if(!profile_id) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(profile_id.error());
-    }
-
-    auto timestamp_window = optional_int64_config(tree, "security.zero_rtt.timestamp_window_sec");
-    if(!timestamp_window) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(timestamp_window.error());
-    }
-    const auto timestamp_window_value = timestamp_window.value().value_or(30);
-    if(timestamp_window_value < 0) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.timestamp_window_sec must not be negative");
     }
 
     auto max_padding = parse_non_negative_size_config(tree, "security.zero_rtt.max_padding_size", 512);
     if(!max_padding) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(max_padding.error());
     }
-    auto replay_cache = parse_positive_size_config(tree, "security.zero_rtt.replay_cache_size", 4096);
-    if(!replay_cache) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(replay_cache.error());
-    }
-    auto trial_limit = parse_positive_size_config(tree, "security.zero_rtt.trial_decrypt_limit", 16);
-    if(!trial_limit) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(trial_limit.error());
-    }
     auto min_records = parse_non_negative_size_config(tree, "security.zero_rtt.min_records_before_trial", 1);
     if(!min_records) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
 
-    auto version = parse_u16_config(tree, "security.zero_rtt.version", 2);
+    auto version = parse_u16_config(tree, "security.zero_rtt.version", 3);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
     if(!version || !capabilities) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(!version ? version.error() : capabilities.error());
+    }
+    if(version.value() != 3U) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.version must be 3");
     }
 
     ZeroRttUpgradeConfig upgrade{
@@ -181,13 +171,9 @@ struct AllowedClientConfig {
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {},
         .profile_id = profile_id.value(),
-        .timestamp_window = std::chrono::seconds{timestamp_window_value},
         .version = version.value(),
         .capabilities = capabilities.value(),
         .max_padding_size = max_padding.value(),
-        .replay_cache_size = replay_cache.value(),
-        .trial_decrypt_limit = trial_limit.value(),
-        .replay_cache = std::make_shared<ZeroRttReplayCache>(),
     };
 
     if(role == RelayRole::client) {

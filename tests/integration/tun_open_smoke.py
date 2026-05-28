@@ -125,7 +125,7 @@ def write_config(path, tun_name):
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "tun-open-smoke-v2",
+      "profile_id": "tun-open-smoke-v3",
       "server_private_key_base64": "%s",
       "server_public_key_base64": "%s",
       "allowed_client_uuids": ["%s"]

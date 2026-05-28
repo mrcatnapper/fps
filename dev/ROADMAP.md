@@ -1,7 +1,8 @@
 # FPS Productization Roadmap
 
-The near-term goal is to turn the verified v2 beta candidate into a deployable
-Linux-first client/server VPN framework. Docker is the primary runtime path.
+The near-term goal is to turn the verified transcript-bound Zero-RTT beta
+candidate into a deployable Linux-first client/server VPN framework. Docker is
+the primary runtime path.
 Native distro packaging is intentionally deferred unless it later provides a
 clear operational advantage over containers.
 
@@ -61,8 +62,7 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add structured health/status surface: carriers, bytes, TUN drops,
   shaper/backpressure counters and session lifecycle.
 - Add richer health/status surface: reconnect history and queue saturation
-  history. Replay rejects and envelope failures are now exposed as status
-  counters.
+  history. Envelope failures are now exposed as status counters.
 - Add operator `doctor` tooling and deployment bundle generation after more
   user-flow feedback; keep the current increment documentation-only.
 - Add graceful reload for allowlist/config parts where it is safe without
@@ -85,7 +85,15 @@ without claiming resistance to advanced timing/size traffic analysis.
 
 - [x] Prepare an external protocol review brief for Zero-RTT precheck,
   envelope mode, replay policy, lease enforcement and known risks.
-- Run independent crypto/protocol review of Zero-RTT precheck and envelope mode.
+- Run independent crypto/protocol review of transcript-bound Zero-RTT precheck,
+  envelope mode and replay assumptions.
+- [x] Design and implement the next Zero-RTT wire revision around a full per-direction carrier
+  transcript hash, removing visible public-key-shaped handshake material and
+  reducing replay surface.
+- After review, decide whether transcript-bound one-time hints can evolve into
+  a handshake-less FPS envelope classifier inspired by stream-transcript covert
+  channels, or whether explicit upgrade/envelope mode remains the safer product
+  baseline.
 - [x] Document UUID/client revocation and server-key rotation workflows beyond
   the lease tools.
 - [x] Exercise UUID/client revocation and server-key rotation on a Docker
@@ -94,12 +102,12 @@ without claiming resistance to advanced timing/size traffic analysis.
   profile/lease tooling.
 - Keep UUIDs as per-device/per-profile bearer secrets; do not add group/shared
   UUID semantics for L3 VPN mode.
-- [x] Clarify replay-cache persistence policy: daemon-wide in-memory baseline;
-  durable cache for production server restarts remains optional future work.
+- [x] Remove active timestamp/replay-cache fields from Zero-RTT v3 and document
+  transcript-bound replay assumptions.
 - [x] Add first adversarial local tests for no-upgrade passthrough,
-  unknown-client, captured-prefix replay and post-auth envelope tamper.
-- Expand negative integration tests into longer tamper/drop/replay/unknown-client
-  storms and CPU-budget behavior without logging secrets.
+  unknown-client, transcript-prefix mismatch and post-auth envelope tamper.
+- Expand negative integration tests into longer tamper/drop/transcript-mismatch
+  and unknown-client storms plus CPU-budget behavior without logging secrets.
 
 ## Phase 6: Platform And CI
 

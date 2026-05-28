@@ -13,9 +13,10 @@ Date: 2026-05-17
    command-heavy relay CLI tests and relay CLI command execution, not protocol
    core.
 
-1. **The project is beta-candidate, not production-ready.** Core v2 protocol,
-   Docker runtime, leased TUN routing, source-IP enforcement and quality checks
-   are solid enough for controlled Linux/Docker trials. A 30-minute two-host
+1. **The project is beta-candidate, not production-ready.** Transcript-bound
+   Zero-RTT, Docker runtime, leased TUN routing, source-IP enforcement and
+   quality checks are solid enough for controlled Linux/Docker trials. A
+   30-minute two-host
    soak has now validated the current candidate over a real published `:443`
    carrier path. Public beta still needs release work, independent protocol
    review, rotation workflow and repeatable release-candidate soak policy.
@@ -55,30 +56,36 @@ Date: 2026-05-17
 
 8. **Auth and envelope failures now have operator-visible counters.** Status
    JSON no longer keeps auth under `sessions`; it exposes `auth` and `envelope`
-   groups for candidates, authenticated sessions, precheck/unknown/decrypt/replay
+   groups for candidates, authenticated sessions, precheck/unknown/decrypt
    misses and envelope encode/decode/tamper counters. A new local adversarial
-   integration test exercises no-upgrade passthrough, unknown clients, replayed
-   upgrade bytes and post-auth tampering against live daemons.
+   integration test exercises no-upgrade passthrough, unknown clients,
+   transcript-prefix mismatch and post-auth tampering against live daemons.
 
-9. **Replay state is daemon-wide but not durable.** Loaded relay config now
-   shares one in-memory replay cache across session engines, so a replay against
-   a different TCP connection is rejected. Restarting the daemon clears this
-   cache; durable replay state remains a production-hardening option after beta
-   protocol review.
+9. **Replay state is now transcript-bound rather than cache-bound.** Active v3
+   Zero-RTT has no timestamp or replay-cache fields. Replaying a candidate
+   requires reproducing the same carrier transcript prefix before the candidate;
+   durable replay state remains a possible protocol-review outcome if this
+   assumption is judged too weak.
 
-10. **Remaining beta gates are mostly process gates.** The public GitHub remote,
+10. **The public-key-shaped Zero-RTT prefix is removed.** Candidates now start
+    with transcript-bound opaque hints and keep the ephemeral public key inside
+    the encrypted capsule. A future handshake-less classifier still needs
+    separate review because false-positive/false-negative behavior can break the
+    real browser/origin TLS stream.
+
+11. **Remaining beta gates are mostly process gates.** The public GitHub remote,
     CI matrix and `main` branch protection are configured. The main blockers are
     external protocol review, release/signing workflow, repeated
     release-candidate soak and operator onboarding feedback, not another local
     protocol rewrite.
 
-11. **Manual real-origin carrier UX is now documented, but not automated.** A
+12. **Manual real-origin carrier UX is now documented, but not automated.** A
     historical real-origin flow showed that ordinary WebSocket clients can hold
     stable carriers and carry SOCKS traffic, but users need explicit guidance:
     an assigned lease is not enough, `carriers_current` must be positive, and
     public echo origins are smoke targets rather than production dependencies.
 
-12. **Router-hosted client looks plausible but remains unvalidated.** Running
+13. **Router-hosted client looks plausible but remains unvalidated.** Running
     `fps_client` on a home router and using router DNS to point carrier
     hostnames at the router LAN address matches the current architecture. It
     still needs real OpenWrt/router validation for container runtime, CPU
@@ -102,8 +109,8 @@ Date: 2026-05-17
   read-only JSON with bounded recent close diagnostics and auth/envelope
   counters, not a management API.
 - Structured log serialization should remain opt-in through described
-  non-secret structs or non-secret views; secrets, UUIDs, keys, ClientID values
-  and raw payloads must not become described log fields.
+  non-secret structs or non-secret views; secrets, UUIDs, keys and raw payloads
+  must not become described log fields.
 - Prefer Boost facilities when they reduce project-owned boilerplate without
   moving protocol semantics out of typed FPS code. Current good fits:
   Boost.Describe for enums/log labels, Boost.Program_options for argv parsing,
@@ -117,8 +124,8 @@ Date: 2026-05-17
 - Add CI jobs for GCC, clang, ASan/UBSan, Valgrind, coverage and fuzz smoke.
 - Repeat the two-host Docker/TUN soak for release candidates and promote it to a
   privileged scheduled runner when the environment is stable enough.
-- Decide after protocol review whether durable replay cache persistence is
-  necessary for production server restarts.
+- Decide after protocol review whether a replay cache should return on top of
+  transcript-bound candidates.
 - Keep `main` protected before inviting more contributors.
 - Use the manual GHCR workflow with `publish=false` for release candidate image
   dry runs and `publish=true` for image publication.

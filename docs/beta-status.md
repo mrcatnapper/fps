@@ -3,7 +3,7 @@
 ## Verdict
 
 FPS is ready for controlled Linux/Docker beta deployments. The current tree is
-coherent: v2 Zero-RTT is the only authentication path, leased TUN routing is
+coherent: transcript-bound Zero-RTT is the only authentication path, leased TUN routing is
 strict, Docker is the primary runtime, proxy daemons are documented as overlays,
 and the local/CI quality workflow is defined.
 
@@ -55,7 +55,7 @@ deliberately deferred until the private release policy is settled.
   restart/redeploy procedures and have been exercised in a local Docker
   rotation drill.
 - A protocol-review packet exists for external review. It covers Zero-RTT,
-  indexed precheck, envelope mode, replay/cache policy, lease enforcement,
+  transcript-bound precheck, envelope mode, replay model, lease enforcement,
   secrecy rules and known risks.
 - The repository has an MIT license and a release checklist for beta candidates.
 - Runtime status is available through an opt-in local UNIX socket and `--status`,
@@ -89,10 +89,11 @@ deliberately deferred until the private release policy is settled.
   lease-aware routing. Docker-level strict `write_queue_full` observation stays
   diagnostic because it depends on host timing and container throughput.
 - Local adversarial Zero-RTT coverage now checks no-upgrade passthrough, unknown
-  clients, captured-prefix replay and post-auth envelope tamper against live FPS
-  daemons with status-counter assertions.
-- Replay detection is shared across sessions in one daemon process. Restarting
-  the daemon clears the cache; durable replay state remains future hardening.
+  clients, transcript-prefix mismatch and post-auth envelope tamper against live
+  FPS daemons with status-counter assertions.
+- Timestamp and replay-cache fields are not active Zero-RTT v3 config or wire
+  features. Replay resistance relies on the transcript-bound carrier prefix;
+  durable replay state remains a possible protocol-review outcome.
 
 ## Repository And CI State
 
@@ -139,8 +140,10 @@ Those remain release-hardening concerns.
 - UUID/client revocation and server-key rotation passed one local Docker drill,
   but this remains an operator procedure rather than a hot-reload management
   API.
-- The indexed precheck avoids allowlist scanning but is not a full CPU DoS
-  defense: plausible candidates still cost one X25519 and a small AEAD attempt.
+- The transcript-bound precheck removes the visible public-key-shaped handshake
+  prefix, but it is not a full CPU DoS defense. Plausible server hints still
+  force client-hint allowlist checks and a small AEAD attempt for a likely
+  client.
 - Operational status is still minimal: it is a local JSON snapshot with bounded
   recent close metadata and auth/envelope counters, not a metrics endpoint,
   management API or historical time series.
@@ -162,8 +165,8 @@ Before public beta or public release, finish:
   release should not rely on a single historical pass.
 - **Independent protocol review:** send the protocol packet, specification and
   relevant tests to an external reviewer, then resolve findings around Zero-RTT
-  precheck, envelope mode, replay cache policy and visible handshake-prefix
-  risk.
+  transcript binding, hint precheck, envelope mode and the no-timestamp/no-cache
+  replay model.
 - **Operator onboarding feedback:** run the documented quickstart with beta
   operators and reduce friction found in real deployments.
 - **Rotation repeat policy:** repeat the UUID revoke/reissue and server-key

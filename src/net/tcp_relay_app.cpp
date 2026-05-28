@@ -141,7 +141,6 @@ struct RelayAuthStats {
     std::uint64_t precheck_failed = 0;
     std::uint64_t unknown_client = 0;
     std::uint64_t decrypt_failed = 0;
-    std::uint64_t replayed = 0;
     std::uint64_t confirmation_failed = 0;
 };
 
@@ -401,9 +400,6 @@ private:
         case ZeroRttUpgradeError::decrypt_failed:
             ++auth_stats_.decrypt_failed;
             break;
-        case ZeroRttUpgradeError::replayed_nonce:
-            ++auth_stats_.replayed;
-            break;
         default:
             break;
         }
@@ -612,7 +608,6 @@ private:
         auth["precheck_failed"] = auth_stats_.precheck_failed;
         auth["unknown_client"] = auth_stats_.unknown_client;
         auth["decrypt_failed"] = auth_stats_.decrypt_failed;
-        auth["replayed"] = auth_stats_.replayed;
         auth["confirmation_failed"] = auth_stats_.confirmation_failed;
 
         json::object envelope;

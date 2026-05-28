@@ -157,10 +157,10 @@ def main():
         protocol_review,
         [
             "Zero-RTT carrier authentication",
-            "indexed precheck",
+            "transcript-bound hint precheck",
             "Envelope Mode",
-            "Replay cache",
-            "visible-prefix",
+            "No timestamp or replay cache",
+            "public-key-shaped prefix",
             "Lease Routing And Client Isolation",
             "Logging And Status Secrecy",
             "Reviewer questions",
@@ -384,7 +384,7 @@ def main():
         debug_server_config,
         [
             "fps-carrier-origin:9443",
-            "debug-carrier-v2",
+            "debug-carrier-v3",
             "server_private_key_base64",
             "server_public_key_base64",
             "allowed_client_uuids",
