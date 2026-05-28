@@ -458,6 +458,9 @@ The plotting helper writes PNG and SVG overview/quantile figures next to the
 capture artifacts. It can also run with globally installed packages, but using
 `.venv` keeps exploratory dependencies out of the project environment.
 
+See [TCP flow shape experiment](./pcap-flow-analysis.md) for a documented
+example run, plots and conclusions.
+
 ## Remaining Gaps
 
 - Transcript-bound Zero-RTT precheck is not a full CPU DoS defense.

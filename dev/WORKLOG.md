@@ -76,6 +76,20 @@ Additional verification:
 
 - `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/fps-pcap-flow-bidir-221120/flow-packets.csv --summary-json captures/fps-pcap-flow-bidir-221120/flow-summary.json --out-prefix captures/fps-pcap-flow-bidir-221120/readable-flow`
 
+Documentation:
+
+- Added `docs/pcap-flow-analysis.md` with the experiment scenario, commands,
+  committed overview/quantile plots and conclusions.
+- Linked the page from `docs/index.md` and `docs/testing.md`.
+
+Documentation verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Run PR-readiness checks after Zero-RTT v3
 
 Goal:
