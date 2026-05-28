@@ -49,6 +49,25 @@ Verification:
 - `cmake --build build -j 2 && ctest --test-dir build -L local --output-on-failure && git diff --check`
 - `python3 -m py_compile tests/integration/*.py tools/*.py && bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh && python3 tests/integration/docker_artifacts.py --repo /workspaces`
 - `ctest --test-dir build --output-on-failure`
+- PR-readiness quality sweep on 2026-05-29:
+  - `tools/run_quality_checks.sh --all`
+  - `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+  - `tools/run_quality_checks.sh --all` coverage gate:
+    72.22% total line coverage, 80.37% total function coverage.
+- Short `fpshop` Docker/TUN soak on 2026-05-29:
+  - image tag: `fps:soak-v4-0e732ca`;
+  - command shape:
+    `python3 tools/docker_resilience_soak.py --image fps:soak-v4-0e732ca --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90`;
+  - main mixed client-to-server UDP: 300.05 seconds, 14,649 packets,
+    0 lost, about 0.20 Mbit/s, plus 547 HTTP probe requests;
+  - server-to-client UDP probes to both leases: 489 packets each, 0 lost;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier stop/start recovery passed with 489 recovered UDP packets, 0 lost;
+  - final status: two active carriers, non-zero TUN counters, all six services
+    running; routine Docker-level backpressure did not trigger `write_queue_full`
+    on this host, which is acceptable under the documented soak policy.
+  - temporary `/tmp/fps-soak-v4-0e732ca` runtime and the remote/local
+    `fps:soak-v4-0e732ca` tags were removed after the run.
 
 ### Add FPS TCP-flow pcap shape experiment
 
