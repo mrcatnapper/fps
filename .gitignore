@@ -30,6 +30,7 @@ timeout-*
 
 # Editor/system noise
 .cache/
+.venv/
 .vscode/
 .idea/
 __pycache__/

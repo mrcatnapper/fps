@@ -60,6 +60,22 @@ Verification:
 - `python3 tools/is_pcap_looks_like_tls.py captures/fps-pcap-flow-bidir-221120/fps-link.pcap --port 8443 --require-bidirectional --require-application-data --min-records 10 --summary captures/fps-pcap-flow-bidir-221120/tls-shape.json`
 - `git diff --check`
 
+Follow-up:
+
+- Initialized a local `.venv` for exploratory plotting only:
+  `matplotlib`, `pandas` and `numpy`.
+- Added `.venv/` to `.gitignore`.
+- Added `tools/plot_pcap_flow.py`, an optional plotting helper that reads
+  `flow-packets.csv` and `flow-summary.json` and writes readable PNG/SVG
+  overview and quantile charts.
+- Generated readable plots for the bidirectional capture:
+  - `captures/fps-pcap-flow-bidir-221120/readable-flow.overview.png`
+  - `captures/fps-pcap-flow-bidir-221120/readable-flow.quantiles.png`
+
+Additional verification:
+
+- `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/fps-pcap-flow-bidir-221120/flow-packets.csv --summary-json captures/fps-pcap-flow-bidir-221120/flow-summary.json --out-prefix captures/fps-pcap-flow-bidir-221120/readable-flow`
+
 ### Run PR-readiness checks after Zero-RTT v3
 
 Goal:
