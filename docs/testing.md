@@ -409,7 +409,57 @@ python3 tools/is_pcap_looks_like_tls.py /tmp/fps-wire.pcap \
 ```
 
 The check validates TLS record framing and content types only. Timing and size
-distribution analysis remains out of scope.
+distribution analysis remains out of scope for the regression check.
+
+For exploratory traffic-shape analysis, run the Docker/TUN capture experiment:
+
+```sh
+FPS_DOCKER_SUDO=1 tools/docker_pcap_flow_experiment.py \
+  --image fps:local \
+  --duration 30 \
+  --bandwidth 2M \
+  --iperf-bidir \
+  --length 1200 \
+  --carrier-bps 300000 \
+  --carrier-frame-rate 30 \
+  --pre-upgrade-records 60
+```
+
+The helper starts `fps_client`, `fps_server`, a debug HTTPS/WSS carrier origin,
+a persistent carrier client and bidirectional UDP `iperf3` over the leased TUN
+link. It captures the FPS client/server TCP link on the Docker bridge, then
+writes artifacts under `captures/<project>/`:
+
+- `fps-link.pcap`: raw capture for Wireshark or `is_pcap_looks_like_tls.py`;
+- `flow-summary.json`: packet-size and inter-packet quantiles before/after the
+  first observed Zero-RTT authentication;
+- `flow-packets.csv`: per-packet timestamp, direction, size and phase data;
+- `flow-plot.svg`: quick dependency-free scatter/heatmap view of packet sizes
+  and timing.
+
+`--carrier-bps` is bytes per second, while `iperf3 --bandwidth` is bits per
+second. Use the Docker bridge capture path for TCP reassembly; capturing on
+Linux `any` can duplicate or reorder Docker bridge packets enough to confuse
+TLS record reconstruction.
+
+For more readable research plots, use an optional local Python venv. These
+packages are not FPS runtime or build dependencies:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install matplotlib pandas numpy
+.venv/bin/python tools/plot_pcap_flow.py \
+  --packets-csv captures/<project>/flow-packets.csv \
+  --summary-json captures/<project>/flow-summary.json \
+  --out-prefix captures/<project>/readable-flow
+```
+
+The plotting helper writes PNG and SVG overview/quantile figures next to the
+capture artifacts. It can also run with globally installed packages, but using
+`.venv` keeps exploratory dependencies out of the project environment.
+
+See [TCP flow shape experiment](./pcap-flow-analysis.md) for a documented
+example run, plots and conclusions.
 
 ## Remaining Gaps
 
