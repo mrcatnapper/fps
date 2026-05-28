@@ -4,6 +4,62 @@
 
 ## 2026-05-28
 
+### Add FPS TCP-flow pcap shape experiment
+
+Goal:
+
+- Capture and analyze how the visible `fps_client <-> fps_server` TCP flow
+  changes before and after Zero-RTT upgrade under a continuous WSS carrier and
+  comparable TUN traffic.
+
+Done:
+
+- Added `tools/analyze_pcap_tcp_flow.py`, a libpcap-based analyzer that filters
+  a TCP flow by port/endpoints and writes:
+  - packet/inter-packet quantiles before and after a supplied split time;
+  - per-direction summaries;
+  - per-packet CSV;
+  - dependency-free SVG scatter/heatmap plots.
+- Added `tools/docker_pcap_flow_experiment.py`, a Docker/TUN experiment harness
+  that starts FPS client/server, debug WSS carrier origin/client, captures the
+  FPS TCP link on the Docker bridge, runs UDP `iperf3` through TUN and invokes
+  the analyzer.
+- The harness defaults to resolving the concrete Docker bridge interface. A
+  first capture on Linux `any` showed why this matters: duplicated/reordered
+  bridge packets can make TCP/TLS reassembly report sequence gaps.
+- Documented the workflow in `docs/testing.md`.
+
+Experiment results:
+
+- One-way UDP over FPS at `iperf3 -b 2M`: 30 seconds, 6,250 packets, 0 lost.
+- Bidirectional UDP over FPS at `iperf3 --bidir -b 2M`: 30 seconds, both
+  directions about 2.0 Mbit/s, 0 lost.
+- TLS-shape validation on the bidirectional capture passed: 14,697 TLS records
+  across both directions, all FPS-link bytes parse as TLS records.
+- Bidirectional capture artifacts:
+  `captures/fps-pcap-flow-bidir-221120/`.
+
+Observation:
+
+- Before upgrade, the visible carrier flow was dominated by regular large WSS
+  echo records around the 30 fps carrier cadence.
+- After upgrade plus bidirectional 2 Mbit/s TUN traffic, the flow shows a clear
+  new concentration of near-1321-byte IP packets and much shorter inter-packet
+  intervals: p50 inter-packet time changed from about 0.19 ms overall before
+  upgrade to about 0.82 ms after upgrade, while p95 changed from about 33 ms to
+  about 4.3 ms. Per direction after upgrade, visible throughput was about
+  4.4 Mbit/s each way.
+- This is useful evidence that the next traffic-analysis work should focus on
+  envelope scheduling/shaping against the carrier's visible packet-size and
+  timing distribution, not only on TLS-record syntactic validity.
+
+Verification:
+
+- `python3 -m py_compile tools/analyze_pcap_tcp_flow.py tools/docker_pcap_flow_experiment.py`
+- `FPS_DOCKER_SUDO=1 tools/docker_pcap_flow_experiment.py --image fps:local --duration 30 --bandwidth 2M --iperf-bidir --length 1200 --carrier-bps 300000 --carrier-frame-rate 30 --pre-upgrade-records 60 --project fps-pcap-flow-bidir-221120`
+- `python3 tools/is_pcap_looks_like_tls.py captures/fps-pcap-flow-bidir-221120/fps-link.pcap --port 8443 --require-bidirectional --require-application-data --min-records 10 --summary captures/fps-pcap-flow-bidir-221120/tls-shape.json`
+- `git diff --check`
+
 ### Run PR-readiness checks after Zero-RTT v3
 
 Goal:
