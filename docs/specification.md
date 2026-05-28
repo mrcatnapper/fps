@@ -1,6 +1,6 @@
 # FPS Protocol And Architecture Specification
 
-Version: 0.7, duplicate UUID replace_old beta increment
+Version: 0.8, transcript-bound Zero-RTT beta increment
 
 Implementation language: C++20, Boost.Asio, Boost.Test, Boost.JSON, Boost.Log
 and OpenSSL.
@@ -36,7 +36,7 @@ fps_client == TLS-application-record-shaped FPS link == fps_server
                                                    real HTTPS origin
 ```
 
-Key v2 properties:
+Key v3 properties:
 
 - `security.zero_rtt` is the only supported carrier authentication mechanism.
 - After a successful Zero-RTT upgrade, visible TLS Application Data records on
@@ -84,7 +84,7 @@ Rules:
 
 Wire-shape checks:
 
-- local tests cover passthrough and v2 envelope paths;
+- local tests cover passthrough and v3 envelope paths;
 - manual capture uses `tools/capture_tls_wire.sh --port PORT -- COMMAND`;
 - when `tshark` is installed, the generated TLS summary should show parseable
   TLS records rather than Wireshark falling back to an opaque TCP stream.
@@ -103,22 +103,20 @@ Current construction:
 - `client_uuid` is a per-device/per-profile bearer secret. Shared or group UUIDs
   are unsupported because one UUID maps to one client public key and one
   persistent TUN lease identity.
-- The client builds one encrypted upgrade record after observing a real previous
-  TLS record.
+- The client builds one encrypted upgrade record after observing enough real
+  carrier TLS records to form a transcript binding.
 - Upgrade associated data binds the attempt to direction, TLS record index,
-  `hash(previous TLS record)` and profile id.
-- The auth record starts with a client ephemeral public key and an encrypted
-  precheck capsule. The capsule has no plaintext magic marker and gives the
-  server an internal ClientID for indexed lookup of exactly one allowlisted
-  client public key.
-- ClientID is not a config or API entity. It is a truncated SHA-256 value derived
-  from server public key, profile id and client public key.
-- The main encrypted upgrade is additionally bound to the precheck capsule in
-  AAD.
-- The replay cache rejects repeated nonce plus channel-binding attempts. The
-  current cache is daemon-process memory shared by all sessions created from one
-  loaded config; restarting the daemon clears it. Durable replay state is future
-  hardening, not part of the beta baseline.
+  transcript byte count, transcript hash and profile id.
+- The transcript is an incremental cryptographic hash of visible carrier TLS
+  record bytes before the candidate record, seeded with public
+  domain-separated material: server public key, profile id, direction and
+  protocol version.
+- The auth record starts with two short opaque hints, not with a public-key
+  shaped field. The rest of the capsule is encrypted.
+- Timestamp and replay-cache fields are not part of the active v3 wire format.
+  Replay resistance relies on reproducing the exact carrier transcript prefix
+  before the candidate; reintroducing durable replay state remains a possible
+  protocol-review outcome.
 - The server's first encrypted response envelope confirms that both peers
   derived the same session keys.
 
@@ -133,54 +131,36 @@ Security constraints:
   miss.
 - An invalid envelope after upgrade is a session failure.
 
-### 4.1 CPU-Friendly Precheck
+### 4.1 Transcript-Bound Precheck
 
-Implemented v2 precheck layout inside the TLS Application Data payload:
-
-```text
-ephemeral_public[32] | precheck_box[32] | upgrade_ciphertext | upgrade_tag[16]
-```
-
-`precheck_box` is ChaCha20-Poly1305 over `client_id[16]`, where:
+Implemented v3 precheck layout inside the TLS Application Data payload:
 
 ```text
-client_id = SHA256(
-  "fps/zero-rtt/client-id/v1" ||
-  server_public_key ||
-  profile_id ||
-  client_public_key
-)[0..16]
+server_hint[8] | client_hint[8] | encrypted_capsule | capsule_tag[16]
 ```
 
-Capsule material is derived from `X25519(client_ephemeral, server_static)` and
-the channel binding. Server-side verification performs one ephemeral-static
-X25519, decrypts the small capsule, looks up one client public key and only then
-attempts one full upgrade decrypt. This removes allowlist-order trial decrypts
-from the normal path.
-
-Precheck is not a complete DoS solution. A plausible candidate still costs one
-X25519 and one small AEAD attempt.
-
-High-priority refactor: the current handshake still exposes a fixed-position
-32-byte public-key field at the start of every Zero-RTT candidate. Even when this
-field is intended to be ephemeral, a public-key-shaped prefix at byte zero is a
-much easier classifier target than timing analysis; if implementation,
-randomness or reuse bugs ever make this value stable or biased, repeated FPS
-sessions from the same client could produce visible distribution peaks in the
-first TLS Application Data payload bytes. The next wire revision should remove
-this visible public-key prefix. A candidate design is to reserve only a short
-opaque lookup hint such as:
+Hints are derived from the pre-candidate transcript snapshot:
 
 ```text
-hint = H(current_time_bucket || previous_tls_payload_hash ||
-         client_public_key || server_public_key)[0..N]
+server_hint = H("fps/zero-rtt/server-hint/v3" ||
+                transcript_snapshot || server_public_key || profile_id)[0..8]
+
+client_hint = H("fps/zero-rtt/client-hint/v3" ||
+                transcript_snapshot || client_public_key ||
+                server_public_key || profile_id)[0..8]
 ```
 
-and encrypt the rest of the upgrade capsule into ciphertext. The server can then
-try a small number of cheap hint matches, optionally through a Bloom filter or a
-bounded allowlist scan, and run the expensive cryptographic verification only for
-the likely client. The hint must remain time/window-bound and profile-bound so it
-does not become a durable plaintext client identifier.
+Server-side verification first rejects candidates with a wrong `server_hint`,
+then scans the configured UUID-derived client public keys for `client_hint`, and
+only then attempts capsule decryption for the likely client. The encrypted
+capsule contains protocol version, capabilities, the client ephemeral public key
+and padding. Session keys are derived from static DH, ephemeral DH, the
+transcript snapshot and the encrypted wire bytes.
+
+This is not a complete active CPU DoS defense because an attacker that knows the
+public construction can create plausible `server_hint` values. Its main value is
+removing visible public-key-shaped handshake material and avoiding full decrypt
+work for ordinary random carrier records.
 
 ### 4.2 Server Confirmation Race Handling
 
@@ -199,50 +179,13 @@ does the client switch that carrier fully into envelope mode. Treating the first
 peer-direction record as mandatory confirmation is a correctness bug and can
 break otherwise valid cover sessions.
 
-### 4.3 Future Transcript-Bound Wire Revision
+### 4.3 Future Handshake-Less Classifier
 
-The next protocol revision should replace the current previous-record hash with
-a transcript commitment over the visible carrier byte stream that exists before
-the FPS candidate record. The goal is to make a captured upgrade attempt useless
-outside the exact carrier session prefix that created it.
-
-Candidate direction:
-
-- Maintain a per-direction incremental cryptographic transcript hash over the
-  outer TCP/TLS bytes already observed on the FPS link.
-- Seed and domain-separate the transcript with server public key, profile id,
-  role, direction and protocol version. The seed is public binding material, not
-  a secret authenticator.
-- For a candidate record, bind the encrypted upgrade to transcript hash,
-  transcript byte count and record index before the candidate bytes are added.
-- Keep timestamp and replay-cache checks. Transcript binding makes organic
-  cross-session replay impractical under a non-malicious origin, but it does not
-  remove the value of replay defense against artificially replayed prefixes,
-  daemon restarts, implementation bugs or weak carrier entropy.
-
-A possible CPU-friendly candidate classifier is a short opaque hint derived from
-the transcript and server/client public identities:
-
-```text
-server_hint = H("fps/v3/server-hint" || transcript || server_public_key ||
-                profile_id || time_bucket)[0..N]
-client_hint = H("fps/v3/client-hint" || transcript || client_public_key ||
-                server_public_key || profile_id || time_bucket)[0..M]
-```
-
-The server can reject random carrier records if the server hint does not match,
-then scan the small allowlist for a matching client hint and run a full
-cryptographic verification only for the likely client. These hints must be
-window-bound and transcript-bound so they do not become durable client
-identifiers. They are not a complete active DoS defense because an attacker that
-knows the public construction can still create plausible server hints; they are
-primarily a passive-classification and ordinary-random-traffic filter.
-
-The same idea can become a later handshake-less envelope classifier: every
-visible TLS Application Data record could be tested as either ordinary carrier
-bytes or an FPS envelope candidate using transcript-bound one-time hints and a
-final AEAD verification. This is a larger v3 design, not a beta patch. It must
-prove:
+The same transcript-bound idea can become a later handshake-less envelope
+classifier: every visible TLS Application Data record could be tested as either
+ordinary carrier bytes or an FPS envelope candidate using transcript-bound
+one-time hints and a final AEAD verification. This is a larger future design,
+not a beta patch. It must prove:
 
 - extremely low false positives, because swallowing a real carrier TLS record
   would break the browser/origin TLS stream;
@@ -359,7 +302,7 @@ Deferred work:
 
 Config format: JSON parsed through Boost.JSON.
 
-Minimal server-side v2 shape:
+Minimal server-side v3 shape:
 
 ```json
 {
@@ -371,13 +314,11 @@ Minimal server-side v2 shape:
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "example-origin-v2",
+      "profile_id": "example-origin-v3",
       "server_private_key_base64": "PASTE_server_private_key_base64_HERE",
       "server_public_key_base64": "PASTE_server_public_key_base64_HERE",
       "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"],
-      "timestamp_window_sec": 30,
-      "replay_cache_size": 4096,
-      "trial_decrypt_limit": 16,
+      "version": 3,
       "min_records_before_trial": 1,
       "upgrade_direction": "client_to_server"
     }
@@ -414,6 +355,9 @@ Client config uses `network.server`, `client_uuid`,
 config uses only inline padded RFC4648 base64 fields
 `server_private_key_base64`/`server_public_key_base64` and
 `allowed_client_uuids`.
+`security.zero_rtt.version` is optional and defaults to `3`. When present it
+must be `3`; pre-production wire formats are intentionally not accepted as
+compatibility modes.
 
 Validation rules:
 
@@ -449,14 +393,13 @@ Operational status:
   `auth`, envelope counters under `envelope`, TUN packet/drop counters and
   shaper/backpressure counters;
 - `auth` contains candidate, authenticated, precheck failure, unknown-client,
-  decrypt failure, replay and confirmation failure counters;
+  decrypt failure and confirmation failure counters;
 - `envelope` contains decode/encode failure, tamper/invalid and
   records-decoded/records-encoded counters;
 - close metadata contains only `session_id`, authentication state, close reason
   and non-secret direction/component/stage/error names;
-- status output must not include UUID values, private/public keys, ClientID,
-  raw client instance ids, raw TLS payloads, raw TUN packets or IP payload
-  bytes.
+- status output must not include UUID values, private/public keys, raw client
+  instance ids, raw TLS payloads, raw TUN packets or IP payload bytes.
 
 Client profile CLI:
 
@@ -509,7 +452,7 @@ valid JSON so operators can gradually move from `grep` to `jq`-style tooling.
 Allowed logs:
 
 - lifecycle: start/listening/target connected/session closed;
-- Zero-RTT auth/build/trial-miss metadata;
+- Zero-RTT auth/build/candidate-miss metadata;
 - carrier registered/removed and carrier count;
 - TUN open/closed/errors, queue/backpressure/drop counters;
 - shaper queued/blocked/scheduled events;
@@ -551,9 +494,7 @@ See [testing.md](./testing.md).
 Near productionization gaps:
 
 - QR/mobile onboarding on top of the existing `fps://v1` profile URI;
-- deeper Zero-RTT DoS review beyond indexed precheck;
-- transcript-bound Zero-RTT wire revision that removes the visible public-key
-  prefix and binds candidates to the full carrier byte-stream prefix;
+- deeper Zero-RTT DoS review beyond transcript-bound precheck;
 - research-grade handshake-less envelope classification where FPS records and
   ordinary carrier records can coexist without an explicit upgrade state;
 - adversarial active-probe/tamper/drop test plan;
@@ -574,7 +515,7 @@ See [beta-status.md](./beta-status.md) and
 - **Cover TLS session**: real TLS session whose bytes FPS proxies and, after
   upgrade, packs into envelopes.
 - **Zero-RTT upgrade**: one encrypted auth record that moves a carrier into FPS
-  v2.
+  envelope mode.
 - **Envelope**: encrypted FPS record after upgrade.
 - **Carrier**: authenticated TLS session available for TUN/control frames.
 - **Carrier pool**: set of authenticated carriers without primary ownership.

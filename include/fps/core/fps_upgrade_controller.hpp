@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -60,14 +61,12 @@ class FpsUpgradeController {
 public:
     explicit FpsUpgradeController(FpsUpgradeControllerConfig config);
 
-    [[nodiscard]] auto observe_tls(std::span<const std::byte> bytes) -> FpsUpgradeObserveResult;
+    [[nodiscard]] auto observe_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeObserveResult;
 
-    [[nodiscard]] auto build_client_upgrade_record(
-        std::uint64_t timestamp, std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt,
-        std::optional<Nonce32> replay_nonce = std::nullopt
-    ) -> FpsUpgradeBuildResult;
+    [[nodiscard]] auto build_client_upgrade_record(std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
+        -> FpsUpgradeBuildResult;
 
-    [[nodiscard]] auto process_inbound_tls(Direction direction, std::span<const std::byte> bytes, std::uint64_t now) -> FpsUpgradeProcessResult;
+    [[nodiscard]] auto process_inbound_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeProcessResult;
 
     [[nodiscard]] auto state() const noexcept -> FpsUpgradeState;
     [[nodiscard]] auto session_keys() const noexcept -> const std::optional<SessionKeys>&;
@@ -75,8 +74,16 @@ public:
     [[nodiscard]] auto has_channel_binding() const noexcept -> bool;
 
 private:
+    struct TranscriptState {
+        HmacSha256 hash{};
+        std::uint64_t byte_count{};
+        std::uint64_t record_index{};
+        bool valid = false;
+    };
+
     [[nodiscard]] auto current_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
-    void update_previous_record_hash(const TlsRecord& record);
+    void initialize_transcripts();
+    void update_transcript(Direction direction, const TlsRecord& record);
     void append_forward(ByteVector& out, const TlsRecord& record) const;
 
     FpsUpgradeControllerConfig config_;
@@ -85,8 +92,7 @@ private:
     FpsUpgradeState state_{FpsUpgradeState::cover_passthrough};
     std::optional<SessionKeys> session_keys_;
     std::optional<X25519PublicKey> client_public_key_;
-    std::optional<HmacSha256> previous_record_hash_;
-    std::uint64_t next_record_index_{};
+    std::array<TranscriptState, 2> transcripts_{};
 };
 
 } // namespace fps

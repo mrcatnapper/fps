@@ -4,6 +4,55 @@
 
 ## 2026-05-28
 
+### Implement transcript-bound Zero-RTT v3
+
+Goal:
+
+- Replace previous-record-only Zero-RTT binding with full carrier transcript
+  binding and remove active timestamp/replay-cache mechanics from the
+  pre-production protocol.
+
+Done:
+
+- Changed Zero-RTT candidate wire shape to
+  `server_hint[8] | client_hint[8] | encrypted_capsule | tag`.
+- Moved the client ephemeral public key into the encrypted capsule, removing
+  the visible public-key-shaped prefix.
+- Added per-direction transcript tracking in `FpsUpgradeController`, binding
+  candidates to transcript hash, transcript byte count, record index, direction
+  and profile id.
+- Removed active timestamp/replay nonce/replay cache fields from core structs,
+  relay config parsing, generated profiles, status counters and tests.
+- Fixed Zero-RTT config to accept only v3 when `security.zero_rtt.version` is
+  present, and renamed active examples/fixtures away from stale `v2` profile
+  ids.
+- Updated local adversarial integration coverage from replay-cache observation
+  to transcript-prefix mismatch observation.
+- Updated public and developer docs for the v3 no-timestamp/no-cache replay
+  model and remaining protocol-review questions.
+
+Decision:
+
+- Keep explicit upgrade/envelope mode as the beta baseline. Handshake-less
+  classification remains a separate protocol-review item.
+- Do not keep compatibility for removed `timestamp_window_sec`,
+  `replay_cache_size` or `trial_decrypt_limit` config fields; they now fail
+  config validation as invalid Zero-RTT v3 fields.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+Commit:
+
+- Local commit: `Implement transcript-bound Zero-RTT v3` (see `git log --oneline -1`).
+
 ### Document transcript-bound Zero-RTT direction
 
 Goal:

@@ -216,6 +216,6 @@ Send reviewers:
 - relevant test names from `ctest -N`, especially Zero-RTT, envelope,
   adversarial and TUN lease-routing tests.
 
-Ask reviewers to focus on Zero-RTT channel binding, indexed precheck, captured
-prefix replay handling, daemon-memory replay cache behavior, envelope failure
-semantics, visible handshake-prefix risk and leased-client source enforcement.
+Ask reviewers to focus on Zero-RTT transcript binding, hint precheck,
+no-timestamp/no-cache replay assumptions, envelope failure semantics and
+leased-client source enforcement.

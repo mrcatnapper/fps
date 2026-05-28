@@ -65,12 +65,9 @@ def write_config(
     zero_rtt = {
         "enabled": True,
         "profile_id": profile_id,
-        "timestamp_window_sec": 30,
-        "version": 2,
+        "version": 3,
         "capabilities": 1,
         "max_padding_size": 64,
-        "replay_cache_size": 256,
-        "trial_decrypt_limit": 1,
         "min_records_before_trial": 1,
         "upgrade_direction": "client_to_server",
     }
@@ -467,7 +464,7 @@ def main():
         config_dir.mkdir()
         server_keys = generate_server_keypair(base, args.image)
         allowed_uuids = [data["uuid"] for data in CLIENTS.values()]
-        profile_id = "docker-multi-client-v2"
+        profile_id = "docker-multi-client-v3"
         write_config(
             config_dir / "server.json",
             role="server",

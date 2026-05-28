@@ -267,15 +267,14 @@ if(FPS_BUILD_TESTS)
         --fps-server $<TARGET_FILE:fps_server>)
     fps_set_test_properties(fps_https_zero_rtt_chain 20 "integration;local;zero_rtt")
 
-    add_test(NAME fps_https_zero_rtt_indexed_precheck
+    add_test(NAME fps_https_zero_rtt_hint_precheck
       COMMAND
         ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/https_zero_rtt_chain.py
         --fps-client $<TARGET_FILE:fps_client>
         --fps-server $<TARGET_FILE:fps_server>
-        --decoy-allowed-clients 2
-        --trial-decrypt-limit 1)
-    fps_set_test_properties(fps_https_zero_rtt_indexed_precheck 20 "integration;local;zero_rtt")
+        --decoy-allowed-clients 2)
+    fps_set_test_properties(fps_https_zero_rtt_hint_precheck 20 "integration;local;zero_rtt")
 
     add_test(NAME fps_https_zero_rtt_large_response
       COMMAND

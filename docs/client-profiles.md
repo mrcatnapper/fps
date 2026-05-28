@@ -182,7 +182,7 @@ through a named volume so one-shot status containers can query the daemon.
 
 - An FPS URI or generated client profile contains the client UUID, so it is a
   bearer secret. Treat it like a password or private key.
-- Do not log URIs, UUIDs, derived keys or ClientID values.
+- Do not log URIs, UUIDs or derived keys.
 - Do not log client instance ids; they are encrypted runtime metadata, not an
   operator-facing identity.
 - URI import rejects unknown future major versions instead of silently ignoring

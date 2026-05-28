@@ -314,13 +314,13 @@ def unknown_client_probe(fps_client, fps_server, tmpdir, origin_port):
         stop_and_read(server)
 
 
-def replay_probe(fps_client, fps_server, tmpdir, origin_port):
+def transcript_mismatch_probe(fps_client, fps_server, tmpdir, origin_port):
     server_port = free_port()
     proxy_port = free_port()
     client_port = free_port()
-    server_status_socket = tmpdir / "replay-server.status"
-    server_config = tmpdir / "replay-server.json"
-    client_config = tmpdir / "replay-client.json"
+    server_status_socket = tmpdir / "transcript-server.status"
+    server_config = tmpdir / "transcript-server.json"
+    client_config = tmpdir / "transcript-client.json"
     write_zero_rtt_relay_config(
         server_config,
         server_port,
@@ -338,26 +338,32 @@ def replay_probe(fps_client, fps_server, tmpdir, origin_port):
         proxy.start()
         client = start_zero_rtt_client(fps_client, client_config)
         wait_for_tcp("127.0.0.1", client_port, client)
-        bodies = https_get_roundtrips(client_port, paths=["/replay"])
-        assert_roundtrip_bodies(bodies, paths=["/replay"])
+        bodies = https_get_roundtrips(client_port, paths=["/transcript"])
+        assert_roundtrip_bodies(bodies, paths=["/transcript"])
         wait_for_status_counter(
             fps_server, server_config, server_status_socket, "auth", "authenticated"
         )
         if not wait_for(lambda: len(proxy.c2s_records) >= 2):
             raise RuntimeError(f"proxy did not record enough c2s records: {proxy.c2s_records!r}")
-        replayed_before = int(
+        precheck_before = int(
             query_status(fps_server, server_config, server_status_socket)
             .get("auth", {})
-            .get("replayed", 0)
+            .get("precheck_failed", 0)
         )
         status = None
+        mutated_prefix = bytearray(proxy.c2s_records[0])
+        if len(mutated_prefix) > 5:
+            mutated_prefix[-1] ^= 0x01
         for record_index in range(1, min(len(proxy.c2s_records), 12)):
-            replay_bytes = b"".join(proxy.c2s_records[: record_index + 1])
-            with socket.create_connection(("127.0.0.1", server_port), timeout=3.0) as sock:
-                sock.sendall(replay_bytes)
-                time.sleep(0.2)
+            replay_bytes = bytes(mutated_prefix) + b"".join(proxy.c2s_records[1 : record_index + 1])
+            try:
+                with socket.create_connection(("127.0.0.1", server_port), timeout=3.0) as sock:
+                    sock.sendall(replay_bytes)
+                    time.sleep(0.2)
+            except OSError:
+                pass
             candidate_status = query_status(fps_server, server_config, server_status_socket)
-            if int(candidate_status.get("auth", {}).get("replayed", 0)) > replayed_before:
+            if int(candidate_status.get("auth", {}).get("precheck_failed", 0)) > precheck_before:
                 status = candidate_status
                 break
         if status is None:
@@ -365,7 +371,7 @@ def replay_probe(fps_client, fps_server, tmpdir, origin_port):
                 [record[0], int.from_bytes(record[3:5], "big")]
                 for record in proxy.c2s_records[:12]
             ]
-            raise RuntimeError(f"replay counter did not increment; c2s records={summary!r}")
+            raise RuntimeError(f"transcript mismatch did not trigger precheck failure; c2s records={summary!r}")
         assert_no_status_secrets(status)
     finally:
         stop_and_read(client)
@@ -441,7 +447,7 @@ def main():
         try:
             direct_passthrough_probe(args.fps_server, tmpdir, origin_port)
             unknown_client_probe(args.fps_client, args.fps_server, tmpdir, origin_port)
-            replay_probe(args.fps_client, args.fps_server, tmpdir, origin_port)
+            transcript_mismatch_probe(args.fps_client, args.fps_server, tmpdir, origin_port)
             tampered_envelope_probe(args.fps_client, args.fps_server, tmpdir, origin_port)
         finally:
             stop_origin(origin)

@@ -28,7 +28,6 @@ def main():
     parser.add_argument("--fps-client", required=True)
     parser.add_argument("--fps-server", required=True)
     parser.add_argument("--decoy-allowed-clients", type=int, default=0)
-    parser.add_argument("--trial-decrypt-limit", type=int, default=8)
     parser.add_argument("--origin-port", type=int)
     parser.add_argument("--server-port", type=int)
     parser.add_argument("--client-port", type=int)
@@ -48,8 +47,8 @@ def main():
         client_port = args.client_port or free_port()
         origin = start_https_origin(cert, key, origin_port)
 
-        server_config = tmpdir / "server-v2.json"
-        client_config = tmpdir / "client-v2.json"
+        server_config = tmpdir / "server-v3.json"
+        client_config = tmpdir / "client-v3.json"
         write_zero_rtt_relay_config(
             server_config,
             server_port,
@@ -57,7 +56,6 @@ def main():
             origin_port,
             "server",
             decoy_allowed_clients=args.decoy_allowed_clients,
-            trial_decrypt_limit=args.trial_decrypt_limit,
         )
         write_zero_rtt_relay_config(
             client_config, client_port, "server", server_port, "client"

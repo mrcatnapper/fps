@@ -289,7 +289,7 @@ notes with the release-candidate record.
 - `docker`: Docker artifact/static checks.
 - `log`: log/stream checks without exact timestamps.
 - `wss`: WebSocket-over-TLS carrier generation and relay paths.
-- `zero_rtt`: FPS v2 late upgrade/envelope path.
+- `zero_rtt`: transcript-bound Zero-RTT late upgrade/envelope path.
 - `multi_carrier`: more than one authenticated carrier session.
 - `shaper`: shaper-gated injected writes.
 - `fragmentation`: TUN packet splitting/reassembly.
@@ -303,17 +303,16 @@ Unit tests cover:
 
 - TLS parser/layer partial headers/bodies, coalesced records, invalid headers
   and application-data wrapping/filtering.
-- Zero-RTT X25519 agreement, encrypted upgrade success, replay/timestamp
-  rejection, indexed precheck, channel-binding mismatch, unknown client fallback,
-  malformed candidates, shared daemon replay cache behavior and tamper
-  rejection.
+- Zero-RTT X25519 agreement, encrypted upgrade success, transcript-binding
+  mismatch, hint precheck, unknown client fallback, malformed candidates and
+  tamper rejection.
 - FPS upgrade controller late upgrade, byte-for-byte fallback and fragmented
   boundary tracking.
 - Envelope codec/pipeline inner TLS bytes, covert frames, padding, implicit
   sequence, tamper rejection and no-plaintext-metadata smoke.
 - Shaper deterministic plans, CDF validation, ratio budget, burst limit,
   backpressure clear/block, direction isolation and profile exhaustion.
-- `TcpBridgeSession` passthrough, v2 strip/confirmation/unwrap, client late
+- `TcpBridgeSession` passthrough, Zero-RTT strip/confirmation/unwrap, client late
   upgrade, race-safe confirmation wait with cover-record fallback, fragmented
   confirmation wait, post-confirmation wrapping and unauthenticated enqueue
   rejection.
@@ -349,10 +348,10 @@ Local integration tests cover:
   `/run/fps` status volumes, configurable published carrier port, conservative
   client-host route defaults, TUN capabilities and absence of embedded secrets.
 - HTTPS passthrough with no auth.
-- HTTPS Zero-RTT chain, indexed precheck with decoy allowlist entries, and two
+- HTTPS Zero-RTT chain, hint precheck with decoy allowlist entries, and two
   simultaneous keep-alive TLS sessions without response mixing.
 - Zero-RTT adversarial local probe: direct passthrough without valid upgrade,
-  unknown client UUID, captured-prefix replay and post-auth tampered envelope
+  unknown client UUID, transcript-prefix mismatch and post-auth tampered envelope
   against live `fps_client -> fps_server -> HTTPS origin`.
 - WSS passthrough, WSS Zero-RTT using reusable `fps_carrier`, and a Zero-RTT
   HTTPS browser-style request through `fps_client -> fps_server -> fps_carrier`.
@@ -414,7 +413,7 @@ distribution analysis remains out of scope.
 
 ## Remaining Gaps
 
-- Indexed Zero-RTT precheck is not a full CPU DoS defense.
+- Transcript-bound Zero-RTT precheck is not a full CPU DoS defense.
 - Pcap/TLS shape regression is opt-in because it needs `tcpdump` and sudo.
 - There is no full routing/NAT-to-Internet integration scenario.
 - Docker build/smoke, multi-client and proxy-overlay smokes are opt-in because

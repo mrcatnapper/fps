@@ -718,7 +718,7 @@ def main():
         config_dir.mkdir()
         server_keys = generate_server_keypair(base, args.image)
         allowed_uuids = [data["uuid"] for data in CLIENTS.values()]
-        profile_id = "docker-resilience-soak-v2"
+        profile_id = "docker-resilience-soak-v3"
         write_queue_bytes = args.write_queue_bytes
 
         write_config(

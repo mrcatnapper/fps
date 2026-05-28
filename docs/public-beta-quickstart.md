@@ -187,7 +187,7 @@ Expected signals:
 - `auth.authenticated` and `sessions.carriers_current` are non-zero;
 - the client has a leased address on `fpsc0`;
 - TUN packet counters increase when traffic crosses the tunnel;
-- status JSON contains no UUIDs, private keys, ClientID values or payload bytes.
+- status JSON contains no UUIDs, private keys or payload bytes.
 
 If `tun.leased_client_address` is present but `sessions.carriers_current` is
 zero, open a persistent carrier before debugging routes, DNS or proxy settings.

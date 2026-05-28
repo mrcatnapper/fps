@@ -31,7 +31,7 @@ when you need exact CLI, Docker, routing, protocol or testing details.
 
 ## Reference
 
-- [Protocol and architecture specification](./specification.md): current v2
+- [Protocol and architecture specification](./specification.md): current
   wire rules, Zero-RTT authentication, envelope mode and lease semantics.
 - [Testing and quality workflow](./testing.md): local tests, GitHub Actions,
   Docker simulations, fuzzing and soak checks.

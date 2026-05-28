@@ -414,10 +414,7 @@ auto run_generate_client_profile(const TcpRelayConfig& config, const ClientProfi
     zero_rtt_json["profile_id"] = controller.profile_id;
     zero_rtt_json["client_uuid"] = request.client_uuid;
     zero_rtt_json["server_public_key_base64"] = base64_encode(zero_rtt.local_static_public);
-    zero_rtt_json["timestamp_window_sec"] = zero_rtt.timestamp_window.count();
     zero_rtt_json["max_padding_size"] = zero_rtt.max_padding_size;
-    zero_rtt_json["replay_cache_size"] = zero_rtt.replay_cache_size;
-    zero_rtt_json["trial_decrypt_limit"] = zero_rtt.trial_decrypt_limit;
     zero_rtt_json["min_records_before_trial"] = controller.min_records_before_trial;
     zero_rtt_json["version"] = zero_rtt.version;
     zero_rtt_json["capabilities"] = zero_rtt.capabilities;
