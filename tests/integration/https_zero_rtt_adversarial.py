@@ -19,6 +19,8 @@ from fps_https_harness import (
     generate_cert,
     https_get_roundtrips,
     prepare_zero_rtt_fixture_dir,
+    read_http_response,
+    response_body,
     start_https_origin,
     start_process,
     stop_and_read,
@@ -98,6 +100,7 @@ class RecordingProxy:
         self.c2s_records = []
         self.s2c_records = []
         self.seen_upgrade = threading.Event()
+        self.tamper_enabled = threading.Event()
         self.tampered = threading.Event()
         self._stop = threading.Event()
         self._ready = threading.Event()
@@ -125,6 +128,9 @@ class RecordingProxy:
             pass
         for thread in self._threads:
             thread.join(timeout=2.0)
+
+    def enable_tamper(self):
+        self.tamper_enabled.set()
 
     def _run(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -196,9 +202,8 @@ class RecordingProxy:
         self.s2c_records.append(record)
         if (
             self.tamper_post_auth
-            and self.seen_upgrade.is_set()
+            and self.tamper_enabled.is_set()
             and record[:1] == b"\x17"
-            and len([item for item in self.s2c_records if item[:1] == b"\x17"]) >= 2
             and not self.tampered.is_set()
         ):
             tampered = bytearray(record)
@@ -219,15 +224,21 @@ def start_zero_rtt_client(fps_client, config_path):
 
 
 def wait_for_status_counter(binary, config_path, socket_path, section, name, minimum=1):
+    last_status = None
+
     def read():
+        nonlocal last_status
         status = query_status(binary, config_path, socket_path)
+        last_status = status
         if int(status.get(section, {}).get(name, 0)) >= minimum:
             return status
         return None
 
     status = wait_for(read)
     if status is None:
-        raise RuntimeError(f"status counter {section}.{name} did not reach {minimum}")
+        raise RuntimeError(
+            f"status counter {section}.{name} did not reach {minimum}; last_status={last_status!r}"
+        )
     return status
 
 
@@ -411,10 +422,43 @@ def tampered_envelope_probe(fps_client, fps_server, tmpdir, origin_port):
         proxy.start()
         client = start_zero_rtt_client(fps_client, client_config)
         wait_for_tcp("127.0.0.1", client_port, client)
-        try:
-            https_get_roundtrips(client_port, paths=["/tamper"])
-        except (OSError, ssl.SSLError, RuntimeError):
-            pass
+
+        context = ssl._create_unverified_context()
+        with socket.create_connection(("127.0.0.1", client_port), timeout=5.0) as raw:
+            raw.settimeout(5.0)
+            with context.wrap_socket(raw, server_hostname="localhost") as sock:
+                sock.settimeout(5.0)
+                fileobj = sock.makefile("rb")
+                sock.sendall(
+                    b"GET /tamper-auth HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Connection: keep-alive\r\n"
+                    b"\r\n"
+                )
+                if read_http_response(fileobj) != response_body("/tamper-auth"):
+                    raise RuntimeError("unexpected tamper auth response body")
+
+                wait_for_status_counter(
+                    fps_server,
+                    server_config,
+                    server_status_socket,
+                    "auth",
+                    "authenticated",
+                )
+                proxy.enable_tamper()
+                sock.sendall(
+                    b"GET /tamper HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    b"Connection: keep-alive\r\n"
+                    b"\r\n"
+                )
+                tampered_failed = False
+                try:
+                    read_http_response(fileobj)
+                except (OSError, ssl.SSLError, RuntimeError):
+                    tampered_failed = True
+                if not tampered_failed:
+                    raise RuntimeError("tampered envelope unexpectedly produced a valid HTTP response")
         if not proxy.tampered.wait(timeout=5.0):
             raise RuntimeError("proxy did not tamper with a post-auth server-to-client record")
         status = wait_for_status_counter(

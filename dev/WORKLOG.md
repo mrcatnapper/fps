@@ -4,6 +4,54 @@
 
 ## 2026-05-28
 
+### Run PR-readiness checks after Zero-RTT v3
+
+Goal:
+
+- Recheck documents/source/tests after transcript-bound Zero-RTT v3 and run a
+  short remote soak before preparing a PR.
+
+Done:
+
+- Rechecked active public docs and source tree for stale v2/ClientID/replay
+  contract wording. Remaining matches are historical worklog entries, negative
+  removed-field tests, or explicit secret-leak guards.
+- Fixed a race in `https_zero_rtt_adversarial.py`: the tampered-envelope probe
+  now first establishes an authenticated keep-alive carrier and only then arms
+  the proxy to mutate the next server-to-client FPS envelope. This makes the
+  ASan/UBSan run deterministic instead of occasionally tampering pre-upgrade TLS
+  Application Data.
+- Added coverage for the `Repeater::maybe_do(interval, fn)` convenience
+  overload so the coverage gate stays above the function threshold.
+- Ran a 5-minute remote Docker/TUN resilience soak on `fpshop` using image
+  `fps:soak-pr-v3`; temporary remote files and image tag were removed
+  afterwards.
+
+Remote soak result:
+
+- Main mixed client-to-server UDP: 300.05 seconds, 14,649 packets, 0 lost,
+  0.0% loss, about 0.20 Mbit/s.
+- Concurrent HTTP probe: 543 successful requests.
+- Server-to-client UDP probes to both leased clients: 489 packets each, 0 lost,
+  0.0% loss.
+- Spoofed source was dropped once and valid post-spoof UDP remained healthy.
+- Carrier stop/start recovery passed; recovered UDP had 489 packets, 0 lost.
+- Final status showed two active carriers, non-zero TUN traffic counters and all
+  six services still running.
+
+Verification:
+
+- `tools/run_quality_checks.sh --all`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- Remote:
+  `ssh fpshop 'cd /tmp/fps-soak-pr-v3 && python3 tools/docker_resilience_soak.py --image fps:soak-pr-v3 --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90'`
+
+Commit:
+
+- Local commit: `Stabilize PR readiness checks`.
+
 ### Implement transcript-bound Zero-RTT v3
 
 Goal:

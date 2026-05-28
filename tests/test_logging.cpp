@@ -124,4 +124,12 @@ BOOST_AUTO_TEST_CASE(repeater_runs_no_more_often_than_interval) {
     BOOST_TEST(fired == 2);
 }
 
+BOOST_AUTO_TEST_CASE(repeater_supports_now_based_convenience_overload) {
+    fps::log::Repeater repeater;
+
+    auto fired = 0;
+    BOOST_TEST(repeater.maybe_do(std::chrono::seconds{10}, [&] { ++fired; }));
+    BOOST_TEST(fired == 1);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
