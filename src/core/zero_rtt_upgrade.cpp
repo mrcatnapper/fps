@@ -83,12 +83,12 @@ make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X2
 
 [[nodiscard]] auto make_server_hint(const ZeroRttChannelBinding& binding, const X25519PublicKey& server_public_key) -> CryptoResult<Hint> {
     X25519PublicKey no_client{};
-    return make_hint("fps/zero-rtt/server-hint/v3", binding, no_client, server_public_key);
+    return make_hint("fps/zero-rtt/server-hint/v4", binding, no_client, server_public_key);
 }
 
 [[nodiscard]] auto make_client_hint(const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key)
     -> CryptoResult<Hint> {
-    return make_hint("fps/zero-rtt/client-hint/v3", binding, client_public_key, server_public_key);
+    return make_hint("fps/zero-rtt/client-hint/v4", binding, client_public_key, server_public_key);
 }
 
 [[nodiscard]] auto make_hints(const Hint& server_hint, const Hint& client_hint) -> ByteVector {
@@ -101,7 +101,7 @@ make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X2
 
 [[nodiscard]] auto upgrade_aad(const ZeroRttChannelBinding& binding, std::span<const std::byte> hints) -> ByteVector {
     ByteVector out;
-    constexpr std::string_view label{"fps/zero-rtt/capsule/v3"};
+    constexpr std::string_view label{"fps/zero-rtt/capsule/v4"};
     out.reserve(label.size() + hints.size() + 128U);
     append_label(out, label);
     append_bytes(out, hints);
@@ -336,7 +336,7 @@ auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire
 }
 
 auto ZeroRttUpgradeEngine::validate_config() const noexcept -> bool {
-    if(config_.version != 3U || config_.profile_id.empty()) {
+    if(config_.version != 4U || config_.profile_id.empty()) {
         return false;
     }
     if(config_.role == ZeroRttUpgradeRole::client) {
@@ -351,7 +351,7 @@ auto ZeroRttUpgradeEngine::derive_capsule_material(
 ) const -> CryptoResult<AeadMaterial> {
     const auto salt = serialize_binding(binding);
     auto material = hkdf_sha256(
-        dh_static, salt, binding_info("fps/zero-rtt/capsule-aead/v3", binding, client_public_key, server_public_key, hints), kAeadKeySize + kAeadSaltSize
+        dh_static, salt, binding_info("fps/zero-rtt/capsule-aead/v4", binding, client_public_key, server_public_key, hints), kAeadKeySize + kAeadSaltSize
     );
     if(!material) {
         return CryptoResult<AeadMaterial>::failure(material.error());
@@ -371,7 +371,7 @@ auto ZeroRttUpgradeEngine::derive_session_keys(
 ) const -> CryptoResult<SessionKeys> {
     const auto dh = concat_dh(dh_ephemeral, dh_static);
     const auto salt = serialize_binding(binding);
-    ByteVector info = binding_info("fps/zero-rtt/session-keys/v3", binding, client_public_key, server_public_key, wire);
+    ByteVector info = binding_info("fps/zero-rtt/session-keys/v4", binding, client_public_key, server_public_key, wire);
     append_array(info, ephemeral_public_key);
     auto material = hkdf_sha256(dh, salt, info, (2U * kAeadKeySize) + (2U * kAeadSaltSize));
     if(!material) {

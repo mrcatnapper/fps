@@ -40,8 +40,8 @@ auto client_zero_rtt(const fps::X25519KeyPair& client, const fps::X25519KeyPair&
         .local_static_public = client.public_key,
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
-        .profile_id = "unit-origin-v3",
-        .version = 3,
+        .profile_id = "unit-origin-v4",
+        .version = 4,
         .capabilities = 1,
         .max_padding_size = 64,
     };
@@ -54,8 +54,8 @@ auto server_zero_rtt(const fps::X25519KeyPair& server, const fps::X25519KeyPair&
         .local_static_public = server.public_key,
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {client.public_key},
-        .profile_id = "unit-origin-v3",
-        .version = 3,
+        .profile_id = "unit-origin-v4",
+        .version = 4,
         .capabilities = 1,
         .max_padding_size = 64,
     };
@@ -66,7 +66,7 @@ auto controller_config(fps::ZeroRttUpgradeConfig zero_rtt) -> fps::FpsUpgradeCon
         .zero_rtt = std::move(zero_rtt),
         .parser_options = {},
         .record_options = {},
-        .profile_id = "unit-origin-v3",
+        .profile_id = "unit-origin-v4",
         .upgrade_direction = fps::Direction::client_to_server,
         .min_records_before_trial = 1,
     };

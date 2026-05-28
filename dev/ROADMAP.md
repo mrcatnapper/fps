@@ -62,7 +62,7 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add structured health/status surface: carriers, bytes, TUN drops,
   shaper/backpressure counters and session lifecycle.
 - Add richer health/status surface: reconnect history and queue saturation
-  history. Envelope failures are now exposed as status counters.
+  history. Classified-record failures are now exposed as status counters.
 - Add operator `doctor` tooling and deployment bundle generation after more
   user-flow feedback; keep the current increment documentation-only.
 - Add graceful reload for allowlist/config parts where it is safe without
@@ -84,16 +84,19 @@ without claiming resistance to advanced timing/size traffic analysis.
 ## Phase 5: Security Hardening
 
 - [x] Prepare an external protocol review brief for Zero-RTT precheck,
-  envelope mode, replay policy, lease enforcement and known risks.
+  classified FPS records, replay policy, lease enforcement and known risks.
 - Run independent crypto/protocol review of transcript-bound Zero-RTT precheck,
-  envelope mode and replay assumptions.
+  classified FPS records and replay assumptions.
 - [x] Design and implement the next Zero-RTT wire revision around a full per-direction carrier
   transcript hash, removing visible public-key-shaped handshake material and
   reducing replay surface.
+- [x] Replace post-auth carrier wrapping with classified FPS records: ordinary
+  carrier TLS records are forwarded byte-for-byte, while TUN/control data is
+  inserted as separate hint-classified TLS Application Data records.
 - After review, decide whether transcript-bound one-time hints can evolve into
-  a handshake-less FPS envelope classifier inspired by stream-transcript covert
-  channels, or whether explicit upgrade/envelope mode remains the safer product
-  baseline.
+  a handshake-less FPS record classifier inspired by stream-transcript covert
+  channels, or whether explicit upgrade plus classified-record insertion remains
+  the safer product baseline.
 - [x] Document UUID/client revocation and server-key rotation workflows beyond
   the lease tools.
 - [x] Exercise UUID/client revocation and server-key rotation on a Docker
@@ -102,10 +105,10 @@ without claiming resistance to advanced timing/size traffic analysis.
   profile/lease tooling.
 - Keep UUIDs as per-device/per-profile bearer secrets; do not add group/shared
   UUID semantics for L3 VPN mode.
-- [x] Remove active timestamp/replay-cache fields from Zero-RTT v3 and document
+- [x] Remove active timestamp/replay-cache fields from Zero-RTT v4 and document
   transcript-bound replay assumptions.
 - [x] Add first adversarial local tests for no-upgrade passthrough,
-  unknown-client, transcript-prefix mismatch and post-auth envelope tamper.
+  unknown-client, transcript-prefix mismatch and post-auth carrier tamper.
 - Expand negative integration tests into longer tamper/drop/transcript-mismatch
   and unknown-client storms plus CPU-budget behavior without logging secrets.
 

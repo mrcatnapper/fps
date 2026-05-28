@@ -72,6 +72,9 @@ public:
     [[nodiscard]] auto session_keys() const noexcept -> const std::optional<SessionKeys>&;
     [[nodiscard]] auto next_record_index() const noexcept -> std::uint64_t;
     [[nodiscard]] auto has_channel_binding() const noexcept -> bool;
+    [[nodiscard]] auto current_transcript_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
+    [[nodiscard]] auto current_transcript_snapshot(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
+    void observe_tls_record(Direction direction, const TlsRecord& record);
 
 private:
     struct TranscriptState {
@@ -81,14 +84,13 @@ private:
         bool valid = false;
     };
 
-    [[nodiscard]] auto current_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
     void initialize_transcripts();
     void update_transcript(Direction direction, const TlsRecord& record);
     void append_forward(ByteVector& out, const TlsRecord& record) const;
 
     FpsUpgradeControllerConfig config_;
     ZeroRttUpgradeEngine zero_rtt_;
-    TlsRecordParser parser_;
+    std::array<TlsRecordParser, 2> parsers_;
     FpsUpgradeState state_{FpsUpgradeState::cover_passthrough};
     std::optional<SessionKeys> session_keys_;
     std::optional<X25519PublicKey> client_public_key_;

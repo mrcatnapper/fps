@@ -55,12 +55,12 @@ deliberately deferred until the private release policy is settled.
   restart/redeploy procedures and have been exercised in a local Docker
   rotation drill.
 - A protocol-review packet exists for external review. It covers Zero-RTT,
-  transcript-bound precheck, envelope mode, replay model, lease enforcement,
-  secrecy rules and known risks.
+  transcript-bound precheck, classified FPS records, replay model, lease
+  enforcement, secrecy rules and known risks.
 - The repository has an MIT license and a release checklist for beta candidates.
 - Runtime status is available through an opt-in local UNIX socket and `--status`,
-  exposing non-secret session, recent-close, auth, envelope, carrier, TUN and
-  shaper counters.
+  exposing non-secret session, recent-close, auth, classified-record, carrier,
+  TUN and shaper counters.
 - Repetitive queue/backpressure logs are time-aggregated; status counters remain
   the source of exact totals.
 - GitHub Actions workflow files exist for `ubuntu-24.04 x gcc/clang` local
@@ -89,9 +89,9 @@ deliberately deferred until the private release policy is settled.
   lease-aware routing. Docker-level strict `write_queue_full` observation stays
   diagnostic because it depends on host timing and container throughput.
 - Local adversarial Zero-RTT coverage now checks no-upgrade passthrough, unknown
-  clients, transcript-prefix mismatch and post-auth envelope tamper against live
+  clients, transcript-prefix mismatch and post-auth carrier tamper against live
   FPS daemons with status-counter assertions.
-- Timestamp and replay-cache fields are not active Zero-RTT v3 config or wire
+- Timestamp and replay-cache fields are not active Zero-RTT v4 config or wire
   features. Replay resistance relies on the transcript-bound carrier prefix;
   durable replay state remains a possible protocol-review outcome.
 
@@ -135,7 +135,7 @@ Those remain release-hardening concerns.
   candidate, but not automated. Repeat the two-host soak for release candidates
   until a privileged scheduled runner exists.
 - A protocol review package exists, but there is still no independent
-  cryptographic/protocol review of the Zero-RTT precheck and envelope
+  cryptographic/protocol review of the Zero-RTT precheck and classified-record
   construction.
 - UUID/client revocation and server-key rotation passed one local Docker drill,
   but this remains an operator procedure rather than a hot-reload management
@@ -145,8 +145,8 @@ Those remain release-hardening concerns.
   force client-hint allowlist checks and a small AEAD attempt for a likely
   client.
 - Operational status is still minimal: it is a local JSON snapshot with bounded
-  recent close metadata and auth/envelope counters, not a metrics endpoint,
-  management API or historical time series.
+  recent close metadata and auth/classified-record counters, not a metrics
+  endpoint, management API or historical time series.
 - Release engineering remains incomplete for public beta: no signed Docker
   images, public release publishing, public upgrade guide or privileged root/TUN
   CI runner.
@@ -165,8 +165,8 @@ Before public beta or public release, finish:
   release should not rely on a single historical pass.
 - **Independent protocol review:** send the protocol packet, specification and
   relevant tests to an external reviewer, then resolve findings around Zero-RTT
-  transcript binding, hint precheck, envelope mode and the no-timestamp/no-cache
-  replay model.
+  transcript binding, hint precheck, classified FPS records and the
+  no-timestamp/no-cache replay model.
 - **Operator onboarding feedback:** run the documented quickstart with beta
   operators and reduce friction found in real deployments.
 - **Rotation repeat policy:** repeat the UUID revoke/reissue and server-key

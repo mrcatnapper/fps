@@ -32,7 +32,8 @@ when you need exact CLI, Docker, routing, protocol or testing details.
 ## Reference
 
 - [Protocol and architecture specification](./specification.md): current
-  wire rules, Zero-RTT authentication, envelope mode and lease semantics.
+  wire rules, Zero-RTT authentication, classified FPS records and lease
+  semantics.
 - [Testing and quality workflow](./testing.md): local tests, GitHub Actions,
   Docker simulations, fuzzing and soak checks.
 - [TCP flow shape experiment](./pcap-flow-analysis.md): pcap-based packet-size

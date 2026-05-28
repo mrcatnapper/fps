@@ -158,7 +158,7 @@ def main():
         [
             "Zero-RTT carrier authentication",
             "transcript-bound hint precheck",
-            "Envelope Mode",
+            "Classified FPS Records",
             "No timestamp or replay cache",
             "public-key-shaped prefix",
             "Lease Routing And Client Isolation",
@@ -384,7 +384,7 @@ def main():
         debug_server_config,
         [
             "fps-carrier-origin:9443",
-            "debug-carrier-v3",
+            "debug-carrier-v4",
             "server_private_key_base64",
             "server_public_key_base64",
             "allowed_client_uuids",

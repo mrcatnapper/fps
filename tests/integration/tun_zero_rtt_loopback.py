@@ -287,8 +287,8 @@ def zero_rtt_json(role):
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "tun-loopback-v3",
-%s      "version": 3,
+      "profile_id": "tun-loopback-v4",
+%s      "version": 4,
       "capabilities": 1,
       "max_padding_size": 64,
       "min_records_before_trial": 1,

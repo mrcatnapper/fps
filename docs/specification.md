@@ -1,6 +1,6 @@
 # FPS Protocol And Architecture Specification
 
-Version: 0.8, transcript-bound Zero-RTT beta increment
+Version: 0.9, classified FPS records beta increment
 
 Implementation language: C++20, Boost.Asio, Boost.Test, Boost.JSON, Boost.Log
 and OpenSSL.
@@ -10,8 +10,10 @@ and OpenSSL.
 FPS is an experimental hidden L3 TUN tunnel carried over live TLS cover
 sessions. On the `fps_client <-> fps_server` link an observer should see a TCP
 stream made of TLS Application Data records. Real browser/origin TLS bytes are
-not terminated by FPS; after upgrade they are packed into FPS envelopes and
-restored before they reach the real TLS endpoints.
+not terminated by FPS. After upgrade, ordinary carrier TLS records continue to
+be forwarded byte-for-byte; FPS inserts separate classified TLS Application Data
+records for TUN/control payloads and consumes them before they reach the real
+TLS endpoints.
 
 The expanded project name, Free Porn Storage, is a deliberate misdirection. It
 is not descriptive branding; it is meant to make casual discovery and search by
@@ -36,15 +38,16 @@ fps_client == TLS-application-record-shaped FPS link == fps_server
                                                    real HTTPS origin
 ```
 
-Key v3 properties:
+Key v4 properties:
 
 - `security.zero_rtt` is the only supported carrier authentication mechanism.
-- After a successful Zero-RTT upgrade, visible TLS Application Data records on
-  the FPS link carry encrypted FPS envelopes.
-- Envelopes contain inner real TLS record bytes, covert TUN/control frames and
-  padding. Frame metadata is not visible at plaintext offsets.
+- After a successful Zero-RTT upgrade, ordinary carrier TLS records remain
+  byte-for-byte visible on the FPS link.
+- FPS records are inserted as separate TLS Application Data records with
+  transcript-bound hints, AEAD-encrypted TUN/control frames and padding. Frame
+  metadata is not visible at plaintext offsets.
 - Authenticated sessions do not downgrade. Until TCP is closed by the browser,
-  origin or FPS endpoint, the session stays in envelope mode even when no covert
+  origin or FPS endpoint, the session stays authenticated even when no covert
   payload is available.
 - TUN packets are scheduled through a carrier pool. Any authenticated Zero-RTT
   TLS session can carry TUN frames.
@@ -74,17 +77,19 @@ Rules:
 
 - Outer content type must be TLS Application Data (`23`).
 - FPS must not send plaintext FPS frame headers directly on top of TCP.
-- Real browser/origin TLS endpoints must never receive FPS upgrade or envelope
+- Real browser/origin TLS endpoints must never receive FPS upgrade or classified
   records.
 - Before upgrade, unrecognized records are proxied byte-for-byte.
-- After upgrade, decrypt, tamper or record-boundary failure closes or drains the
-  FPS session because visible records already carry the inner TLS stream.
-- Removing, inserting or changing a visible FPS envelope record should break the
-  inner TLS path in the same way as corrupting an ordinary TLS session.
+- After upgrade, ordinary carrier records are forwarded and transcript-tracked.
+  A classified-record hint miss is treated as carrier; a hint match with failed
+  decrypt/validation closes or drains the FPS session.
+- Removing, inserting or changing a visible FPS record breaks the FPS carrier;
+  modifying ordinary carrier TLS records remains a normal TLS integrity failure
+  at the browser/origin endpoints.
 
 Wire-shape checks:
 
-- local tests cover passthrough and v3 envelope paths;
+- local tests cover passthrough and v4 classified-record paths;
 - manual capture uses `tools/capture_tls_wire.sh --port PORT -- COMMAND`;
 - when `tshark` is installed, the generated TLS summary should show parseable
   TLS records rather than Wireshark falling back to an opaque TCP stream.
@@ -113,12 +118,13 @@ Current construction:
   protocol version.
 - The auth record starts with two short opaque hints, not with a public-key
   shaped field. The rest of the capsule is encrypted.
-- Timestamp and replay-cache fields are not part of the active v3 wire format.
+- Timestamp and replay-cache fields are not part of the active v4 wire format.
   Replay resistance relies on reproducing the exact carrier transcript prefix
   before the candidate; reintroducing durable replay state remains a possible
   protocol-review outcome.
-- The server's first encrypted response envelope confirms that both peers
-  derived the same session keys.
+- The server's first encrypted classified record confirms that both peers
+  derived the same session keys. It can also carry control metadata in later
+  records.
 
 Security constraints:
 
@@ -129,11 +135,12 @@ Security constraints:
   `server_public_key_base64` and `allowed_client_uuids`.
 - An invalid candidate before upgrade must look like an ordinary passthrough
   miss.
-- An invalid envelope after upgrade is a session failure.
+- A classified-record hint match followed by invalid decrypt/validation after
+  upgrade is a session failure.
 
 ### 4.1 Transcript-Bound Precheck
 
-Implemented v3 precheck layout inside the TLS Application Data payload:
+Implemented v4 precheck layout inside the TLS Application Data payload:
 
 ```text
 server_hint[8] | client_hint[8] | encrypted_capsule | capsule_tag[16]
@@ -142,10 +149,10 @@ server_hint[8] | client_hint[8] | encrypted_capsule | capsule_tag[16]
 Hints are derived from the pre-candidate transcript snapshot:
 
 ```text
-server_hint = H("fps/zero-rtt/server-hint/v3" ||
+server_hint = H("fps/zero-rtt/server-hint/v4" ||
                 transcript_snapshot || server_public_key || profile_id)[0..8]
 
-client_hint = H("fps/zero-rtt/client-hint/v3" ||
+client_hint = H("fps/zero-rtt/client-hint/v4" ||
                 transcript_snapshot || client_public_key ||
                 server_public_key || profile_id)[0..8]
 ```
@@ -164,7 +171,7 @@ work for ordinary random carrier records.
 
 ### 4.2 Server Confirmation Race Handling
 
-The server confirmation envelope is not guaranteed to be the very next TLS
+The server confirmation classified record is not guaranteed to be the very next TLS
 record observed by the client after it sends the Zero-RTT upgrade. Browser and
 origin TCP streams are independent, and ordinary origin-to-browser TLS records
 can race ahead of the FPS server's confirmation record.
@@ -172,24 +179,24 @@ can race ahead of the FPS server's confirmation record.
 Required client behavior: after sending an upgrade candidate and deriving
 tentative session keys, the client must trial-decrypt plausible peer-direction
 TLS Application Data records as possible server confirmations. If a record does
-not decrypt as a valid confirmation envelope, the client must forward it
+not classify as a valid confirmation record, the client must forward it
 byte-for-byte to the browser as cover traffic and keep waiting until the
 confirmation arrives or a bounded policy expires. Only after a valid confirmation
-does the client switch that carrier fully into envelope mode. Treating the first
+does the client treat the carrier as authenticated. Treating the first
 peer-direction record as mandatory confirmation is a correctness bug and can
 break otherwise valid cover sessions.
 
-### 4.3 Future Handshake-Less Classifier
+### 4.3 Future No-Bootstrap Classifier
 
-The same transcript-bound idea can become a later handshake-less envelope
+The same transcript-bound idea can become a later no-bootstrap FPS record
 classifier: every visible TLS Application Data record could be tested as either
-ordinary carrier bytes or an FPS envelope candidate using transcript-bound
-one-time hints and a final AEAD verification. This is a larger future design,
-not a beta patch. It must prove:
+ordinary carrier bytes or an FPS candidate without a prior explicit
+authentication record. This is a larger future design, not the beta baseline. It
+must prove:
 
 - extremely low false positives, because swallowing a real carrier TLS record
   would break the browser/origin TLS stream;
-- extremely low false negatives, because forwarding a real FPS envelope to the
+- extremely low false negatives, because forwarding a real FPS record to the
   browser/origin would also break the stream;
 - deterministic transcript-state agreement across both FPS peers despite TCP
   direction races;
@@ -197,21 +204,35 @@ not a beta patch. It must prove:
 - clear behavior for idle periods where FPS wants to send data while the carrier
   application has no bytes to forward.
 
-## 5. Envelope Mode
+## 5. Classified FPS Records
 
-After upgrade, each visible FPS record carries an AEAD-encrypted envelope:
+After upgrade, FPS no longer wraps the entire carrier TLS byte stream. Each
+ordinary carrier TLS record is forwarded byte-for-byte and included in the
+per-direction transcript. Covert traffic is inserted as a separate TLS
+Application Data record:
 
-- `inner_tls_bytes`: real TLS record bytes from browser/origin;
-- `frames`: TUN/control frames;
-- `padding_size`: profile/shaper padding.
+```text
+server_hint[8] | client_hint[8] | encrypted_record | record_tag[16]
+```
+
+Hints are derived from direction, profile id, authenticated client/server public
+keys, session keys, the per-direction carrier transcript snapshot, visible
+record index and implicit FPS sequence. The AEAD associated data binds the same
+metadata plus the visible payload length.
+
+Encrypted plaintext contains protocol version, flags, implicit sequence, a
+TUN/control frame bundle and padding. It does not contain real carrier TLS
+bytes.
 
 Sequence and nonce discipline:
 
 - sequence is implicit per direction;
 - nonce is built from per-direction session material and implicit sequence;
 - sequence, frame count, frame type, payload length and padding length are
-  inside AEAD plaintext. On wire, only ciphertext plus tag are visible inside the
-  TLS Application Data record.
+  inside AEAD plaintext. On wire, only hints, ciphertext and tag are visible
+  inside the TLS Application Data record.
+- hint miss means ordinary carrier record and is forwarded; hint match with
+  failed AEAD/sequence/version/frame validation closes the carrier.
 
 ## 6. Carrier Pool And TUN
 
@@ -294,7 +315,8 @@ Current implemented scope:
 
 Deferred work:
 
-- full control of all visible cover TLS records after envelope mode;
+- full timing/size control of inserted classified FPS records against the
+  observed carrier profile;
 - statistical assertions for record size/delay distributions;
 - profile capture tooling and classifier regression lab.
 
@@ -302,7 +324,7 @@ Deferred work:
 
 Config format: JSON parsed through Boost.JSON.
 
-Minimal server-side v3 shape:
+Minimal server-side v4 shape:
 
 ```json
 {
@@ -314,11 +336,11 @@ Minimal server-side v3 shape:
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "example-origin-v3",
+      "profile_id": "example-origin-v4",
       "server_private_key_base64": "PASTE_server_private_key_base64_HERE",
       "server_public_key_base64": "PASTE_server_public_key_base64_HERE",
       "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"],
-      "version": 3,
+      "version": 4,
       "min_records_before_trial": 1,
       "upgrade_direction": "client_to_server"
     }
@@ -355,8 +377,8 @@ Client config uses `network.server`, `client_uuid`,
 config uses only inline padded RFC4648 base64 fields
 `server_private_key_base64`/`server_public_key_base64` and
 `allowed_client_uuids`.
-`security.zero_rtt.version` is optional and defaults to `3`. When present it
-must be `3`; pre-production wire formats are intentionally not accepted as
+`security.zero_rtt.version` is optional and defaults to `4`. When present it
+must be `4`; pre-production wire formats are intentionally not accepted as
 compatibility modes.
 
 Validation rules:
@@ -390,11 +412,11 @@ Operational status:
 - status JSON contains role, pid, uptime, listen/target endpoints, session and
   carrier lifecycle counters, duplicate UUID replacement counters,
   `sessions.last_closed`, bounded `sessions.recent_closed`, auth counters under
-  `auth`, envelope counters under `envelope`, TUN packet/drop counters and
-  shaper/backpressure counters;
+  `auth`, classified-record counters under `classified_record`, TUN packet/drop
+  counters and shaper/backpressure counters;
 - `auth` contains candidate, authenticated, precheck failure, unknown-client,
   decrypt failure and confirmation failure counters;
-- `envelope` contains decode/encode failure, tamper/invalid and
+- `classified_record` contains decode/encode failure, tamper/invalid and
   records-decoded/records-encoded counters;
 - close metadata contains only `session_id`, authentication state, close reason
   and non-secret direction/component/stage/error names;
@@ -427,7 +449,7 @@ Client profile CLI:
 ## 8.1 Platform Boundary
 
 `fps_core` is the platform-neutral layer intended for future Android reuse:
-crypto, Zero-RTT/envelope, codec, session/carrier scheduling, TUN framing,
+crypto, Zero-RTT, classified-record codec, session/carrier scheduling, TUN framing,
 lease/control payloads and TUN packet pump do not depend on Linux `ip` or
 `/dev/net/tun`.
 
@@ -456,21 +478,21 @@ Allowed logs:
 - carrier registered/removed and carrier count;
 - TUN open/closed/errors, queue/backpressure/drop counters;
 - shaper queued/blocked/scheduled events;
-- parser/record/envelope errors without payload bytes.
+- parser/record/classified-record errors without payload bytes.
 
 Forbidden logs:
 
 - private keys, shared secrets, raw upgrade plaintext;
 - nonces, session keys;
-- raw TLS payloads, raw envelopes, raw TUN packets;
+- raw TLS payloads, raw classified records, raw TUN packets;
 - full IP payload bytes.
 
 ## 10. Testing Baseline
 
 Ordinary non-sudo `ctest` should cover:
 
-- unit tests: TLS parser/layer, Zero-RTT, envelope, shaper, carrier pool, TUN
-  fragmentation, config/CLI/logging;
+- unit tests: TLS parser/layer, Zero-RTT, classified-record/frame-bundle codec,
+  shaper, carrier pool, TUN fragmentation, config/CLI/logging;
 - local integration: HTTPS passthrough, HTTPS Zero-RTT chain, concurrent
   Zero-RTT sessions, reusable HTTPS/WSS carrier passthrough and WSS Zero-RTT.
 
@@ -482,7 +504,8 @@ Opt-in sudo/TUN suite should cover:
 
 Quality/safety checks also include clang-20 warning build, ASan/UBSan, Valgrind
 unit pass, llvm-cov gate and bounded libFuzzer smoke for TLS record parsing,
-covert/envelope decode, Zero-RTT candidates and TUN/control frame parsing.
+covert frame-bundle/classified-record decode, Zero-RTT candidates and
+TUN/control frame parsing.
 Product-level Docker simulations cover one-client UDP `iperf3`, two-client lease
 routing/spoof-drop, duplicate UUID `replace_old` behavior and the official Dante
 SOCKS5 overlay example smoke.
@@ -495,7 +518,7 @@ Near productionization gaps:
 
 - QR/mobile onboarding on top of the existing `fps://v1` profile URI;
 - deeper Zero-RTT DoS review beyond transcript-bound precheck;
-- research-grade handshake-less envelope classification where FPS records and
+- research-grade handshake-less classified-record classification where FPS records and
   ordinary carrier records can coexist without an explicit upgrade state;
 - adversarial active-probe/tamper/drop test plan;
 - automated pcap/tshark regression checks in CI-capable environments;
@@ -512,11 +535,13 @@ See [beta-status.md](./beta-status.md) and
 ## 12. Terms
 
 - **FPS link**: TCP connection between `fps_client` and `fps_server`.
-- **Cover TLS session**: real TLS session whose bytes FPS proxies and, after
-  upgrade, packs into envelopes.
-- **Zero-RTT upgrade**: one encrypted auth record that moves a carrier into FPS
-  envelope mode.
-- **Envelope**: encrypted FPS record after upgrade.
+- **Cover TLS session**: real TLS session whose ordinary TLS records FPS proxies
+  byte-for-byte before and after upgrade.
+- **Zero-RTT upgrade**: one encrypted auth record that authenticates a carrier
+  and enables classified FPS record insertion.
+- **Classified FPS record**: encrypted FPS control/TUN record inserted as a TLS
+  Application Data record and consumed by the FPS peer before reaching the real
+  TLS endpoint.
 - **Carrier**: authenticated TLS session available for TUN/control frames.
 - **Carrier pool**: set of authenticated carriers without primary ownership.
 - **TUN packet**: IP packet from a Linux TUN device.

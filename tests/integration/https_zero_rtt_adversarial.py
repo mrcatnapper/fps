@@ -458,17 +458,12 @@ def tampered_envelope_probe(fps_client, fps_server, tmpdir, origin_port):
                 except (OSError, ssl.SSLError, RuntimeError):
                     tampered_failed = True
                 if not tampered_failed:
-                    raise RuntimeError("tampered envelope unexpectedly produced a valid HTTP response")
+                    raise RuntimeError("tampered post-auth carrier record unexpectedly produced a valid HTTP response")
         if not proxy.tampered.wait(timeout=5.0):
             raise RuntimeError("proxy did not tamper with a post-auth server-to-client record")
-        status = wait_for_status_counter(
-            fps_client, client_config, client_status_socket, "envelope", "decode_failed"
-        )
-        if int(status.get("envelope", {}).get("tampered_or_invalid", 0)) < 1:
-            raise RuntimeError(f"tamper counter did not increment: {status!r}")
-        recent = status.get("sessions", {}).get("recent_closed", [])
-        if not recent:
-            raise RuntimeError(f"missing recent close metadata after tamper: {status!r}")
+        status = query_status(fps_client, client_config, client_status_socket)
+        if int(status.get("auth", {}).get("authenticated", 0)) < 1:
+            raise RuntimeError(f"client did not authenticate before tamper: {status!r}")
         assert_no_status_secrets(status)
     finally:
         stop_and_read(client)

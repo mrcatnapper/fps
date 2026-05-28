@@ -9,7 +9,7 @@ should be reviewed before public beta.
 ## Review Scope
 
 - Zero-RTT carrier authentication and transcript-bound hint precheck.
-- Encrypted FPS envelope mode over TLS Application Data shaped records.
+- Classified FPS records inserted as TLS Application Data shaped records.
 - Transcript binding and no-cache replay policy.
 - Carrier pool and leased-client TUN routing semantics.
 - Metadata-only logging/status rules.
@@ -31,8 +31,9 @@ Primary references:
 FPS is a Linux-first hidden L3 TUN tunnel carried inside live TLS cover
 sessions. On the `fps_client <-> fps_server` link, an observer should see a TCP
 stream of TLS Application Data records. FPS does not terminate the real
-browser/origin TLS session; real TLS bytes are packed into encrypted FPS
-envelopes after upgrade and restored before they reach the real endpoints.
+browser/origin TLS session; ordinary carrier TLS records remain byte-for-byte
+visible after upgrade while FPS inserts separate classified records for
+TUN/control data.
 
 The current beta target is controlled operator deployment, not resistance to a
 state-level traffic-analysis adversary. Advanced timing/size shaping remains
@@ -56,10 +57,10 @@ Current construction:
 - Server-side precheck rejects wrong server hints, scans the UUID allowlist for
   a matching client hint and then attempts one capsule decrypt for the likely
   client.
-- The server confirmation envelope is race-safe: the client trial-decrypts
+- The server confirmation classified record is race-safe: the client classifies
   plausible peer records and forwards non-confirmation records as cover traffic
   until confirmation succeeds or policy expires.
-- Timestamp and replay-cache fields are removed from active v3. Replay
+- Timestamp and replay-cache fields are removed from active v4. Replay
   resistance relies on reproducing the exact carrier transcript prefix before
   the candidate; durable replay state is left for reviewer feedback if this
   model is insufficient.
@@ -75,31 +76,32 @@ Reviewer questions:
 - Can transcript-bound server/client hints be designed without creating a
   durable client identifier or fragile false-positive classifier?
 
-## Envelope Mode
+## Classified FPS Records
 
-After authentication, visible FPS records are TLS Application Data records whose
-payload is an AEAD-encrypted FPS envelope. Envelope plaintext includes:
+After authentication, ordinary carrier TLS records continue to be forwarded
+byte-for-byte. FPS inserts separate TLS Application Data records whose payload
+is an AEAD-encrypted classified FPS record. Encrypted plaintext includes:
 
-- inner real TLS bytes;
 - covert TUN/control frames;
 - padding size and frame metadata.
 
 Sequence numbers are implicit per direction and are used for AEAD nonce
-discipline. No plaintext FPS frame headers are sent directly over TCP. After
-upgrade, decrypt/tamper failures close or drain the carrier rather than
-silently preserving cover.
+discipline. Hints and AEAD associated data bind each FPS record to the current
+carrier transcript snapshot. No plaintext FPS frame headers are sent directly
+over TCP. Hint misses are ordinary carrier records; hint matches with failed
+decrypt/validation close or drain the carrier rather than silently preserving
+cover.
 
 Reviewer questions:
 
 - Is the implicit sequence/nonce discipline sound for long-lived TCP carriers?
-- Are envelope failure semantics correct for a transparent browser/origin TLS
-  stream?
+- Are classified-record failure semantics correct for a transparent
+  browser/origin TLS stream?
 - Are metadata boundaries sufficient, or should more fields be padded/hidden in
   the next wire revision?
-- Is a future handshake-less mode viable, where each TLS Application Data record
-  is classified as ordinary carrier bytes or an FPS envelope using
-  transcript-bound one-time hints plus AEAD verification, without first switching
-  the whole carrier into envelope mode?
+- Is a future no-bootstrap mode viable, where each TLS Application Data record
+  is classified as ordinary carrier bytes or an FPS record using
+  transcript-bound one-time hints plus AEAD verification?
 
 ## Lease Routing And Client Isolation
 
@@ -130,8 +132,8 @@ keys, raw upgrade material, raw TLS payloads, raw TUN packets or IP payload
 bytes.
 
 Status is a local UNIX-socket JSON snapshot, not a management API. It exposes
-session counters, recent close metadata, auth and envelope counters, TUN
-counters and lease metadata counts.
+session counters, recent close metadata, auth and classified-record counters,
+TUN counters and lease metadata counts.
 
 Reviewer questions:
 
@@ -141,10 +143,10 @@ Reviewer questions:
 ## Evidence Already Available
 
 - Unit coverage for Zero-RTT success/failure, transcript mismatch, hint
-  precheck, envelope roundtrip/tamper and lease routing.
+  precheck, classified-record roundtrip/tamper and lease routing.
 - Local integration coverage for HTTPS/WSS passthrough, Zero-RTT chains,
   large/coalesced responses, multi-session carriers, unknown clients,
-  transcript-prefix mismatch and post-auth envelope tamper.
+  transcript-prefix mismatch and post-auth carrier tamper.
 - TUN/netns coverage for loopback, burst, fragmentation and shaper-adjacent
   paths.
 - Docker simulations for multi-client lease routing, duplicate UUID replacement,
@@ -156,11 +158,11 @@ Reviewer questions:
 
 ## Known Non-Blocking Beta Risks
 
-- No formal proof of the Zero-RTT/envelope construction.
+- No formal proof of the Zero-RTT/classified-record construction.
 - Transcript-bound hints remove the visible public-key-shaped prefix, but the
   construction has not had independent review.
 - Precheck is not a full CPU DoS defense; plausible server hints still force
   allowlist hint checks and one small AEAD attempt for a likely client.
-- No timestamp or replay cache is active in v3; replay assumptions depend on
+- No timestamp or replay cache is active in v4; replay assumptions depend on
   carrier transcript uniqueness under honest origins.
 - Advanced timing/size traffic shaping is deferred.

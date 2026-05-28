@@ -146,7 +146,7 @@ Ready signals:
 - `sessions.carriers_current > 0`;
 - client status has `tun.leased_client_address`;
 - TUN packet counters increase while traffic crosses the tunnel;
-- `auth.*_failed` and `envelope.*_failed` counters stay at zero for a clean
+- `auth.*_failed` and `classified_record.*_failed` counters stay at zero for a clean
   smoke run.
 
 If `tun.leased_client_address` exists but `sessions.carriers_current == 0`, the

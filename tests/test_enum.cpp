@@ -5,6 +5,7 @@
 #include "fps/core/cover_session_pipeline.hpp"
 #include "fps/core/covert_codec.hpp"
 #include "fps/core/crypto.hpp"
+#include "fps/core/fps_classified_record.hpp"
 #include "fps/core/fps_envelope.hpp"
 #include "fps/core/fps_envelope_pipeline.hpp"
 #include "fps/core/fps_upgrade_controller.hpp"
@@ -55,6 +56,8 @@ BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
     FPS_CHECK_ENUM_NAME(fps::CodecError, replay_or_old_sequence);
     FPS_CHECK_ENUM_NAME(fps::CoverSessionEncodeError, tls_record_error);
     FPS_CHECK_ENUM_NAME(fps::CryptoError, aead_decrypt_failed);
+    FPS_CHECK_ENUM_NAME(fps::FpsClassifiedRecordError, decrypt_failed);
+    FPS_CHECK_ENUM_NAME(fps::FpsClassifiedRecordPipelineEncodeStage, tls_record);
     FPS_CHECK_ENUM_NAME(fps::FpsEnvelopeError, decrypt_failed);
     FPS_CHECK_ENUM_NAME(fps::FpsEnvelopePipelineEncodeStage, tls_record);
     FPS_CHECK_ENUM_NAME(fps::FpsUpgradeBuildError, no_channel_binding);
@@ -65,8 +68,9 @@ BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeRole, server);
     FPS_CHECK_ENUM_NAME(fps::net::EndpointParseError, unsupported_ipv6_literal);
     FPS_CHECK_ENUM_NAME(fps::net::SessionManagerError, unassigned_tun_destination);
-    FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseComponent, envelope_encode);
+    FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseComponent, classified_record_encode);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseReason, write_queue_full);
+    FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseStage, classified_record);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeEnqueueError, session_closed);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeShaperDecision, blocked);
     FPS_CHECK_ENUM_NAME(fps::net::TcpRelayCliCommand, generate_client_profile);

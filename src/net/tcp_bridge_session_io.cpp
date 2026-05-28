@@ -15,15 +15,14 @@ namespace fps::net {
 
 using detail::add_stat;
 using detail::checked_add;
+using detail::classified_tls_record_size;
 using detail::close_info;
-using detail::close_info_from_envelope_result;
+using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
 using detail::covert_tls_record_size;
-using detail::envelope_config;
 using detail::frame_payload_size_sum;
 using detail::is_tun_frame;
-using detail::kAuthenticatedCoverChunkSize;
-using detail::tcp_bridge_error_from_envelope_encode;
+using detail::tcp_bridge_error_from_classified_encode;
 
 auto TcpBridgeSession::enqueue_covert_frame(
     Direction direction, FrameType frame_type, std::span<const std::byte> payload, std::size_t padding_size, std::uint8_t flags
@@ -45,7 +44,7 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
         return TcpBridgeEnqueueResult::success(0U);
     }
     if(zero_rtt_authenticated_) {
-        return enqueue_zero_rtt_envelope_frames(direction, frames);
+        return enqueue_zero_rtt_classified_frames(direction, frames);
     }
 
     std::size_t total_encoded_size = 0;
@@ -92,6 +91,7 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
                 ShapedWriteItem{
                     .write = WriteItem{.bytes = std::move(bytes)},
                     .payload_size = frame.payload.size(),
+                    .classified_frames = {},
                 }
             );
         } else {
@@ -180,57 +180,33 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
 
     const auto role = config_.zero_rtt->controller_config.zero_rtt.role;
     if(zero_rtt_authenticated_) {
-        if(!envelope_pipelines_) {
-            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_envelope_pipeline"));
-            return true;
-        }
-
-        if(direction == zero_rtt_peer_direction()) {
-            auto result = inbound_envelope_pipeline(direction).process_inbound_tls(bytes);
-            auto inner_tls = std::move(result.inner_tls_bytes);
-            emit_envelope_process_result(direction, result);
-            if(result.close_required) {
-                stop_with(close_info_from_envelope_result(direction, result));
-                return true;
-            }
-            if(inner_tls.empty()) {
-                pump(direction);
-                return true;
-            }
-            enqueue_write(direction, WriteItem{.bytes = std::move(inner_tls), .resume_read_after_write = true});
-            return true;
-        }
-
-        auto queued = enqueue_zero_rtt_inner_tls_bytes(direction, bytes);
-        if(!queued) {
-            stop_with(pending_or_default_close(close_info_from_enqueue_error(direction, queued.error())));
-            return true;
-        }
-        observe_cover_bytes(direction, queued.value());
-        return true;
+        return process_authenticated_tls_bytes(direction, bytes);
     }
 
     if(role == ZeroRttUpgradeRole::client && zero_rtt_client_upgrade_sent_ && !zero_rtt_authenticated_) {
-        if(!envelope_pipelines_) {
-            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_envelope_pipeline"));
-            return true;
-        }
-        if(direction != zero_rtt_peer_direction()) {
-            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "unexpected_confirmation_direction"));
+        if(!classified_pipelines_) {
+            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
             return true;
         }
 
-        auto result = inbound_envelope_pipeline(direction).process_inbound_tls_with_trial_fallback(bytes);
+        auto result = inbound_classified_pipeline(direction).process_inbound_tls(
+            direction, bytes, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
+            [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
+        );
         auto forward_tls = std::move(result.forward_tls_bytes);
-        auto inner_tls = std::move(result.inner_tls_bytes);
-        const auto confirmed = result.decoded_envelope_records > 0U;
-        if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.envelope_errors.empty()) {
-            emit_envelope_process_result(direction, result);
-            stop_with(close_info_from_envelope_result(direction, result));
+        const auto confirmed = direction == zero_rtt_peer_direction() && result.decoded_fps_records > 0U;
+        if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
+            emit_classified_process_result(direction, result);
+            stop_with(close_info_from_classified_result(direction, result));
+            return true;
+        }
+        if(result.decoded_fps_records > 0U && !confirmed) {
+            emit_classified_process_result(direction, result);
+            stop_with(close_info(TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record, "unexpected_confirmation_direction"));
             return true;
         }
         if(!confirmed) {
-            emit_envelope_process_result(direction, result);
+            emit_classified_process_result(direction, result);
             if(forward_tls.empty()) {
                 pump(direction);
                 return true;
@@ -247,17 +223,14 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
                 handlers_.on_zero_rtt_authenticated(*keys, std::nullopt);
             }
         }
-        emit_envelope_process_result(direction, result);
+        emit_classified_process_result(direction, result);
         pump(config_.zero_rtt->controller_config.upgrade_direction);
 
-        if(inner_tls.empty() && forward_tls.empty()) {
+        if(forward_tls.empty()) {
             pump(direction);
             return true;
         }
         const auto cover_bytes = forward_tls.size();
-        if(!inner_tls.empty()) {
-            forward_tls.insert(forward_tls.end(), inner_tls.begin(), inner_tls.end());
-        }
         enqueue_write(direction, WriteItem{.bytes = std::move(forward_tls), .resume_read_after_write = true});
         observe_cover_bytes(direction, cover_bytes);
         return true;
@@ -265,6 +238,8 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
 
     if(role == ZeroRttUpgradeRole::server) {
         if(direction != config_.zero_rtt->controller_config.upgrade_direction) {
+            auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
+            emit_zero_rtt_observe_result(direction, observed);
             return false;
         }
 
@@ -272,7 +247,11 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
         auto forward_bytes = std::move(result.forward_bytes);
         const auto authenticated = result.session_keys.has_value();
         if(authenticated && !zero_rtt_authenticated_) {
-            activate_zero_rtt_envelope_pipelines(*result.session_keys);
+            if(!result.client_public_key.has_value()) {
+                stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_client_public_key"));
+                return true;
+            }
+            activate_zero_rtt_classified_pipelines(*result.session_keys, *result.client_public_key);
             zero_rtt_authenticated_ = true;
             if(!send_zero_rtt_key_confirmation(direction)) {
                 stop_with(pending_or_default_close(
@@ -297,6 +276,8 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
     }
 
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction) {
+        auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
+        emit_zero_rtt_observe_result(direction, observed);
         return false;
     }
 
@@ -311,7 +292,7 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
             upgrade_record = std::move(built).value();
             zero_rtt_client_upgrade_sent_ = true;
             if(const auto& keys = zero_rtt_controller_->session_keys()) {
-                activate_zero_rtt_envelope_pipelines(*keys);
+                activate_zero_rtt_classified_pipelines(*keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
             }
         } else if(handlers_.on_zero_rtt_build_error) {
             handlers_.on_zero_rtt_build_error(built.error());
@@ -327,7 +308,9 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
         observe_cover_bytes(direction, cover_bytes);
     }
     if(upgrade_record.has_value()) {
-        enqueue_write(direction, WriteItem{.bytes = std::move(*upgrade_record), .resume_read_after_write = false});
+        enqueue_write(direction, WriteItem{.bytes = *upgrade_record, .resume_read_after_write = false});
+        auto sent = zero_rtt_controller_->observe_tls(direction, *upgrade_record);
+        emit_zero_rtt_observe_result(direction, sent);
     }
     if(!has_forward_bytes && !upgrade_record.has_value()) {
         pump(direction);
@@ -342,37 +325,46 @@ auto TcpBridgeSession::zero_rtt_peer_direction() const noexcept -> Direction {
     return Direction::server_to_client;
 }
 
-void TcpBridgeSession::activate_zero_rtt_envelope_pipelines(const SessionKeys& session_keys) {
+void TcpBridgeSession::activate_zero_rtt_classified_pipelines(const SessionKeys& session_keys, const X25519PublicKey& client_public_key) {
     if(!config_.zero_rtt.has_value()) {
         return;
     }
 
-    envelope_pipelines_ = std::make_unique<EnvelopePipelines>(EnvelopePipelines{
-        .inbound_client_to_server = FpsEnvelopePipeline{FpsEnvelopeCodec{envelope_config(Direction::server_to_client, session_keys, *config_.zero_rtt)}},
-        .inbound_server_to_client = FpsEnvelopePipeline{FpsEnvelopeCodec{envelope_config(Direction::client_to_server, session_keys, *config_.zero_rtt)}},
-        .outbound_client_to_server = FpsEnvelopePipeline{FpsEnvelopeCodec{envelope_config(Direction::client_to_server, session_keys, *config_.zero_rtt)}},
-        .outbound_server_to_client = FpsEnvelopePipeline{FpsEnvelopeCodec{envelope_config(Direction::server_to_client, session_keys, *config_.zero_rtt)}},
+    const auto& zero_rtt = config_.zero_rtt->controller_config.zero_rtt;
+    const auto& server_public = zero_rtt.role == ZeroRttUpgradeRole::server ? zero_rtt.local_static_public : *zero_rtt.peer_static_public;
+    classified_pipelines_ = std::make_unique<ClassifiedRecordPipelines>(ClassifiedRecordPipelines{
+        .inbound_client_to_server = FpsClassifiedRecordPipeline{
+            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)}
+        },
+        .inbound_server_to_client = FpsClassifiedRecordPipeline{
+            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)}
+        },
+        .outbound_client_to_server = FpsClassifiedRecordPipeline{
+            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)}
+        },
+        .outbound_server_to_client = FpsClassifiedRecordPipeline{
+            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)}
+        },
     });
 }
 
 auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_direction) -> bool {
-    if(!envelope_pipelines_) {
+    if(!classified_pipelines_ || !zero_rtt_controller_) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::internal_error, upgrade_direction, TcpBridgeCloseComponent::zero_rtt, "missing_envelope_pipeline")
+            close_info(TcpBridgeCloseReason::internal_error, upgrade_direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline")
         );
         return false;
     }
     const auto confirmation_direction = opposite_direction(upgrade_direction);
-    auto encoded = outbound_envelope_pipeline(confirmation_direction)
-                       .encode_tls_record(
-                           FpsEnvelopeContent{
-                               .inner_tls_bytes = {},
-                               .frames = {},
-                               .padding_size = 0,
-                           }
-                       );
+    const auto binding = zero_rtt_controller_->current_transcript_snapshot(confirmation_direction);
+    if(!binding.has_value()) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, confirmation_direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript"));
+        return false;
+    }
+    auto encoded = outbound_classified_pipeline(confirmation_direction)
+                       .encode_tls_record(FpsEnvelopeContent{.inner_tls_bytes = {}, .frames = {}, .padding_size = 0}, *binding);
     if(!encoded) {
-        emit_envelope_encode_error(confirmation_direction, encoded.error());
+        emit_classified_encode_error(confirmation_direction, encoded.error());
         return false;
     }
     const auto encoded_size = encoded.value().size();
@@ -382,8 +374,11 @@ auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_directio
         );
         return false;
     }
-    enqueue_write(confirmation_direction, WriteItem{.bytes = std::move(encoded).value()});
-    emit_envelope_records_encoded(confirmation_direction, 1U);
+    const auto record = std::move(encoded).value();
+    enqueue_write(confirmation_direction, WriteItem{.bytes = record});
+    auto observed = zero_rtt_controller_->observe_tls(confirmation_direction, record);
+    emit_zero_rtt_observe_result(confirmation_direction, observed);
+    emit_classified_records_encoded(confirmation_direction, 1U);
     return true;
 }
 
@@ -391,110 +386,59 @@ auto TcpBridgeSession::can_enqueue_write(Direction direction, std::size_t bytes)
     return bytes <= config_.max_write_queue_bytes && pending_write_bytes(direction) <= config_.max_write_queue_bytes - bytes;
 }
 
-auto TcpBridgeSession::enqueue_zero_rtt_inner_tls_bytes(Direction direction, std::span<const std::byte> bytes) -> TcpBridgeEnqueueResult {
-    if(!envelope_pipelines_ || !config_.zero_rtt.has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_envelope_pipeline"));
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::session_closed);
+auto TcpBridgeSession::process_authenticated_tls_bytes(Direction direction, std::span<const std::byte> bytes) -> bool {
+    if(!classified_pipelines_ || !zero_rtt_controller_) {
+        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+        return true;
     }
-    if(bytes.empty()) {
-        return TcpBridgeEnqueueResult::success(0U);
+    auto result = inbound_classified_pipeline(direction).process_inbound_tls(
+        direction, bytes, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
+        [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
+    );
+    auto forward_tls = std::move(result.forward_tls_bytes);
+    emit_classified_process_result(direction, result);
+    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
+        stop_with(close_info_from_classified_result(direction, result));
+        return true;
     }
-
-    const auto chunk_size = std::min(kAuthenticatedCoverChunkSize, config_.zero_rtt->max_inner_tls_bytes);
-    if(chunk_size == 0U) {
-        const auto error = FpsEnvelopePipelineEncodeError::envelope(FpsEnvelopeError::invalid_config);
-        emit_envelope_encode_error(direction, error);
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::codec_error);
+    if(forward_tls.empty()) {
+        pump(direction);
+        return true;
     }
-
-    auto pipeline = outbound_envelope_pipeline(direction);
-    std::vector<WriteItem> writes;
-    writes.reserve((bytes.size() + chunk_size - 1U) / chunk_size);
-    std::size_t total_encoded_size = 0;
-    for(std::size_t offset = 0; offset < bytes.size(); offset += chunk_size) {
-        const auto remaining = bytes.size() - offset;
-        const auto size = std::min(chunk_size, remaining);
-        const auto chunk = bytes.subspan(offset, size);
-        auto encoded = pipeline.encode_tls_record(
-            FpsEnvelopeContent{
-                .inner_tls_bytes = ByteVector{chunk.begin(), chunk.end()},
-                .frames = {},
-                .padding_size = 0,
-            }
-        );
-        if(!encoded) {
-            emit_envelope_encode_error(direction, encoded.error());
-            return TcpBridgeEnqueueResult::failure(tcp_bridge_error_from_envelope_encode(encoded.error()));
-        }
-
-        auto record = std::move(encoded).value();
-        const auto next_total = checked_add(total_encoded_size, record.size());
-        if(!next_total) {
-            set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, direction, TcpBridgeCloseComponent::queue, "encoded_size_overflow"));
-            return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
-        }
-        total_encoded_size = *next_total;
-        writes.push_back(WriteItem{.bytes = std::move(record)});
-    }
-
-    if(!can_enqueue_write(direction, total_encoded_size)) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, direction, TcpBridgeCloseComponent::queue, "write_queue_full"));
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
-    }
-
-    outbound_envelope_pipeline(direction) = std::move(pipeline);
-    for(std::size_t i = 0; i < writes.size(); ++i) {
-        writes[i].resume_read_after_write = i + 1U == writes.size();
-        enqueue_write(direction, std::move(writes[i]));
-    }
-    emit_envelope_records_encoded(direction, writes.size());
-    return TcpBridgeEnqueueResult::success(total_encoded_size);
+    const auto cover_bytes = forward_tls.size();
+    enqueue_write(direction, WriteItem{.bytes = std::move(forward_tls), .resume_read_after_write = true});
+    observe_cover_bytes(direction, cover_bytes);
+    return true;
 }
 
-auto TcpBridgeSession::enqueue_zero_rtt_envelope_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult {
-    if(!envelope_pipelines_) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_envelope_pipeline"));
+auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult {
+    if(!classified_pipelines_) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
         return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::session_closed);
     }
-
-    std::vector<FpsEnvelopeFrame> envelope_frames;
-    envelope_frames.reserve(frames.size());
-    for(const auto& frame : frames) {
-        envelope_frames.push_back(
-            FpsEnvelopeFrame{
-                .frame_type = frame.frame_type,
-                .flags = frame.flags,
-                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
-                .padding_size = frame.padding_size,
-            }
-        );
+    const auto estimated_size = classified_tls_record_size(frames);
+    if(!estimated_size) {
+        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
     }
-
-    auto pipeline = outbound_envelope_pipeline(direction);
-    auto encoded = pipeline.encode_tls_record(
-        FpsEnvelopeContent{
-            .inner_tls_bytes = {},
-            .frames = std::move(envelope_frames),
-            .padding_size = 0,
-        }
-    );
-    if(!encoded) {
-        emit_envelope_encode_error(direction, encoded.error());
-        return TcpBridgeEnqueueResult::failure(tcp_bridge_error_from_envelope_encode(encoded.error()));
-    }
-
-    auto bytes = std::move(encoded).value();
-    if(!can_enqueue_write(direction, bytes.size())) {
+    if(!can_enqueue_write(direction, *estimated_size)) {
         set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, direction, TcpBridgeCloseComponent::queue, "write_queue_full"));
         return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
     }
-    outbound_envelope_pipeline(direction) = std::move(pipeline);
 
-    const auto queued_size = bytes.size();
     const auto control_only =
         std::all_of(frames.begin(), frames.end(), [](const TcpBridgeCovertFrame& frame) { return frame.frame_type == FrameType::control; });
     if(shaper_enabled() && !control_only) {
         const auto payload_size = frame_payload_size_sum(frames);
+        std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
+        owned_frames.reserve(frames.size());
+        for(const auto& frame : frames) {
+            owned_frames.push_back(TcpBridgeOwnedCovertFrame{
+                .frame_type = frame.frame_type,
+                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
+                .padding_size = frame.padding_size,
+                .flags = frame.flags,
+            });
+        }
         ByteVector budget_bytes(payload_size);
         shaper_->enqueue_covert_payload(
             CovertPayloadView{
@@ -506,14 +450,28 @@ auto TcpBridgeSession::enqueue_zero_rtt_envelope_frames(Direction direction, std
         enqueue_shaped_write(
             direction,
             ShapedWriteItem{
-                .write = WriteItem{.bytes = std::move(bytes)},
+                .write = WriteItem{.bytes = {}, .accounted_bytes = *estimated_size},
                 .payload_size = payload_size,
+                .classified_frames = std::move(owned_frames),
             }
         );
     } else {
-        enqueue_write(direction, WriteItem{.bytes = std::move(bytes)});
+        std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
+        owned_frames.reserve(frames.size());
+        for(const auto& frame : frames) {
+            owned_frames.push_back(TcpBridgeOwnedCovertFrame{
+                .frame_type = frame.frame_type,
+                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
+                .padding_size = frame.padding_size,
+                .flags = frame.flags,
+            });
+        }
+        auto write = encode_classified_write(direction, owned_frames);
+        if(!write) {
+            return TcpBridgeEnqueueResult::failure(write.error());
+        }
+        enqueue_write(direction, std::move(write).value());
     }
-    emit_envelope_records_encoded(direction, 1U);
     auto& stats = stats_for(direction);
     for(const auto& frame : frames) {
         add_stat(stats.covert_frames_out, 1U);
@@ -523,7 +481,48 @@ auto TcpBridgeSession::enqueue_zero_rtt_envelope_frames(Direction direction, std
             add_stat(stats.tun_frame_bytes_out, frame.payload.size());
         }
     }
-    return TcpBridgeEnqueueResult::success(queued_size);
+    return TcpBridgeEnqueueResult::success(*estimated_size);
+}
+
+auto TcpBridgeSession::encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames)
+    -> Result<WriteItem, TcpBridgeEnqueueError> {
+    if(!classified_pipelines_ || !zero_rtt_controller_) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::session_closed);
+    }
+    const auto binding = zero_rtt_controller_->current_transcript_snapshot(direction);
+    if(!binding.has_value()) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript"));
+        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::session_closed);
+    }
+
+    std::vector<FpsEnvelopeFrame> classified_frames;
+    classified_frames.reserve(frames.size());
+    for(const auto& frame : frames) {
+        classified_frames.push_back(FpsEnvelopeFrame{
+            .frame_type = frame.frame_type,
+            .flags = frame.flags,
+            .payload = frame.payload,
+            .padding_size = frame.padding_size,
+        });
+    }
+    auto encoded = outbound_classified_pipeline(direction).encode_tls_record(
+        FpsEnvelopeContent{
+            .inner_tls_bytes = {},
+            .frames = std::move(classified_frames),
+            .padding_size = 0,
+        },
+        *binding
+    );
+    if(!encoded) {
+        emit_classified_encode_error(direction, encoded.error());
+        return Result<WriteItem, TcpBridgeEnqueueError>::failure(tcp_bridge_error_from_classified_encode(encoded.error()));
+    }
+    auto record = std::move(encoded).value();
+    auto observed = zero_rtt_controller_->observe_tls(direction, record);
+    emit_zero_rtt_observe_result(direction, observed);
+    emit_classified_records_encoded(direction, 1U);
+    return Result<WriteItem, TcpBridgeEnqueueError>::success(WriteItem{.bytes = std::move(record)});
 }
 
 auto TcpBridgeSession::shaper_enabled() const noexcept -> bool { return shaper_.has_value(); }
@@ -548,7 +547,7 @@ void TcpBridgeSession::enqueue_write(Direction direction, WriteItem item) {
         return;
     }
 
-    pending_write_bytes(direction) += item.bytes.size();
+    pending_write_bytes(direction) += item.accounted_bytes == 0U ? item.bytes.size() : item.accounted_bytes;
     enqueue_counted_write(direction, std::move(item));
 }
 
@@ -566,7 +565,7 @@ void TcpBridgeSession::enqueue_shaped_write(Direction direction, ShapedWriteItem
         return;
     }
 
-    const auto bytes = item.write.bytes.size();
+    const auto bytes = item.write.accounted_bytes == 0U ? item.write.bytes.size() : item.write.accounted_bytes;
     pending_write_bytes(direction) += bytes;
     shaped_write_queue(direction).push_back(std::move(item));
     emit_shaper_event(
@@ -636,6 +635,15 @@ void TcpBridgeSession::handle_shaper_timer(Direction direction, const boost::sys
 
     auto item = std::move(shaped_write_queue(direction).front());
     shaped_write_queue(direction).pop_front();
+    if(!item.classified_frames.empty()) {
+        auto write = encode_classified_write(direction, item.classified_frames);
+        if(!write) {
+            stop_with(pending_or_default_close(close_info_from_enqueue_error(direction, write.error())));
+            return;
+        }
+        write.value().accounted_bytes = item.write.accounted_bytes;
+        item.write = std::move(write).value();
+    }
     enqueue_counted_write(direction, std::move(item.write));
     maybe_schedule_shaped_write(direction);
 }
@@ -652,7 +660,7 @@ void TcpBridgeSession::drain_writes(Direction direction) {
     boost::asio::async_write(
         target_socket(direction), boost::asio::buffer(item->bytes),
         [self, direction, item](const boost::system::error_code& error, std::size_t bytes_written) {
-            const auto item_size = item->bytes.size();
+            const auto item_size = item->accounted_bytes == 0U ? item->bytes.size() : item->accounted_bytes;
             auto& pending = self->pending_write_bytes(direction);
             pending = pending > item_size ? pending - item_size : 0U;
             add_stat(self->stats_for(direction).tcp_written_bytes, bytes_written);

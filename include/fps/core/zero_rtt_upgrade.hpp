@@ -51,7 +51,7 @@ struct ZeroRttUpgradeConfig {
     std::optional<X25519PublicKey> peer_static_public;
     std::vector<X25519PublicKey> allowed_client_public_keys;
     std::string profile_id;
-    std::uint16_t version = 3;
+    std::uint16_t version = 4;
     std::uint16_t capabilities = 1;
     std::size_t max_padding_size = 512;
 };

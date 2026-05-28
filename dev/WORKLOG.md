@@ -4,6 +4,52 @@
 
 ## 2026-05-28
 
+### Implement Zero-RTT v4 classified FPS records
+
+Goal:
+
+- Keep explicit Zero-RTT authentication, but stop wrapping the whole post-auth
+  carrier TLS byte stream into FPS envelopes.
+- Make ordinary carrier TLS records continue byte-for-byte after auth and send
+  covert TUN/control payloads as separately inserted, transcript-classified TLS
+  Application Data records.
+
+Done:
+
+- Added `FpsClassifiedRecordCodec` and `FpsClassifiedRecordPipeline`.
+- Bumped active Zero-RTT config/wire version to 4 and rejected stale explicit
+  versions.
+- Reworked `FpsUpgradeController` transcript tracking so both directions can be
+  observed before and after upgrade.
+- Reworked `TcpBridgeSession` authenticated I/O:
+  - carrier TLS records are forwarded byte-for-byte and transcript-tracked;
+  - classified FPS records are decoded/swallowed before reaching TLS endpoints;
+  - TUN/control frames are encoded as inserted classified records;
+  - shaper queue preflight keeps classified-frame batches atomic.
+- Updated relay logs/status to expose `classified_record` counters instead of
+  old post-auth envelope-mode counters.
+- Updated examples, integration fixtures, specification, protocol review notes
+  and beta/testing docs for the v4 classified-record baseline.
+
+Decision:
+
+- Keep `FpsEnvelopeContent`/frame-bundle codec as an internal encrypted payload
+  representation and fuzz/unit-test target.
+- Remove the old runtime envelope callbacks from `TcpBridgeSession`; external
+  runtime/status terminology is now classified-record based.
+- Treat the fully handshake-less classifier as future protocol work, not this
+  beta increment.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=enum_helpers,tcp_bridge_session,tcp_relay_app,fps_classified_record,zero_rtt_upgrade,fps_upgrade_controller`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `python3 -m py_compile tests/integration/*.py tools/*.py && bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh && ctest --test-dir build --output-on-failure`
+- `cmake --build build -j 2 && ctest --test-dir build -L local --output-on-failure && git diff --check`
+- `python3 -m py_compile tests/integration/*.py tools/*.py && bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh && python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `ctest --test-dir build --output-on-failure`
+
 ### Add FPS TCP-flow pcap shape experiment
 
 Goal:
