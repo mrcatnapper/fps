@@ -414,23 +414,6 @@ private:
         return config_.role == RelayRole::server && lease_allocator_ != nullptr;
     }
 
-    void send_client_instance_metadata(std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session) {
-        if(config_.role != RelayRole::client || !config_.tun.has_value()) {
-            return;
-        }
-        if(!session || !client_instance_id_.has_value()) {
-            FPS_LOG_WARNING("relay") << "event=client_instance_metadata_send_failed session_id=" << session_id << " error=missing_client_instance_id";
-            return;
-        }
-
-        auto payload = encode_client_instance_control(*client_instance_id_);
-        auto queued = session->enqueue_covert_frame(Direction::client_to_server, FrameType::control, payload);
-        if(!queued) {
-            FPS_LOG_WARNING("relay") << "event=client_instance_metadata_send_failed session_id=" << session_id
-                                     << " error=" << tcp_bridge_enqueue_error_message(queued.error());
-        }
-    }
-
     [[nodiscard]] auto register_authenticated_carrier(
         std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session, BridgeSessionRuntimeState& state,
         std::optional<ClientInstanceId> client_instance_id, bool send_lease_control

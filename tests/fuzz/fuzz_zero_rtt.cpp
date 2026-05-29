@@ -30,15 +30,17 @@ auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
     return pair;
 }
 
-auto binding(std::span<const std::byte> input) -> fps::ZeroRttChannelBinding {
-    fps::ZeroRttChannelBinding out{
-        .direction = fps::Direction::client_to_server,
-        .record_index = input.empty() ? 0U : std::to_integer<std::uint8_t>(input.front()),
-        .transcript_byte_count = input.size(),
-        .profile_id = "fuzz-zero-rtt-v1",
+auto binding(std::span<const std::byte> input) -> fps::ZeroRttHandshakeBinding {
+    fps::ZeroRttHandshakeBinding out{
+        .client_to_server_record_index = input.empty() ? 0U : std::to_integer<std::uint8_t>(input.front()),
+        .client_to_server_byte_count = input.size(),
+        .server_to_client_record_index = input.size() < 2 ? 0U : std::to_integer<std::uint8_t>(input[1]),
+        .server_to_client_byte_count = input.size() / 2U,
+        .profile_id = "fuzz-zero-rtt-v5",
     };
-    for(std::size_t i = 0; i < out.transcript_hash.size(); ++i) {
-        out.transcript_hash[i] = i < input.size() ? input[i] : static_cast<std::byte>(i);
+    for(std::size_t i = 0; i < out.client_to_server_hash.size(); ++i) {
+        out.client_to_server_hash[i] = i < input.size() ? input[i] : static_cast<std::byte>(i);
+        out.server_to_client_hash[i] = i < input.size() ? input[input.size() - 1U - i] : static_cast<std::byte>(0xffU - i);
     }
     return out;
 }
@@ -50,7 +52,7 @@ auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& s
         .local_static_public = client.public_key,
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
-        .profile_id = "fuzz-zero-rtt-v1",
+        .profile_id = "fuzz-zero-rtt-v5",
         .version = 5,
         .capabilities = 1,
         .max_padding_size = 128,
@@ -64,7 +66,7 @@ auto server_config(const fps::X25519KeyPair& server, const fps::X25519KeyPair& c
         .local_static_public = server.public_key,
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {client.public_key},
-        .profile_id = "fuzz-zero-rtt-v1",
+        .profile_id = "fuzz-zero-rtt-v5",
         .version = 5,
         .capabilities = 1,
         .max_padding_size = 128,
@@ -88,7 +90,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     auto built = client_engine.build_client_upgrade(channel, padding, key_pair(0xa0));
     if(built) {
         fps::ZeroRttUpgradeEngine roundtrip_server{server_config(server, client)};
-        (void)roundtrip_server.verify_client_upgrade(built.value().wire, channel);
+        auto verified = roundtrip_server.verify_client_upgrade(built.value().wire, channel);
+        if(verified) {
+            auto accept = roundtrip_server.build_server_accept(channel, verified.value(), padding, key_pair(0xb0));
+            if(accept) {
+                (void)client_engine.verify_server_accept(accept.value().wire, channel, built.value());
+            }
+        }
     }
 
     return 0;

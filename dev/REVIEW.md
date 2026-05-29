@@ -1,6 +1,6 @@
 # FPS Self Review
 
-Date: 2026-05-17
+Date: 2026-05-29
 
 ## Findings
 
@@ -13,13 +13,14 @@ Date: 2026-05-17
    command-heavy relay CLI tests and relay CLI command execution, not protocol
    core.
 
-1. **The project is beta-candidate, not production-ready.** Transcript-bound
-   Zero-RTT, Docker runtime, leased TUN routing, source-IP enforcement and
-   quality checks are solid enough for controlled Linux/Docker trials. A
-   30-minute two-host
-   soak has now validated the current candidate over a real published `:443`
-   carrier path. Public beta still needs release work, independent protocol
-   review, rotation workflow and repeatable release-candidate soak policy.
+1. **The project is beta-candidate, not production-ready.** Zero-RTT v5 now
+   uses bidirectional carrier transcript binding plus an encrypted server-accept
+   leg before final classified-record keys exist. Docker runtime, leased TUN
+   routing, source-IP enforcement and quality checks are solid enough for
+   controlled Linux/Docker trials. A 5-minute remote `fpshop` soak validated the
+   current v5 candidate after the latest fixes; public beta still needs
+   independent protocol review, rotation workflow and repeatable
+   release-candidate soak policy.
 
 2. **Lease enforcement is a security contract.** Server-side carrier metadata
    includes the assigned client IPv4. Inbound client TUN packets are dropped when
@@ -34,9 +35,9 @@ Date: 2026-05-17
    lease routing, spoof drop and carrier restart/recovery for two clients.
 
 4. **Fuzzing now protects the right parser edges.** TLS record framing, covert
-   frame decode, FPS envelope decode, Zero-RTT candidate verify and TUN/control
-   parsing have libFuzzer smoke targets. This does not replace protocol review
-   or OpenSSL fuzzing.
+   frame decode, FPS envelope decode, Zero-RTT v5 client-auth/server-accept
+   verification and TUN/control parsing have libFuzzer smoke targets. This does
+   not replace protocol review or OpenSSL fuzzing.
 
 5. **Documentation needed structure more than more pages.** Active public docs
    now live in `docs/`, developer/agent history lives in `dev/`, duplicate
@@ -61,11 +62,12 @@ Date: 2026-05-17
    integration test exercises no-upgrade passthrough, unknown clients,
    transcript-prefix mismatch and post-auth tampering against live daemons.
 
-9. **Replay state is now transcript-bound rather than cache-bound.** Active v3
-   Zero-RTT has no timestamp or replay-cache fields. Replaying a candidate
-   requires reproducing the same carrier transcript prefix before the candidate;
-   durable replay state remains a possible protocol-review outcome if this
-   assumption is judged too weak.
+9. **Replay state is now transcript-bound rather than cache-bound.** Active v5
+   Zero-RTT has no timestamp or replay-cache fields. Replaying a client-auth
+   candidate requires reproducing the same bidirectional carrier transcript and
+   completing the server-accept leg before final FPS keys exist; durable replay
+   state remains a possible protocol-review outcome if this assumption is
+   judged too weak.
 
 10. **The public-key-shaped Zero-RTT prefix is removed.** Candidates now start
     with transcript-bound opaque hints and keep the ephemeral public key inside
@@ -76,8 +78,10 @@ Date: 2026-05-17
 11. **Remaining beta gates are mostly process gates.** The public GitHub remote,
     CI matrix and `main` branch protection are configured. The main blockers are
     external protocol review, release/signing workflow, repeated
-    release-candidate soak and operator onboarding feedback, not another local
-    protocol rewrite.
+    release-candidate soak and operator onboarding feedback. The latest
+    self-review found and fixed one v5 integration-order bug: client-side
+    server-accept control payloads must be delivered after carrier registration,
+    otherwise leased TUN auto-config silently loses the assigned IPv4 address.
 
 12. **Manual real-origin carrier UX is now documented, but not automated.** A
     historical real-origin flow showed that ordinary WebSocket clients can hold

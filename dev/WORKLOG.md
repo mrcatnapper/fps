@@ -4,6 +4,82 @@
 
 ## 2026-05-29
 
+### Run v5 self-review and full quality suite
+
+Goal:
+
+- Self-review the current Zero-RTT v5 candidate.
+- Run the full local/non-Docker quality suite, opt-in TUN tests, Docker runtime
+  simulations and a 5-minute remote soak on `fpshop`.
+
+Findings and fixes:
+
+- Coverage gate initially failed narrowly after v5 (`79.90%` function coverage
+  versus the `80%` threshold). The cause was a stale, unused
+  `send_client_instance_metadata` relay helper left after client instance
+  metadata moved into encrypted client-auth payload. Removed the dead helper.
+- Fuzz build initially failed because `tests/fuzz/fuzz_zero_rtt.cpp` still used
+  the old one-direction `ZeroRttChannelBinding`. Updated the harness to use
+  `ZeroRttHandshakeBinding` and to exercise client-auth plus server-accept.
+- Opt-in TUN tests found a real v5 regression: the client delivered encrypted
+  server-accept control payload before the relay had registered the carrier, so
+  leased IPv4 auto-config was dropped as an unauthenticated control frame.
+  Fixed `TcpBridgeSession` to call `on_zero_rtt_authenticated` before delivering
+  `server_accept_payload`, and added a unit assertion for that ordering.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local build/tests passed;
+  - ASan+UBSan local tests passed;
+  - Valgrind unit pass: 0 errors, no leaks;
+  - coverage: `71.96%` total lines, `80.03%` total functions;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - `4.9995 Mbit/s`, `0%` loss.
+- `tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 10 --bandwidth 5M --length 1200`
+  - `5.0003 Mbit/s`, `0%` loss.
+- `tools/docker_multi_client_sim.py --sudo --image fps:local --duration 10 --bandwidth 1M --length 1000`
+  - two distinct leases, bidirectional UDP probes at about `1 Mbit/s`,
+    `0%` loss, spoof drop observed, all services alive.
+- `tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - `duplicate_client_replacements=1`, old client blocked, new client OK.
+- `tools/docker_socks_smoke.py --sudo --image fps:local --proxy-image fps-dante-proxy:local --build`
+  - SOCKS HTTP probe OK, all six services alive.
+- Remote 5-minute `fpshop` Docker/TUN resilience soak using temporary image tag
+  `fps:soak-v5-76b1d43-qa` loaded from the local checked tree:
+  - command:
+    `python3 tools/docker_resilience_soak.py --image fps:soak-v5-76b1d43-qa --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90`;
+  - main mixed client-to-server UDP: `300.01s`, `14,649` packets,
+    `0%` loss, about `0.200 Mbit/s`, plus `546` HTTP probes;
+  - server-to-client UDP probes to both leases: `489` packets each, `0%` loss;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier stop/start recovery passed with `489` recovered packets, `0%`
+    loss;
+  - final status: two active carriers, non-zero TUN counters, all six services
+    running;
+  - Docker-level pressure did not produce `write_queue_full`, which remains
+    acceptable for routine soak because it is topology/timing dependent.
+- Temporary remote directory and local/remote soak image tag were removed.
+
+Open notes:
+
+- Coverage now passes with a narrow function-coverage margin. The next code
+  cleanup should either add focused coverage for live relay paths or adjust the
+  coverage accounting to avoid header-only Boost.Describe noise if it becomes a
+  recurring false signal.
+
 ### Implement Zero-RTT v5 1-RTT finalization
 
 Goal:

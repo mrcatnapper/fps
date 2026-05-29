@@ -239,6 +239,7 @@ struct ZeroRttBridgeFixture {
     ConnectedPair client_pair;
     ConnectedPair origin_pair;
     std::vector<fps::DecodedFrame> frames;
+    std::vector<bool> frame_seen_after_auth;
     std::vector<fps::FpsClassifiedRecordError> classified_errors;
     std::vector<fps::FpsClassifiedRecordPipelineEncodeError> classified_encode_errors;
     std::optional<fps::SessionKeys> authenticated_keys;
@@ -250,7 +251,10 @@ struct ZeroRttBridgeFixture {
     )
         : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
         fps::net::TcpBridgeSessionHandlers handlers;
-        handlers.on_covert_frame = [&](fps::Direction, const fps::DecodedFrame& frame) { frames.push_back(frame); };
+        handlers.on_covert_frame = [&](fps::Direction, const fps::DecodedFrame& frame) {
+            frame_seen_after_auth.push_back(authenticated_keys.has_value());
+            frames.push_back(frame);
+        };
         handlers.on_classified_record_error = [&](fps::Direction, fps::FpsClassifiedRecordError error) { classified_errors.push_back(error); };
         handlers.on_classified_record_encode_error = [&](fps::Direction, fps::FpsClassifiedRecordPipelineEncodeError error) {
             classified_encode_errors.push_back(error);
@@ -975,6 +979,8 @@ BOOST_AUTO_TEST_CASE(client_role_injects_late_zero_rtt_upgrade_and_forwards_foll
     BOOST_REQUIRE(server_controller.session_keys().has_value());
     BOOST_CHECK(server_controller.session_keys()->client_to_server.key == fixture.authenticated_keys->client_to_server.key);
     BOOST_REQUIRE_EQUAL(fixture.frames.size(), 1U);
+    BOOST_REQUIRE_EQUAL(fixture.frame_seen_after_auth.size(), 1U);
+    BOOST_CHECK(fixture.frame_seen_after_auth[0]);
     BOOST_CHECK(fixture.frames[0].frame_type == fps::FrameType::control);
     BOOST_CHECK(fixture.frames[0].payload == accept_payload);
 

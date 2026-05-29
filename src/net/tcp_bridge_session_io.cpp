@@ -319,6 +319,9 @@ auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, c
         }
         activate_zero_rtt_classified_pipelines(*result.session_keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
         zero_rtt_authenticated_ = true;
+        if(handlers_.on_zero_rtt_authenticated) {
+            handlers_.on_zero_rtt_authenticated(*result.session_keys, std::nullopt);
+        }
         if(!result.server_accept_payload.empty() && handlers_.on_covert_frame) {
             handlers_.on_covert_frame(
                 direction,
@@ -328,9 +331,6 @@ auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, c
                     .payload = result.server_accept_payload,
                 }
             );
-        }
-        if(handlers_.on_zero_rtt_authenticated) {
-            handlers_.on_zero_rtt_authenticated(*result.session_keys, std::nullopt);
         }
         pump(config_.zero_rtt->controller_config.upgrade_direction);
     }
