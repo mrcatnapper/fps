@@ -65,6 +65,8 @@ Changes:
 - Reworded tool comments/messages that looked like stale design markers during
   repository scans but described current pcap plotting and Docker fallback
   behavior.
+- Updated the Docker artifact static test to match the current Docker build
+  fallback wording.
 - Removed local ignored `__pycache__` output from `tools/` and integration
   tests.
 
