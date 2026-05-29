@@ -46,11 +46,11 @@ namespace json = boost::json;
 constexpr auto kNoisyLogInterval = std::chrono::seconds{10};
 
 using detail::codec_error_message;
+using detail::classified_record_encode_error_message;
+using detail::classified_record_encode_stage_message;
+using detail::classified_record_error_message;
 using detail::direction_name;
 using detail::endpoint_to_string;
-using detail::envelope_encode_error_message;
-using detail::envelope_encode_stage_message;
-using detail::envelope_error_message;
 using detail::role_name;
 using detail::session_manager_error_message;
 using detail::session_manager_event_message;
@@ -144,7 +144,7 @@ struct RelayAuthStats {
     std::uint64_t confirmation_failed = 0;
 };
 
-struct RelayEnvelopeStats {
+struct RelayClassifiedRecordStats {
     std::uint64_t decode_failed = 0;
     std::uint64_t encode_failed = 0;
     std::uint64_t tampered_or_invalid = 0;
@@ -610,12 +610,12 @@ private:
         auth["decrypt_failed"] = auth_stats_.decrypt_failed;
         auth["confirmation_failed"] = auth_stats_.confirmation_failed;
 
-        json::object envelope;
-        envelope["decode_failed"] = envelope_stats_.decode_failed;
-        envelope["encode_failed"] = envelope_stats_.encode_failed;
-        envelope["tampered_or_invalid"] = envelope_stats_.tampered_or_invalid;
-        envelope["records_decoded"] = envelope_stats_.records_decoded;
-        envelope["records_encoded"] = envelope_stats_.records_encoded;
+        json::object classified_record;
+        classified_record["decode_failed"] = classified_record_stats_.decode_failed;
+        classified_record["encode_failed"] = classified_record_stats_.encode_failed;
+        classified_record["tampered_or_invalid"] = classified_record_stats_.tampered_or_invalid;
+        classified_record["records_decoded"] = classified_record_stats_.records_decoded;
+        classified_record["records_encoded"] = classified_record_stats_.records_encoded;
 
         json::object tun;
         tun["enabled"] = config_.tun.has_value();
@@ -662,7 +662,7 @@ private:
         root["target"] = endpoint_to_string(config_.target);
         root["sessions"] = std::move(sessions);
         root["auth"] = std::move(auth);
-        root["envelope"] = std::move(envelope);
+        root["classified_record"] = std::move(classified_record);
         root["tun"] = std::move(tun);
         root["shaper"] = std::move(shaper);
         return root;
@@ -1012,29 +1012,32 @@ private:
             FPS_LOG_DEBUG("zero_rtt") << "event=zero_rtt_upgrade_miss session_id=" << session_id << " direction=" << direction_name(direction)
                                       << " error=" << zero_rtt_upgrade_error_message(error);
         };
-        handlers.on_envelope_error = [weak_self, session_id](Direction direction, FpsEnvelopeError error) {
+        handlers.on_classified_record_error = [weak_self, session_id](Direction direction, FpsClassifiedRecordError error) {
             if(const auto self = weak_self.lock()) {
-                ++self->envelope_stats_.decode_failed;
-                ++self->envelope_stats_.tampered_or_invalid;
+                ++self->classified_record_stats_.decode_failed;
+                ++self->classified_record_stats_.tampered_or_invalid;
             }
-            FPS_LOG_WARNING("envelope") << "event=envelope_error session_id=" << session_id << " direction=" << direction_name(direction)
-                                        << " error=" << envelope_error_message(error);
+            FPS_LOG_WARNING("classified_record") << "event=classified_record_error session_id=" << session_id
+                                                 << " direction=" << direction_name(direction)
+                                                 << " error=" << classified_record_error_message(error);
         };
-        handlers.on_envelope_encode_error = [weak_self, session_id](Direction direction, FpsEnvelopePipelineEncodeError error) {
+        handlers.on_classified_record_encode_error = [weak_self, session_id](Direction direction, FpsClassifiedRecordPipelineEncodeError error) {
             if(const auto self = weak_self.lock()) {
-                ++self->envelope_stats_.encode_failed;
+                ++self->classified_record_stats_.encode_failed;
             }
-            FPS_LOG_WARNING("envelope") << "event=envelope_encode_error session_id=" << session_id << " direction=" << direction_name(direction)
-                                        << " stage=" << envelope_encode_stage_message(error.stage) << " error=" << envelope_encode_error_message(error);
+            FPS_LOG_WARNING("classified_record") << "event=classified_record_encode_error session_id=" << session_id
+                                                 << " direction=" << direction_name(direction)
+                                                 << " stage=" << classified_record_encode_stage_message(error.stage)
+                                                 << " error=" << classified_record_encode_error_message(error);
         };
-        handlers.on_envelope_records_decoded = [weak_self](Direction, std::size_t count) {
+        handlers.on_classified_records_decoded = [weak_self](Direction, std::size_t count) {
             if(const auto self = weak_self.lock()) {
-                self->envelope_stats_.records_decoded += static_cast<std::uint64_t>(count);
+                self->classified_record_stats_.records_decoded += static_cast<std::uint64_t>(count);
             }
         };
-        handlers.on_envelope_records_encoded = [weak_self](Direction, std::size_t count) {
+        handlers.on_classified_records_encoded = [weak_self](Direction, std::size_t count) {
             if(const auto self = weak_self.lock()) {
-                self->envelope_stats_.records_encoded += static_cast<std::uint64_t>(count);
+                self->classified_record_stats_.records_encoded += static_cast<std::uint64_t>(count);
             }
         };
         handlers.on_zero_rtt_authenticated = [weak_self, session_slot, runtime_state,
@@ -1107,7 +1110,7 @@ private:
     std::optional<std::filesystem::path> status_socket_path_;
     RelayRuntimeStats stats_;
     RelayAuthStats auth_stats_;
-    RelayEnvelopeStats envelope_stats_;
+    RelayClassifiedRecordStats classified_record_stats_;
     std::deque<ClosedSessionSnapshot> recent_closed_sessions_;
     std::array<RepeatedLogState, kSessionManagerErrorCount> tun_session_error_log_limits_{};
     std::array<RepeatedLogState, kTlsParseErrorCount> tls_parse_error_log_limits_{};

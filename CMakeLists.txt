@@ -48,6 +48,7 @@ add_library(fps_core
   src/core/cover_session_pipeline.cpp
   src/core/covert_codec.cpp
   src/core/crypto.cpp
+  src/core/fps_classified_record.cpp
   src/core/fps_envelope.cpp
   src/core/fps_envelope_pipeline.cpp
   src/core/fps_upgrade_controller.cpp
@@ -180,6 +181,7 @@ if(FPS_BUILD_TESTS)
     tests/test_covert_codec.cpp
     tests/test_crypto.cpp
     tests/test_enum.cpp
+    tests/test_fps_classified_record.cpp
     tests/test_fps_envelope.cpp
     tests/test_fps_envelope_pipeline.cpp
     tests/test_fps_upgrade_controller.cpp

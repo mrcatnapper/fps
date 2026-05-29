@@ -1,7 +1,7 @@
 # FPS Testing And Quality Workflow
 
 The regression baseline is meant to catch changes in TLS passthrough,
-Zero-RTT upgrade, encrypted envelope mode, carrier-pool TUN scheduling,
+Zero-RTT upgrade, classified FPS records, carrier-pool TUN scheduling,
 fragmentation, shaper budgeting, CLI/config behavior and logging safety.
 
 ## Quick Local Suite
@@ -289,7 +289,7 @@ notes with the release-candidate record.
 - `docker`: Docker artifact/static checks.
 - `log`: log/stream checks without exact timestamps.
 - `wss`: WebSocket-over-TLS carrier generation and relay paths.
-- `zero_rtt`: transcript-bound Zero-RTT late upgrade/envelope path.
+- `zero_rtt`: transcript-bound Zero-RTT late upgrade and classified-record path.
 - `multi_carrier`: more than one authenticated carrier session.
 - `shaper`: shaper-gated injected writes.
 - `fragmentation`: TUN packet splitting/reassembly.
@@ -308,13 +308,14 @@ Unit tests cover:
   tamper rejection.
 - FPS upgrade controller late upgrade, byte-for-byte fallback and fragmented
   boundary tracking.
-- Envelope codec/pipeline inner TLS bytes, covert frames, padding, implicit
-  sequence, tamper rejection and no-plaintext-metadata smoke.
+- Classified-record and internal frame-bundle codecs, covert frames, padding,
+  implicit sequence, tamper rejection and no-plaintext-metadata smoke.
 - Shaper deterministic plans, CDF validation, ratio budget, burst limit,
   backpressure clear/block, direction isolation and profile exhaustion.
-- `TcpBridgeSession` passthrough, Zero-RTT strip/confirmation/unwrap, client late
+- `TcpBridgeSession` passthrough, Zero-RTT strip/confirmation/classify, client late
   upgrade, race-safe confirmation wait with cover-record fallback, fragmented
-  confirmation wait, post-confirmation wrapping and unauthenticated enqueue
+  confirmation wait, post-confirmation carrier passthrough plus classified
+  record insertion and unauthenticated enqueue
   rejection.
 - `SessionManager` and `TunPacketPump` carrier registration/removal,
   round-robin scheduling, lease-aware destination routing, strict source-IP
@@ -336,8 +337,8 @@ Local integration tests cover:
   lease-management option presence and log-level override.
 - Local `ops.status_socket` smoke: daemon publishes a UNIX status socket,
   `--status` returns JSON counters plus `sessions.last_closed` /
-  `sessions.recent_closed`, root `auth` and `envelope` counter groups, socket
-  permissions are `0600`, and status output does not expose UUIDs or key
+  `sessions.recent_closed`, root `auth` and `classified_record` counter groups,
+  socket permissions are `0600`, and status output does not expose UUIDs or key
   material.
 - Linux route helper dry plans for split tunnel, full tunnel policy routing,
   carrier bypass and cleanup.
@@ -351,8 +352,8 @@ Local integration tests cover:
 - HTTPS Zero-RTT chain, hint precheck with decoy allowlist entries, and two
   simultaneous keep-alive TLS sessions without response mixing.
 - Zero-RTT adversarial local probe: direct passthrough without valid upgrade,
-  unknown client UUID, transcript-prefix mismatch and post-auth tampered envelope
-  against live `fps_client -> fps_server -> HTTPS origin`.
+  unknown client UUID, transcript-prefix mismatch and post-auth tampered carrier
+  record against live `fps_client -> fps_server -> HTTPS origin`.
 - WSS passthrough, WSS Zero-RTT using reusable `fps_carrier`, and a Zero-RTT
   HTTPS browser-style request through `fps_client -> fps_server -> fps_carrier`.
 - Optional pcap TLS shape check when `-DFPS_ENABLE_PCAP_TESTS=ON`.
@@ -368,7 +369,8 @@ Fuzz targets:
 
 - `fps_fuzz_tls_records`: TLS record parser/layer framing and filtering.
 - `fps_fuzz_covert_codec`: decrypted covert frame decode plus valid roundtrip.
-- `fps_fuzz_envelope`: FPS envelope decode plus valid roundtrip.
+- `fps_fuzz_envelope`: internal encrypted frame-bundle decode plus valid
+  roundtrip.
 - `fps_fuzz_zero_rtt`: Zero-RTT candidate verify plus valid upgrade roundtrip.
 - `fps_fuzz_tun_frames`: TUN lease/control payload and IPv4 packet helpers.
 

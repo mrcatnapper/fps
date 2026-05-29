@@ -47,15 +47,17 @@ namespace fps::net::detail {
     return enum_name_or(error, "unknown_zero_rtt_upgrade_error");
 }
 
-[[nodiscard]] inline auto envelope_error_message(FpsEnvelopeError error) -> std::string_view { return enum_name_or(error, "unknown_envelope_error"); }
-
-[[nodiscard]] inline auto envelope_encode_stage_message(FpsEnvelopePipelineEncodeStage stage) -> std::string_view {
-    return enum_name_or(stage, "unknown_envelope_encode_stage");
+[[nodiscard]] inline auto classified_record_error_message(FpsClassifiedRecordError error) -> std::string_view {
+    return enum_name_or(error, "unknown_classified_record_error");
 }
 
-[[nodiscard]] inline auto envelope_encode_error_message(const FpsEnvelopePipelineEncodeError& error) -> std::string_view {
-    return error.stage == FpsEnvelopePipelineEncodeStage::tls_record ? tls_record_error_message(error.tls_record_error)
-                                                                     : envelope_error_message(error.envelope_error);
+[[nodiscard]] inline auto classified_record_encode_stage_message(FpsClassifiedRecordPipelineEncodeStage stage) -> std::string_view {
+    return enum_name_or(stage, "unknown_classified_record_encode_stage");
+}
+
+[[nodiscard]] inline auto classified_record_encode_error_message(const FpsClassifiedRecordPipelineEncodeError& error) -> std::string_view {
+    return error.stage == FpsClassifiedRecordPipelineEncodeStage::tls_record ? tls_record_error_message(error.tls_record_error)
+                                                                             : classified_record_error_message(error.classified_error);
 }
 
 [[nodiscard]] inline auto direction_name(Direction direction) -> std::string_view { return enum_name_or(direction); }

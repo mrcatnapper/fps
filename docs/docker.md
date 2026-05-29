@@ -173,13 +173,13 @@ docker compose run --rm --no-deps fps-client status
 query from inside the running daemon container.
 
 The command prints one JSON snapshot with role, pid, uptime, session/carrier
-counters, auth and envelope counters, recent close metadata, TUN packet/drop
-counters and shaper/backpressure counters. `auth.authenticated`,
-`sessions.carriers_current`, `envelope.decode_failed` and
-`envelope.encode_failed` are the first fields to check when a carrier does not
-behave as expected. `sessions.last_closed` and
+counters, auth and classified-record counters, recent close metadata, TUN
+packet/drop counters and shaper/backpressure counters. `auth.authenticated`,
+`sessions.carriers_current`, `classified_record.decode_failed` and
+`classified_record.encode_failed` are the first fields to check when a carrier
+does not behave as expected. `sessions.last_closed` and
 `sessions.recent_closed` explain the last bounded set of close reasons, such as
-peer EOF, target connect failure, envelope decode failure or write queue
+peer EOF, target connect failure, classified-record decode failure or write queue
 saturation. It is a local read-only health surface, not a management API. It
 never prints UUIDs, keys or payload bytes.
 

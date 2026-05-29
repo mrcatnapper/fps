@@ -108,12 +108,12 @@ broken TLS record boundary. It is a traffic-shape signal:
 - bidirectional TUN load makes this effect visible in both directions.
 
 This is expected for the current beta. FPS currently prioritizes correctness,
-lease enforcement, envelope confidentiality and Docker-first operability over
+lease enforcement, classified-record confidentiality and Docker-first operability over
 traffic-shape mimicry.
 
 ## Engineering Conclusion
 
-The next traffic-analysis work should focus on envelope scheduling and shaping,
+The next traffic-analysis work should focus on classified-record scheduling and shaping,
 not on TLS record syntactic validity alone. Useful next experiments:
 
 - compare a pure carrier capture against carrier-plus-FPS captures at several

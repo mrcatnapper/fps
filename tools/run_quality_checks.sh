@@ -255,11 +255,11 @@ if [[ "$run_docker" == true ]]; then
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "docker-smoke-v3",
+      "profile_id": "docker-smoke-v4",
       "server_private_key_base64": "$server_private_key",
       "server_public_key_base64": "$server_public_key",
       "allowed_client_uuids": ["$client_uuid"],
-      "version": 3,
+      "version": 4,
       "capabilities": 1,
       "max_padding_size": 64,
       "min_records_before_trial": 1,

@@ -1,6 +1,7 @@
 #include "fps/core/cover_session_pipeline.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "fps/core/wire.hpp"
@@ -61,36 +62,48 @@ auto CoverSessionPipeline::process_inbound_tls(std::span<const std::byte> bytes)
     result.pending_tls_bytes = parsed.pending_bytes;
 
     for(const auto& record : parsed.records) {
-        if(record.wire.size() != 5U + static_cast<std::size_t>(record.length)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            continue;
-        }
-
-        if(!record.is_application_data()) {
-            append_bytes(result.forward_bytes, record.wire);
-            continue;
-        }
-
-        if(!options_.covert_enabled || !codec_) {
-            append_bytes(result.forward_bytes, record.wire);
-            continue;
-        }
-
-        const auto payload = record.payload();
-        if(!is_expected_covert_candidate(payload)) {
-            append_bytes(result.forward_bytes, record.wire);
-            continue;
-        }
-
-        auto decoded = codec_->decode(payload);
-        if(decoded) {
-            result.covert_frames.push_back(std::move(decoded).value());
-            continue;
-        }
-
-        result.codec_errors.push_back(decoded.error());
+        auto record_result = process_inbound_record(record);
+        append_bytes(result.forward_bytes, record_result.forward_bytes);
+        result.covert_frames.insert(
+            result.covert_frames.end(), std::make_move_iterator(record_result.covert_frames.begin()), std::make_move_iterator(record_result.covert_frames.end())
+        );
+        result.codec_errors.insert(result.codec_errors.end(), record_result.codec_errors.begin(), record_result.codec_errors.end());
+        result.record_errors.insert(result.record_errors.end(), record_result.record_errors.begin(), record_result.record_errors.end());
     }
 
+    return result;
+}
+
+auto CoverSessionPipeline::process_inbound_record(const TlsRecord& record) -> CoverSessionProcessResult {
+    CoverSessionProcessResult result;
+    if(record.wire.size() != 5U + static_cast<std::size_t>(record.length)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        return result;
+    }
+
+    if(!record.is_application_data()) {
+        append_bytes(result.forward_bytes, record.wire);
+        return result;
+    }
+
+    if(!options_.covert_enabled || !codec_) {
+        append_bytes(result.forward_bytes, record.wire);
+        return result;
+    }
+
+    const auto payload = record.payload();
+    if(!is_expected_covert_candidate(payload)) {
+        append_bytes(result.forward_bytes, record.wire);
+        return result;
+    }
+
+    auto decoded = codec_->decode(payload);
+    if(decoded) {
+        result.covert_frames.push_back(std::move(decoded).value());
+        return result;
+    }
+
+    result.codec_errors.push_back(decoded.error());
     return result;
 }
 

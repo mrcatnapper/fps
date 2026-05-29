@@ -2,7 +2,168 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-29
+
+### Make TCP bridge TLS framing session-owned
+
+Goal:
+
+- Fix the remaining PR #4 framing risk: TCP `read_some` boundaries must not be
+  treated as TLS record boundaries before, during or after Zero-RTT upgrade.
+- Add failing regressions first, then refactor the bridge path so upgrade,
+  cover and classified processing all consume complete TLS records.
+
+Finding:
+
+- The previous coalesced-record fix handled a complete post-auth TLS record in
+  the same read as the upgrade, but it still relied on separate parsers in
+  upgrade/classified/cover layers. A malicious or unlucky TCP segmentation could
+  split the next TLS record across the auth transition and lose parser state.
+
+Done:
+
+- Added bridge regressions for:
+  - a post-auth client-to-server carrier TLS record split immediately after the
+    upgrade record;
+  - a server-to-client origin TLS record split across the client auth
+    confirmation transition.
+- Moved stream slicing ownership into `TcpBridgeSession`: each direction now has
+  one `TlsRecordParser`, and the bridge dispatches complete `TlsRecord`s to
+  cover, Zero-RTT and classified-record processors.
+- Reduced `FpsUpgradeController` to record-level observation/verification and
+  removed the temporary `post_auth_bytes` handoff.
+- Added record-level entry points to cover/classified pipelines for bridge use
+  while keeping their byte-stream helpers for unit tests and lower-level users.
+- Updated unit tests to match the record-level upgrade-controller contract.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=fps_upgrade_controller,tcp_bridge_session`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+- `git diff --check`
+
+Commit:
+
+- This commit: `Make TCP bridge TLS framing session-owned`
+
+### Final v4 PR self-review fix
+
+Goal:
+
+- Re-review PR #4 before merge and verify that the v4 classified-record
+  transition handles coalesced TCP reads safely.
+- Check public docs/articles for stale v3/envelope-mode wording after the v4
+  protocol refactor.
+
+Finding:
+
+- Self-review found one blocker in the server pre-auth path: if one TCP read
+  contained the successful Zero-RTT upgrade TLS record plus a later carrier TLS
+  record, `FpsUpgradeController::process_inbound_tls()` authenticated on the
+  upgrade and then silently consumed the post-auth record instead of handing it
+  to classified-record processing.
+
+Done:
+
+- Added `FpsUpgradeProcessResult::post_auth_bytes`.
+- Changed `FpsUpgradeController` to return TLS records observed after the
+  auth record in the same parse batch for post-auth classification instead of
+  updating the transcript and dropping them.
+- Updated `TcpBridgeSession` server auth transition to process those
+  `post_auth_bytes` through the classified-record pipeline and forward ordinary
+  carrier bytes in order.
+- Added controller-level and bridge-level regressions for upgrade-plus-following
+  TLS record coalescing.
+- Refreshed the HackerNoon/Habr article text where it still described the old
+  envelope-mode runtime and visible Zero-RTT prefix as current behavior.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=fps_upgrade_controller,tcp_bridge_session`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `git diff --check`
+
+Commit:
+
+- This commit: `Fix coalesced post-auth TLS handoff`
+
 ## 2026-05-28
+
+### Implement Zero-RTT v4 classified FPS records
+
+Goal:
+
+- Keep explicit Zero-RTT authentication, but stop wrapping the whole post-auth
+  carrier TLS byte stream into FPS envelopes.
+- Make ordinary carrier TLS records continue byte-for-byte after auth and send
+  covert TUN/control payloads as separately inserted, transcript-classified TLS
+  Application Data records.
+
+Done:
+
+- Added `FpsClassifiedRecordCodec` and `FpsClassifiedRecordPipeline`.
+- Bumped active Zero-RTT config/wire version to 4 and rejected stale explicit
+  versions.
+- Reworked `FpsUpgradeController` transcript tracking so both directions can be
+  observed before and after upgrade.
+- Reworked `TcpBridgeSession` authenticated I/O:
+  - carrier TLS records are forwarded byte-for-byte and transcript-tracked;
+  - classified FPS records are decoded/swallowed before reaching TLS endpoints;
+  - TUN/control frames are encoded as inserted classified records;
+  - shaper queue preflight keeps classified-frame batches atomic.
+- Updated relay logs/status to expose `classified_record` counters instead of
+  old post-auth envelope-mode counters.
+- Updated examples, integration fixtures, specification, protocol review notes
+  and beta/testing docs for the v4 classified-record baseline.
+
+Decision:
+
+- Keep `FpsEnvelopeContent`/frame-bundle codec as an internal encrypted payload
+  representation and fuzz/unit-test target.
+- Remove the old runtime envelope callbacks from `TcpBridgeSession`; external
+  runtime/status terminology is now classified-record based.
+- Treat the fully handshake-less classifier as future protocol work, not this
+  beta increment.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=enum_helpers,tcp_bridge_session,tcp_relay_app,fps_classified_record,zero_rtt_upgrade,fps_upgrade_controller`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `python3 -m py_compile tests/integration/*.py tools/*.py && bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh && ctest --test-dir build --output-on-failure`
+- `cmake --build build -j 2 && ctest --test-dir build -L local --output-on-failure && git diff --check`
+- `python3 -m py_compile tests/integration/*.py tools/*.py && bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh && python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `ctest --test-dir build --output-on-failure`
+- PR-readiness quality sweep on 2026-05-29:
+  - `tools/run_quality_checks.sh --all`
+  - `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+  - `tools/run_quality_checks.sh --all` coverage gate:
+    72.22% total line coverage, 80.37% total function coverage.
+- Short `fpshop` Docker/TUN soak on 2026-05-29:
+  - image tag: `fps:soak-v4-0e732ca`;
+  - command shape:
+    `python3 tools/docker_resilience_soak.py --image fps:soak-v4-0e732ca --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90`;
+  - main mixed client-to-server UDP: 300.05 seconds, 14,649 packets,
+    0 lost, about 0.20 Mbit/s, plus 547 HTTP probe requests;
+  - server-to-client UDP probes to both leases: 489 packets each, 0 lost;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier stop/start recovery passed with 489 recovered UDP packets, 0 lost;
+  - final status: two active carriers, non-zero TUN counters, all six services
+    running; routine Docker-level backpressure did not trigger `write_queue_full`
+    on this host, which is acceptable under the documented soak policy.
+  - temporary `/tmp/fps-soak-v4-0e732ca` runtime and the remote/local
+    `fps:soak-v4-0e732ca` tags were removed after the run.
 
 ### Add FPS TCP-flow pcap shape experiment
 

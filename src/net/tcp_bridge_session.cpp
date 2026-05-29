@@ -17,13 +17,24 @@
 namespace fps::net {
 
 using detail::add_stat;
+using detail::classified_record_config;
 using detail::close_info;
-using detail::close_info_from_envelope_encode;
-using detail::close_info_from_envelope_result;
+using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
-using detail::envelope_config;
 using detail::is_tun_frame;
 using detail::normalize_config;
+
+namespace {
+
+[[nodiscard]] auto session_parser_options(const TcpBridgeSessionConfig& config) -> TlsRecordParserOptions {
+    if(config.zero_rtt.has_value()) {
+        return config.zero_rtt->controller_config.parser_options;
+    }
+    return {};
+}
+
+} // namespace
+
 auto TcpBridgeSession::create(
     TcpSocket client_socket, TcpSocket origin_socket, CoverSessionPipeline client_to_server_pipeline, CoverSessionPipeline server_to_client_pipeline,
     TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
@@ -55,6 +66,8 @@ TcpBridgeSession::TcpBridgeSession(
     , pipelines_(std::move(pipelines))
     , handlers_(std::move(handlers))
     , config_(normalize_config(config))
+    , client_to_server_tls_parser_(session_parser_options(config_))
+    , server_to_client_tls_parser_(session_parser_options(config_))
     , client_to_server_buffer_(config_.read_buffer_size)
     , server_to_client_buffer_(config_.read_buffer_size) {
     if(config_.zero_rtt.has_value()) {
@@ -147,12 +160,16 @@ auto TcpBridgeSession::outbound_pipeline(Direction direction) -> CoverSessionPip
     return direction == Direction::client_to_server ? pipelines_.outbound_client_to_server : pipelines_.outbound_server_to_client;
 }
 
-auto TcpBridgeSession::inbound_envelope_pipeline(Direction direction) -> FpsEnvelopePipeline& {
-    return direction == Direction::client_to_server ? envelope_pipelines_->inbound_client_to_server : envelope_pipelines_->inbound_server_to_client;
+auto TcpBridgeSession::inbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
+    return direction == Direction::client_to_server ? classified_pipelines_->inbound_client_to_server : classified_pipelines_->inbound_server_to_client;
 }
 
-auto TcpBridgeSession::outbound_envelope_pipeline(Direction direction) -> FpsEnvelopePipeline& {
-    return direction == Direction::client_to_server ? envelope_pipelines_->outbound_client_to_server : envelope_pipelines_->outbound_server_to_client;
+auto TcpBridgeSession::outbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
+    return direction == Direction::client_to_server ? classified_pipelines_->outbound_client_to_server : classified_pipelines_->outbound_server_to_client;
+}
+
+auto TcpBridgeSession::tls_record_parser(Direction direction) -> TlsRecordParser& {
+    return direction == Direction::client_to_server ? client_to_server_tls_parser_ : server_to_client_tls_parser_;
 }
 
 auto TcpBridgeSession::read_buffer(Direction direction) -> std::vector<std::byte>& {
@@ -282,10 +299,10 @@ void TcpBridgeSession::emit_zero_rtt_process_result(Direction direction, const F
     }
 }
 
-void TcpBridgeSession::emit_envelope_process_result(Direction direction, const FpsEnvelopePipelineProcessResult& result) {
+void TcpBridgeSession::emit_classified_process_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result) {
     auto& stats = stats_for(direction);
-    if(result.decoded_envelope_records > 0U && handlers_.on_envelope_records_decoded) {
-        handlers_.on_envelope_records_decoded(direction, result.decoded_envelope_records);
+    if(result.decoded_fps_records > 0U && handlers_.on_classified_records_decoded) {
+        handlers_.on_classified_records_decoded(direction, result.decoded_fps_records);
     }
     for(const auto& frame : result.frames) {
         add_stat(stats.covert_frames_in, 1U);
@@ -319,23 +336,23 @@ void TcpBridgeSession::emit_envelope_process_result(Direction direction, const F
             handlers_.on_record_error(direction, error);
         }
     }
-    if(handlers_.on_envelope_error) {
-        for(const auto error : result.envelope_errors) {
-            handlers_.on_envelope_error(direction, error);
+    if(handlers_.on_classified_record_error) {
+        for(const auto error : result.classified_errors) {
+            handlers_.on_classified_record_error(direction, error);
         }
     }
 }
 
-void TcpBridgeSession::emit_envelope_encode_error(Direction direction, const FpsEnvelopePipelineEncodeError& error) {
-    set_pending_close_info(close_info_from_envelope_encode(direction, error));
-    if(handlers_.on_envelope_encode_error) {
-        handlers_.on_envelope_encode_error(direction, error);
+void TcpBridgeSession::emit_classified_encode_error(Direction direction, const FpsClassifiedRecordPipelineEncodeError& error) {
+    set_pending_close_info(detail::close_info_from_classified_encode(direction, error));
+    if(handlers_.on_classified_record_encode_error) {
+        handlers_.on_classified_record_encode_error(direction, error);
     }
 }
 
-void TcpBridgeSession::emit_envelope_records_encoded(Direction direction, std::size_t count) const {
-    if(count > 0U && handlers_.on_envelope_records_encoded) {
-        handlers_.on_envelope_records_encoded(direction, count);
+void TcpBridgeSession::emit_classified_records_encoded(Direction direction, std::size_t count) const {
+    if(count > 0U && handlers_.on_classified_records_encoded) {
+        handlers_.on_classified_records_encoded(direction, count);
     }
 }
 

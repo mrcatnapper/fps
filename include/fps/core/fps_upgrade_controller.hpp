@@ -61,17 +61,19 @@ class FpsUpgradeController {
 public:
     explicit FpsUpgradeController(FpsUpgradeControllerConfig config);
 
-    [[nodiscard]] auto observe_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeObserveResult;
+    [[nodiscard]] auto observe_tls_record(Direction direction, const TlsRecord& record) -> FpsUpgradeObserveResult;
 
     [[nodiscard]] auto build_client_upgrade_record(std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
         -> FpsUpgradeBuildResult;
 
-    [[nodiscard]] auto process_inbound_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeProcessResult;
+    [[nodiscard]] auto process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult;
 
     [[nodiscard]] auto state() const noexcept -> FpsUpgradeState;
     [[nodiscard]] auto session_keys() const noexcept -> const std::optional<SessionKeys>&;
     [[nodiscard]] auto next_record_index() const noexcept -> std::uint64_t;
     [[nodiscard]] auto has_channel_binding() const noexcept -> bool;
+    [[nodiscard]] auto current_transcript_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
+    [[nodiscard]] auto current_transcript_snapshot(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
 
 private:
     struct TranscriptState {
@@ -81,14 +83,12 @@ private:
         bool valid = false;
     };
 
-    [[nodiscard]] auto current_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
     void initialize_transcripts();
     void update_transcript(Direction direction, const TlsRecord& record);
     void append_forward(ByteVector& out, const TlsRecord& record) const;
 
     FpsUpgradeControllerConfig config_;
     ZeroRttUpgradeEngine zero_rtt_;
-    TlsRecordParser parser_;
     FpsUpgradeState state_{FpsUpgradeState::cover_passthrough};
     std::optional<SessionKeys> session_keys_;
     std::optional<X25519PublicKey> client_public_key_;

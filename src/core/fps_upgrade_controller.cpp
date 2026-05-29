@@ -23,7 +23,7 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
 transcript_seed(const ZeroRttUpgradeConfig& config, std::string_view profile_id, Direction direction, const X25519PublicKey& server_public_key)
     -> CryptoResult<HmacSha256> {
     ByteVector seed;
-    constexpr std::string_view label{"fps/zero-rtt/transcript/v3"};
+    constexpr std::string_view label{"fps/zero-rtt/transcript/v4"};
     seed.reserve(label.size() + kX25519KeySize + profile_id.size() + 4U);
     append_label(seed, label);
     append_array(seed, server_public_key);
@@ -38,7 +38,7 @@ transcript_seed(const ZeroRttUpgradeConfig& config, std::string_view profile_id,
 
 [[nodiscard]] auto transcript_step(const HmacSha256& current, std::span<const std::byte> record) -> CryptoResult<HmacSha256> {
     ByteVector input;
-    constexpr std::string_view label{"fps/zero-rtt/transcript-step/v3"};
+    constexpr std::string_view label{"fps/zero-rtt/transcript-step/v4"};
     input.reserve(label.size() + current.size() + record.size());
     append_label(input, label);
     append_array(input, current);
@@ -57,24 +57,17 @@ transcript_seed(const ZeroRttUpgradeConfig& config, std::string_view profile_id,
 
 } // namespace
 
-FpsUpgradeController::FpsUpgradeController(FpsUpgradeControllerConfig config)
-    : config_(normalize_config(std::move(config))), zero_rtt_(config_.zero_rtt), parser_(config_.parser_options) {
+FpsUpgradeController::FpsUpgradeController(FpsUpgradeControllerConfig config) : config_(normalize_config(std::move(config))), zero_rtt_(config_.zero_rtt) {
     initialize_transcripts();
 }
 
-auto FpsUpgradeController::observe_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeObserveResult {
+auto FpsUpgradeController::observe_tls_record(Direction direction, const TlsRecord& record) -> FpsUpgradeObserveResult {
     FpsUpgradeObserveResult result;
-    auto parsed = parser_.feed(bytes);
-    result.parse_errors = std::move(parsed.errors);
-    result.pending_tls_bytes = parsed.pending_bytes;
-
-    for(const auto& record : parsed.records) {
-        if(is_malformed(record)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            continue;
-        }
-        update_transcript(direction, record);
+    if(is_malformed(record)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        return result;
     }
+    update_transcript(direction, record);
     return result;
 }
 
@@ -83,7 +76,7 @@ auto FpsUpgradeController::build_client_upgrade_record(std::span<const std::byte
     if(config_.zero_rtt.role != ZeroRttUpgradeRole::client) {
         return FpsUpgradeBuildResult::failure(FpsUpgradeBuildError::invalid_role);
     }
-    auto binding = current_binding(config_.upgrade_direction);
+    auto binding = current_transcript_binding(config_.upgrade_direction);
     if(!binding) {
         return FpsUpgradeBuildResult::failure(FpsUpgradeBuildError::no_channel_binding);
     }
@@ -102,40 +95,33 @@ auto FpsUpgradeController::build_client_upgrade_record(std::span<const std::byte
     return FpsUpgradeBuildResult::success(std::move(record).value());
 }
 
-auto FpsUpgradeController::process_inbound_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeProcessResult {
+auto FpsUpgradeController::process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult {
     FpsUpgradeProcessResult result;
-    auto parsed = parser_.feed(bytes);
-    result.parse_errors = std::move(parsed.errors);
-    result.pending_tls_bytes = parsed.pending_bytes;
+    if(is_malformed(record)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        result.state = state_;
+        return result;
+    }
 
-    for(const auto& record : parsed.records) {
-        if(is_malformed(record)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            continue;
-        }
-
-        const auto binding = current_binding(direction);
-        const auto can_try_upgrade = state_ == FpsUpgradeState::cover_passthrough && config_.zero_rtt.role == ZeroRttUpgradeRole::server &&
-                                     direction == config_.upgrade_direction && record.is_application_data() && binding.has_value();
-        if(can_try_upgrade) {
-            auto verified = zero_rtt_.verify_client_upgrade(record.payload(), *binding);
-            if(verified) {
-                session_keys_ = verified.value().session_keys;
-                client_public_key_ = verified.value().client_public_key;
-                result.session_keys = session_keys_;
-                result.client_public_key = client_public_key_;
-                state_ = FpsUpgradeState::authenticated;
-                update_transcript(direction, record);
-                continue;
-            }
-            result.upgrade_errors.push_back(verified.error());
-        }
-
-        if(state_ == FpsUpgradeState::authenticated) {
+    const auto binding = current_transcript_binding(direction);
+    const auto can_try_upgrade = state_ == FpsUpgradeState::cover_passthrough && config_.zero_rtt.role == ZeroRttUpgradeRole::server &&
+                                 direction == config_.upgrade_direction && record.is_application_data() && binding.has_value();
+    if(can_try_upgrade) {
+        auto verified = zero_rtt_.verify_client_upgrade(record.payload(), *binding);
+        if(verified) {
+            session_keys_ = verified.value().session_keys;
+            client_public_key_ = verified.value().client_public_key;
+            result.session_keys = session_keys_;
+            result.client_public_key = client_public_key_;
+            state_ = FpsUpgradeState::authenticated;
             update_transcript(direction, record);
-            continue;
+            result.state = state_;
+            return result;
         }
+        result.upgrade_errors.push_back(verified.error());
+    }
 
+    if(state_ != FpsUpgradeState::authenticated) {
         append_forward(result.forward_bytes, record);
         update_transcript(direction, record);
     }
@@ -161,9 +147,17 @@ auto FpsUpgradeController::has_channel_binding() const noexcept -> bool {
     return transcript.valid && transcript.record_index >= config_.min_records_before_trial;
 }
 
-auto FpsUpgradeController::current_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding> {
+auto FpsUpgradeController::current_transcript_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding> {
     const auto& transcript = transcripts_[direction_index(direction)];
     if(!transcript.valid || transcript.record_index < config_.min_records_before_trial) {
+        return std::nullopt;
+    }
+    return current_transcript_snapshot(direction);
+}
+
+auto FpsUpgradeController::current_transcript_snapshot(Direction direction) const -> std::optional<ZeroRttChannelBinding> {
+    const auto& transcript = transcripts_[direction_index(direction)];
+    if(!transcript.valid) {
         return std::nullopt;
     }
     return ZeroRttChannelBinding{

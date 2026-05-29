@@ -99,7 +99,7 @@ def main():
                 raise RuntimeError(f"unexpected initial status: {initial!r}")
             if initial["sessions"]["accepted"] != 0:
                 raise RuntimeError(f"status should start with no sessions: {initial!r}")
-            for section in ["auth", "envelope"]:
+            for section in ["auth", "classified_record"]:
                 if section not in initial or not isinstance(initial[section], dict):
                     raise RuntimeError(f"status missing {section} section: {initial!r}")
 

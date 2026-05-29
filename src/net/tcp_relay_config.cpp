@@ -137,7 +137,7 @@ struct AllowedClientConfig {
     for(const auto* removed_field :
         {"security.zero_rtt.timestamp_window_sec", "security.zero_rtt.replay_cache_size", "security.zero_rtt.trial_decrypt_limit"}) {
         if(detail::find_json_value(tree, removed_field) != nullptr) {
-            return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(std::string{removed_field} + " is not a valid Zero-RTT v3 field");
+            return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(std::string{removed_field} + " is not a valid Zero-RTT v4 field");
         }
     }
 
@@ -155,13 +155,13 @@ struct AllowedClientConfig {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
 
-    auto version = parse_u16_config(tree, "security.zero_rtt.version", 3);
+    auto version = parse_u16_config(tree, "security.zero_rtt.version", 4);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
     if(!version || !capabilities) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(!version ? version.error() : capabilities.error());
     }
-    if(version.value() != 3U) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.version must be 3");
+    if(version.value() != 4U) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.version must be 4");
     }
 
     ZeroRttUpgradeConfig upgrade{

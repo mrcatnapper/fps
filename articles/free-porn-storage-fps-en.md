@@ -1,6 +1,6 @@
 # Free Porn Storage: Steganography In The Most Ordinary TLS Traffic
 
-Status: draft for HackerNoon
+Status: article draft in English
 
 Suggested tags: networking, censorship-resistance, tls, steganography, vpn,
 privacy, cpp, ai
@@ -135,9 +135,11 @@ Zero-RTT upgrade inside a plausible TLS Application Data record. The upgrade is
 bound to nearby carrier context, including the previous observed TLS record.
 
 If the upgrade fails, the record is treated as ordinary cover traffic and the
-relay continues. If it succeeds, both sides switch to envelope mode. From that
-point, visible records are still TLS Application Data records, but their opaque
-payloads are encrypted FPS envelopes.
+relay continues. If it succeeds, both sides start classifying later TLS
+Application Data records with transcript-bound hints and AEAD verification.
+Ordinary carrier records remain visible and are forwarded byte-for-byte; FPS
+records are separate TLS-like Application Data records whose opaque payloads
+carry encrypted TUN/control frames and padding.
 
 ![TLS record stream after FPS upgrade](assets/fps-tls-record-stream.svg)
 
@@ -215,16 +217,16 @@ derives an internal X25519 key pair. The server has a static key pair and an
 allowlist of client UUIDs.
 
 The project does not invent new cryptographic primitives. It uses existing
-ones and tries to compose them carefully: channel binding, AEAD associated
-data, replay cache, metadata discipline and failure semantics are the important
-parts.
+ones and tries to compose them carefully: transcript binding, short
+server/client hints, AEAD associated data, metadata discipline and failure
+semantics are the important parts.
 
-There is still review work to do, and one known visible-prefix issue is already
-documented: the current Zero-RTT candidate begins with a fixed-position
-32-byte public-key-shaped value. It is intended to be ephemeral, but visible
-structure near byte zero is an easier classifier target than timing analysis,
-so the next wire revision should hide or replace it with a short time-bound
-lookup hint.
+There is still review work to do. The current v4 design removed the older
+fixed-position public-key-shaped Zero-RTT prefix and replaced it with
+transcript-bound opaque hints. The remaining question is whether this
+no-timestamp/no-cache replay model is the right default for a controlled beta
+or whether durable replay state should return after independent protocol
+review.
 
 ### Carrier Pooling
 
@@ -382,7 +384,7 @@ Priorities:
 - cleaner public documentation and onboarding;
 - signed images and a stricter release process;
 - better operator status and diagnostics;
-- the visible-prefix refactor for Zero-RTT candidates;
+- independent review of the transcript-bound Zero-RTT hints;
 - Android client design through `VpnService`;
 - realistic shaping and traffic-analysis experiments;
 - exploration of non-TLS carrier families such as SSH and WebRTC.

@@ -55,7 +55,7 @@ auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& s
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
         .profile_id = "unit-origin-v1",
-        .version = 3,
+        .version = 4,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };
@@ -69,7 +69,7 @@ auto server_config(const fps::X25519KeyPair& server, std::vector<fps::X25519Publ
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = std::move(allowed_clients),
         .profile_id = "unit-origin-v1",
-        .version = 3,
+        .version = 4,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };
