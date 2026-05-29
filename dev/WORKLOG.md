@@ -4,6 +4,45 @@
 
 ## 2026-05-29
 
+### Reduce Python helper duplication
+
+Goal:
+
+- Apply the same small-scope duplication cleanup to Python integration scripts
+  and Docker scenarios.
+- Keep behavior, test names and public workflows unchanged.
+
+Changes:
+
+- Added `tools/fps_docker_common.py` for shared Docker/subprocess primitives,
+  compose execution, service/log waiters, server key generation, JSON writes,
+  iperf UDP summary parsing and session-stat helpers.
+- Migrated Docker simulation scripts to use the shared helper module instead of
+  importing generic helpers from `docker_tun_iperf_sim.py` or keeping local
+  copies.
+- Kept scenario-specific config/compose rendering local to each script, where
+  it still documents the scenario contract.
+- Added `ZeroRttRelayPair` to `tests/integration/fps_https_harness.py` and
+  migrated repeated HTTPS/WSS Zero-RTT relay setup/teardown code to it.
+- Preserved explicit regression markers such as `event=session_stats` in the
+  scenario files so static artifact tests still validate the intended checks.
+
+Verification:
+
+- `python3 -m py_compile tools/*.py tests/integration/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `python3 tools/docker_tun_iperf_sim.py --help >/dev/null && python3 tools/docker_multi_client_sim.py --help >/dev/null && python3 tools/docker_duplicate_uuid_sim.py --help >/dev/null && python3 tools/docker_resilience_soak.py --help >/dev/null && python3 tools/docker_socks_smoke.py --help >/dev/null && python3 tools/docker_pcap_flow_experiment.py --help >/dev/null`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+Notes:
+
+- No protocol, Docker topology, CLI, config or test behavior changes.
+- Commit: this commit, `Reduce Python integration helper duplication`.
+
 ### Reduce helper duplication in core and tests
 
 Goal:

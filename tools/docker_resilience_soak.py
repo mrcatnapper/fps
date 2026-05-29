@@ -25,13 +25,15 @@ from docker_multi_client_sim import (
     write_compose as write_multi_client_compose,
     write_config,
 )
-from docker_tun_iperf_sim import (
+from fps_docker_common import (
     compose,
     compose_exec,
     docker,
     docker_base,
     generate_server_keypair,
     repo_root,
+    wait_for_services,
+    write_json,
 )
 
 
@@ -64,7 +66,7 @@ def patch_config(path: Path, status_socket: str, write_queue_bytes: int | None):
     config["ops"] = {"status_socket": status_socket}
     if write_queue_bytes is not None:
         config.setdefault("limits", {})["max_session_write_queue_bytes"] = write_queue_bytes
-    path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(path, config)
 
 
 def append_socks_overlay_services(path: Path, image: str, proxy_image: str):
@@ -107,26 +109,6 @@ def required_services(with_socks_overlay: bool) -> list[str]:
     if with_socks_overlay:
         services.extend([SOCKS_HTTP_ORIGIN, SOCKS_PROXY_SERVICE])
     return services
-
-
-def wait_for_services(
-    base: list[str],
-    compose_file: Path,
-    project: str,
-    services: list[str],
-    timeout: float,
-):
-    deadline = time.monotonic() + timeout
-    expected = set(services)
-    last = ""
-    while time.monotonic() < deadline:
-        result = compose(base, compose_file, project, ["ps", "--services", "--status", "running"])
-        running = set(result.stdout.split())
-        if expected.issubset(running):
-            return
-        last = result.stdout
-        time.sleep(0.5)
-    raise RuntimeError(f"services did not all become running: expected={services!r} running={last!r}")
 
 
 def query_status(base: list[str], compose_file: Path, project: str, service: str) -> dict:

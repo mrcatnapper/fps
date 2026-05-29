@@ -14,12 +14,9 @@ from fps_https_harness import (
     generate_cert,
     https_get_roundtrips,
     start_https_origin,
-    start_process,
-    stop_and_read,
     stop_origin,
-    wait_for_tcp,
     prepare_zero_rtt_fixture_dir,
-    write_zero_rtt_relay_config,
+    ZeroRttRelayPair,
 )
 
 
@@ -33,10 +30,7 @@ def main():
     parser.add_argument("--client-port", type=int)
     args = parser.parse_args()
 
-    server_proc = None
-    client_proc = None
-    server_log = ""
-    client_log = ""
+    logs = ""
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
         cert, key = generate_cert(tmpdir)
@@ -47,40 +41,23 @@ def main():
         client_port = args.client_port or free_port()
         origin = start_https_origin(cert, key, origin_port)
 
-        server_config = tmpdir / "server-v5.json"
-        client_config = tmpdir / "client-v5.json"
-        write_zero_rtt_relay_config(
-            server_config,
-            server_port,
-            "origin",
-            origin_port,
-            "server",
-            decoy_allowed_clients=args.decoy_allowed_clients,
-        )
-        write_zero_rtt_relay_config(
-            client_config, client_port, "server", server_port, "client"
-        )
-
         try:
-            server_proc = start_process(
-                [args.fps_server, "--config", str(server_config), "--log-level", "debug"]
-            )
-            wait_for_tcp("127.0.0.1", server_port, server_proc)
-
-            client_proc = start_process(
-                [args.fps_client, "--config", str(client_config), "--log-level", "debug"]
-            )
-            wait_for_tcp("127.0.0.1", client_port, client_proc)
-
-            bodies = https_get_roundtrips(client_port)
-            assert_roundtrip_bodies(bodies)
-            assert_origin_paths(origin)
+            with ZeroRttRelayPair(
+                tmpdir=tmpdir,
+                fps_client=args.fps_client,
+                fps_server=args.fps_server,
+                origin_port=origin_port,
+                server_port=server_port,
+                client_port=client_port,
+                decoy_allowed_clients=args.decoy_allowed_clients,
+            ) as relays:
+                bodies = https_get_roundtrips(client_port)
+                assert_roundtrip_bodies(bodies)
+                assert_origin_paths(origin)
+            logs = relays.logs
         finally:
-            client_log = stop_and_read(client_proc)
-            server_log = stop_and_read(server_proc)
             stop_origin(origin)
 
-    logs = client_log + "\n" + server_log
     assert_log_contains(logs, "event=zero_rtt_authenticated")
 
     for forbidden in [

@@ -12,14 +12,19 @@ import textwrap
 import time
 from pathlib import Path
 
-from docker_tun_iperf_sim import (
-    CLIENT_UUID,
+from fps_docker_common import (
     compose,
     compose_exec,
     docker,
     docker_base,
     generate_server_keypair,
+    ignore_private_artifacts,
     repo_root,
+    wait_for_services,
+    write_json,
+)
+from docker_tun_iperf_sim import (
+    CLIENT_UUID,
     wait_for_client_lease,
     wait_for_log,
     wait_for_service_set,
@@ -161,7 +166,7 @@ def write_experiment_compose(
 def edit_zero_rtt_trial_records(path: Path, count: int):
     data = json.loads(path.read_text(encoding="utf-8"))
     data["security"]["zero_rtt"]["min_records_before_trial"] = count
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(path, data)
 
 
 def tcpdump_command(interface: str, pcap_path: Path, port: int):
@@ -273,24 +278,6 @@ def parse_iperf_udp_summaries(output: str) -> dict:
     return summaries
 
 
-def wait_for_running_services(base, compose_file, project, services, timeout):
-    deadline = time.monotonic() + timeout
-    last = ""
-    expected = set(services)
-    while time.monotonic() < deadline:
-        result = compose(base, compose_file, project, ["ps", "--services", "--status", "running"])
-        running = set(result.stdout.split())
-        last = result.stdout
-        if expected.issubset(running):
-            return
-        time.sleep(0.5)
-    raise RuntimeError(f"services did not become running: expected={sorted(expected)} running={last}")
-
-
-def ignore_private_artifacts(_directory, names):
-    return {name for name in names if name.endswith(".key")}
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Capture and analyze FPS TCP-link packet shape before/after Zero-RTT upgrade."
@@ -387,7 +374,7 @@ def main():
         summary = {}
         try:
             compose(base, compose_file, args.project, ["up", "-d", *REQUIRED_SERVICES_BASE])
-            wait_for_running_services(
+            wait_for_services(
                 base,
                 compose_file,
                 args.project,
@@ -478,7 +465,7 @@ def main():
                 "iperf_udp": iperf_summary,
                 "flow": flow_summary,
             }
-            metadata_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            write_json(metadata_path, summary)
             print(json.dumps(summary, indent=2, sort_keys=True))
         finally:
             stop_capture(capture)
