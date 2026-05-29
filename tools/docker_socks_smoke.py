@@ -10,14 +10,17 @@ import textwrap
 import time
 from pathlib import Path
 
-from docker_tun_iperf_sim import (
-    CLIENT_UUID,
+from fps_docker_common import (
     compose,
     compose_exec,
     docker,
     docker_base,
     generate_server_keypair,
     repo_root,
+    wait_for_services,
+)
+from docker_tun_iperf_sim import (
+    CLIENT_UUID,
     wait_for_client_lease,
     wait_for_log,
     wait_for_tun,
@@ -165,16 +168,7 @@ def write_compose(
 
 
 def wait_for_service_set(base: list[str], compose_file: Path, project: str, timeout: float):
-    deadline = time.monotonic() + timeout
-    last = ""
-    while time.monotonic() < deadline:
-        result = compose(base, compose_file, project, ["ps", "--services", "--status", "running"])
-        running = set(result.stdout.split())
-        if set(REQUIRED_SERVICES).issubset(running):
-            return
-        last = result.stdout
-        time.sleep(0.5)
-    raise RuntimeError(f"services did not all become running: {last}")
+    wait_for_services(base, compose_file, project, REQUIRED_SERVICES, timeout)
 
 
 def wait_for_socks(base: list[str], compose_file: Path, project: str, timeout: float):

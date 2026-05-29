@@ -386,3 +386,83 @@ def write_zero_rtt_relay_config(
            ops_config),
         encoding="utf-8",
     )
+
+
+class ZeroRttRelayPair:
+    def __init__(
+        self,
+        *,
+        tmpdir,
+        fps_client,
+        fps_server,
+        origin_port,
+        server_port,
+        client_port,
+        decoy_allowed_clients=0,
+        read_buffer_size=4096,
+        client_uuid=ZERO_RTT_CLIENT_UUID,
+        log_level="debug",
+    ):
+        self.tmpdir = Path(tmpdir)
+        self.fps_client = fps_client
+        self.fps_server = fps_server
+        self.origin_port = origin_port
+        self.server_port = server_port
+        self.client_port = client_port
+        self.decoy_allowed_clients = decoy_allowed_clients
+        self.read_buffer_size = read_buffer_size
+        self.client_uuid = client_uuid
+        self.log_level = log_level
+        self.server_process = None
+        self.client_process = None
+        self.server_log = ""
+        self.client_log = ""
+
+    @property
+    def logs(self):
+        return self.client_log + "\n" + self.server_log
+
+    def __enter__(self):
+        server_config = self.tmpdir / "server-v5.json"
+        client_config = self.tmpdir / "client-v5.json"
+        write_zero_rtt_relay_config(
+            server_config,
+            self.server_port,
+            "origin",
+            self.origin_port,
+            "server",
+            decoy_allowed_clients=self.decoy_allowed_clients,
+            read_buffer_size=self.read_buffer_size,
+            client_uuid=self.client_uuid,
+        )
+        write_zero_rtt_relay_config(
+            client_config,
+            self.client_port,
+            "server",
+            self.server_port,
+            "client",
+            read_buffer_size=self.read_buffer_size,
+            client_uuid=self.client_uuid,
+        )
+
+        server_args = [self.fps_server, "--config", str(server_config)]
+        client_args = [self.fps_client, "--config", str(client_config)]
+        if self.log_level is not None:
+            server_args.extend(["--log-level", self.log_level])
+            client_args.extend(["--log-level", self.log_level])
+
+        try:
+            self.server_process = start_process(server_args)
+            wait_for_tcp("127.0.0.1", self.server_port, self.server_process)
+            self.client_process = start_process(client_args)
+            wait_for_tcp("127.0.0.1", self.client_port, self.client_process)
+            return self
+        except Exception:
+            self.client_log = stop_and_read(self.client_process)
+            self.server_log = stop_and_read(self.server_process)
+            raise
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        self.client_log = stop_and_read(self.client_process)
+        self.server_log = stop_and_read(self.server_process)
+        return False

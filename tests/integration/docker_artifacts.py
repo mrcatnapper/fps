@@ -256,7 +256,7 @@ def main():
             "FPS_DOCKER_BUILDKIT=0",
             "docker_build_cmd",
             "buildx build --load",
-            "falling back to legacy docker build",
+            "falling back to classic docker build",
             "FPS_DOCKERFILE",
             "fps_client --generate-client-uuid",
             "fps_carrier --help",

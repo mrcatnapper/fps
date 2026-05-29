@@ -13,14 +13,12 @@ Date: 2026-05-29
    command-heavy relay CLI tests and relay CLI command execution, not protocol
    core.
 
-1. **The project is beta-candidate, not production-ready.** Zero-RTT v5 now
+1. **The project is beta-candidate, not production-ready.** Zero-RTT v5
    uses bidirectional carrier transcript binding plus an encrypted server-accept
    leg before final classified-record keys exist. Docker runtime, leased TUN
    routing, source-IP enforcement and quality checks are solid enough for
-   controlled Linux/Docker trials. A 5-minute remote `fpshop` soak validated the
-   current v5 candidate after the latest fixes; public beta still needs
-   independent protocol review, rotation workflow and repeatable
-   release-candidate soak policy.
+   controlled Linux/Docker trials. Public beta still needs independent protocol
+   review, release-candidate soak policy and operator onboarding feedback.
 
 2. **Lease enforcement is a security contract.** Server-side carrier metadata
    includes the assigned client IPv4. Inbound client TUN packets are dropped when
@@ -78,16 +76,13 @@ Date: 2026-05-29
 11. **Remaining beta gates are mostly process gates.** The public GitHub remote,
     CI matrix and `main` branch protection are configured. The main blockers are
     external protocol review, release/signing workflow, repeated
-    release-candidate soak and operator onboarding feedback. The latest
-    self-review found and fixed one v5 integration-order bug: client-side
-    server-accept control payloads must be delivered after carrier registration,
-    otherwise leased TUN auto-config silently loses the assigned IPv4 address.
+    release-candidate soak and operator onboarding feedback.
 
-12. **Manual real-origin carrier UX is now documented, but not automated.** A
-    historical real-origin flow showed that ordinary WebSocket clients can hold
-    stable carriers and carry SOCKS traffic, but users need explicit guidance:
-    an assigned lease is not enough, `carriers_current` must be positive, and
-    public echo origins are smoke targets rather than production dependencies.
+12. **Manual real-origin carrier UX is documented, but not automated.**
+    Ordinary long-lived browser/application TLS sessions can hold carriers and
+    carry SOCKS/TUN traffic, but users need explicit guidance: an assigned lease
+    is not enough, `carriers_current` must be positive, and public echo origins
+    are not production dependencies.
 
 13. **Router-hosted client looks plausible but remains unvalidated.** Running
     `fps_client` on a home router and using router DNS to point carrier
@@ -104,7 +99,6 @@ Date: 2026-05-29
 - Docker is the primary Linux deployment/runtime story.
 - The base Docker image should stay FPS-only; application proxies belong in
   derivative overlay examples such as Dante, not in the core runtime contract.
-- Native distro packaging is deferred.
 - Product-level multi-client regression is Docker opt-in rather than ordinary
   local CTest.
 - Client onboarding should move toward server-generated profiles and `fps://`

@@ -1,34 +1,22 @@
-# Network / Capture Recovery Notes
+# Network And Capture Recovery Runbook
 
-Date: 2026-05-11
+This runbook is for local TUN, namespace and packet-capture experiments. It is
+not part of the public operator docs.
 
-Incident: an early pcap-capture run left `tcpdump` processes stuck under the
-system AppArmor `tcpdump` profile. The VM was rebooted by the operator. After
-reboot, FPS network namespaces and capture processes were gone.
+## Quick Audit
 
-## Quick Check After Reboot
+Run this after interrupted TUN, Docker or pcap experiments:
 
 ```sh
 ip netns list | rg 'fps[cs]|fpsprobe|fpstest' || true
 ps -ef | rg 'tcpdump|capture_tls_wire|pcap_tls_shape|tun_zero_rtt_loopback' || true
+docker ps --format '{{.Names}}' | rg '^fps-' || true
 ```
 
-Expected result: no FPS network namespaces and no leftover capture/test
-processes.
+Expected result after cleanup: no FPS test namespaces, no capture processes and
+no unexpected FPS containers.
 
-## If Capture Processes Hang Again
-
-If process cleanup is blocked by AppArmor again, rebooting the VM is the most
-reliable recovery path. If shell access still works, try:
-
-```sh
-sudo -n aa-complain tcpdump || true
-sudo -n aa-exec -p unconfined -- pkill -KILL -f 'tcpdump.*fps' || true
-sudo -n pkill -KILL -f 'capture_tls_wire|pcap_tls_shape|tun_zero_rtt_loopback' || true
-sudo -n aa-enforce tcpdump || true
-```
-
-Then remove leftover isolated namespaces:
+## Clean Isolated Namespaces
 
 ```sh
 for ns in $(ip netns list | awk '/fps[cs]|fpsprobe|fpstest/ {print $1}'); do
@@ -36,11 +24,41 @@ for ns in $(ip netns list | awk '/fps[cs]|fpsprobe|fpstest/ {print $1}'); do
 done
 ```
 
-## Current Mitigation
+## Stop Stuck Capture Processes
+
+Capture helpers normally stop their own `tcpdump` process. If cleanup is
+interrupted:
+
+```sh
+sudo -n pkill -INT -f 'tcpdump.*fps' || true
+sleep 2
+sudo -n pkill -KILL -f 'tcpdump.*fps' || true
+sudo -n pkill -KILL -f 'capture_tls_wire|pcap_tls_shape|tun_zero_rtt_loopback' || true
+```
+
+If the host AppArmor profile blocks cleanup and `aa-exec` is available:
+
+```sh
+sudo -n aa-exec -p unconfined -- pkill -KILL -f 'tcpdump.*fps' || true
+```
+
+## Docker Cleanup
+
+For compose-based simulations, prefer each tool's normal teardown. For manual
+cleanup:
+
+```sh
+docker ps --format '{{.Names}}' | awk '/^fps-/ {print $1}' | xargs -r docker rm -f
+docker network ls --format '{{.Name}}' | awk '/^fps-/ {print $1}' | xargs -r docker network rm
+```
+
+Use `sudo -n docker ...` when the current host requires privileged Docker
+access.
+
+## Current Mitigations
 
 - `tools/capture_tls_wire.sh` runs `tcpdump` through `aa-exec -p unconfined`
   when available.
-- Capture uses `--immediate-mode` and `-U` so short integration runs flush packet
-  data before shutdown.
-- TUN pcap capture starts after readiness probes, so saved pcaps contain the FPS
-  carrier flow rather than only setup probes.
+- Capture uses `--immediate-mode` and `-U` so short runs flush packet data
+  before shutdown.
+- TUN/root tests use isolated namespaces where possible.

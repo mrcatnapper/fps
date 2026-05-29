@@ -11,15 +11,20 @@ import textwrap
 import time
 from pathlib import Path
 
-from docker_tun_iperf_sim import (
+from fps_docker_common import (
     compose,
     compose_exec,
     docker,
     docker_base,
+    extract_session_stats,
     generate_server_keypair,
+    ignore_private_artifacts,
     parse_iperf_udp_summary,
     repo_root,
     stats_have_tun_traffic,
+    wait_for_log_count as wait_for_compose_log_count,
+    wait_for_services,
+    write_json,
 )
 
 
@@ -46,6 +51,7 @@ REQUIRED_SERVICES = [
 SERVER_IP = "10.89.0.1"
 LEASE_POOL = "10.89.0.0/29"
 SPOOF_IP = "10.89.0.6"
+SESSION_STATS_EVENT = "event=session_stats"
 
 
 def write_config(
@@ -122,7 +128,7 @@ def write_config(
         )
     else:
         config["tun"]["auto_configure"] = True
-    path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(path, config)
 
 
 def write_compose(path: Path, image: str, log_level: str, mtu: int, carrier_bps: int):
@@ -242,16 +248,7 @@ def write_compose(path: Path, image: str, log_level: str, mtu: int, carrier_bps:
 
 
 def wait_for_service_set(base: list[str], compose_file: Path, project: str, timeout: float):
-    deadline = time.monotonic() + timeout
-    last = ""
-    while time.monotonic() < deadline:
-        result = compose(base, compose_file, project, ["ps", "--services", "--status", "running"])
-        running = set(result.stdout.split())
-        if set(REQUIRED_SERVICES).issubset(running):
-            return
-        last = result.stdout
-        time.sleep(0.5)
-    raise RuntimeError(f"services did not all become running: {last}")
+    wait_for_services(base, compose_file, project, REQUIRED_SERVICES, timeout)
 
 
 def lease_ip_from_addr_output(output: str) -> str | None:
@@ -300,20 +297,15 @@ def wait_for_log_count(
     count: int,
     timeout: float,
 ) -> str:
-    deadline = time.monotonic() + timeout
-    last = ""
-    while time.monotonic() < deadline:
-        result = compose(
-            base,
-            compose_file,
-            project,
-            ["logs", "--no-color", "fps-server", "fps-client-a", "fps-client-b"],
-        )
-        last = result.stdout
-        if last.count(pattern) >= count:
-            return last
-        time.sleep(0.5)
-    raise RuntimeError(f"timed out waiting for {count} log entries {pattern!r}:\n{last}")
+    return wait_for_compose_log_count(
+        base,
+        compose_file,
+        project,
+        pattern,
+        count,
+        timeout,
+        ["fps-server", "fps-client-a", "fps-client-b"],
+    )
 
 
 def start_iperf_server(
@@ -416,14 +408,6 @@ def collect_logs(base: list[str], compose_file: Path, project: str) -> str:
         project,
         ["logs", "--no-color", *REQUIRED_SERVICES],
     ).stdout
-
-
-def extract_session_stats(logs: str) -> list[str]:
-    return [line for line in logs.splitlines() if "event=session_stats" in line]
-
-
-def ignore_private_artifacts(_directory, names):
-    return {name for name in names if name.endswith(".key")}
 
 
 def main():
@@ -608,7 +592,7 @@ def main():
             summary["fps_session_stats_lines"] = len(stats_lines)
             summary["fps_tun_stats_nonzero"] = stats_have_tun_traffic(stats_lines)
             if len(stats_lines) < len(CLIENTS):
-                raise RuntimeError("FPS logs did not contain session_stats for both clients")
+                raise RuntimeError(f"FPS logs did not contain {SESSION_STATS_EVENT} for both clients")
             if not summary["fps_tun_stats_nonzero"]:
                 raise RuntimeError("FPS session_stats did not contain non-zero TUN frame counters")
 

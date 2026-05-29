@@ -229,7 +229,7 @@ if [[ "$run_docker" == true ]]; then
     if "${docker_cmd[@]}" buildx version >/dev/null 2>&1; then
       docker_build_cmd=("${docker_cmd[@]}" buildx build --load)
     else
-      echo "docker buildx is unavailable; falling back to legacy docker build" >&2
+      echo "docker buildx is unavailable; falling back to classic docker build" >&2
     fi
   fi
   log "Docker build/smoke: $image ($dockerfile, $docker_compiler)"

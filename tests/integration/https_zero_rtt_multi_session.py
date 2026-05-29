@@ -14,12 +14,9 @@ from fps_https_harness import (
     read_http_response,
     response_body,
     start_https_origin,
-    start_process,
-    stop_and_read,
     stop_origin,
-    wait_for_tcp,
     prepare_zero_rtt_fixture_dir,
-    write_zero_rtt_relay_config,
+    ZeroRttRelayPair,
 )
 
 
@@ -53,10 +50,7 @@ def main():
     parser.add_argument("--fps-server", required=True)
     args = parser.parse_args()
 
-    server_proc = None
-    client_proc = None
-    server_log = ""
-    client_log = ""
+    logs = ""
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
         cert, key = generate_cert(tmpdir)
@@ -67,67 +61,54 @@ def main():
         client_port = free_port()
         origin = start_https_origin(cert, key, origin_port)
 
-        server_config = tmpdir / "server-v5.json"
-        client_config = tmpdir / "client-v5.json"
-        write_zero_rtt_relay_config(
-            server_config, server_port, "origin", origin_port, "server"
-        )
-        write_zero_rtt_relay_config(
-            client_config, client_port, "server", server_port, "client"
-        )
-
         try:
-            server_proc = start_process(
-                [args.fps_server, "--config", str(server_config), "--log-level", "debug"]
-            )
-            wait_for_tcp("127.0.0.1", server_port, server_proc)
-
-            client_proc = start_process(
-                [args.fps_client, "--config", str(client_config), "--log-level", "debug"]
-            )
-            wait_for_tcp("127.0.0.1", client_port, client_proc)
-
-            paths = [
-                ["/v5/session/a/0", "/v5/session/a/1", "/v5/session/a/2"],
-                ["/v5/session/b/0", "/v5/session/b/1", "/v5/session/b/2"],
-            ]
-            barrier = threading.Barrier(2)
-            results = [None, None]
-            errors = [None, None]
-            threads = [
-                threading.Thread(
-                    target=https_worker,
-                    args=(client_port, paths[index], barrier, results, errors, index),
-                )
-                for index in range(2)
-            ]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join(timeout=10.0)
-            for thread in threads:
-                if thread.is_alive():
-                    raise RuntimeError("HTTPS Zero-RTT multi-session worker timed out")
-            for error in errors:
-                if error is not None:
-                    raise error
-
-            for index, session_paths in enumerate(paths):
-                expected = [response_body(path) for path in session_paths]
-                if results[index] != expected:
-                    raise RuntimeError(
-                        f"session {index} received unexpected bodies: {results[index]!r}"
+            with ZeroRttRelayPair(
+                tmpdir=tmpdir,
+                fps_client=args.fps_client,
+                fps_server=args.fps_server,
+                origin_port=origin_port,
+                server_port=server_port,
+                client_port=client_port,
+            ) as relays:
+                paths = [
+                    ["/v5/session/a/0", "/v5/session/a/1", "/v5/session/a/2"],
+                    ["/v5/session/b/0", "/v5/session/b/1", "/v5/session/b/2"],
+                ]
+                barrier = threading.Barrier(2)
+                results = [None, None]
+                errors = [None, None]
+                threads = [
+                    threading.Thread(
+                        target=https_worker,
+                        args=(client_port, paths[index], barrier, results, errors, index),
                     )
+                    for index in range(2)
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=10.0)
+                for thread in threads:
+                    if thread.is_alive():
+                        raise RuntimeError("HTTPS Zero-RTT multi-session worker timed out")
+                for error in errors:
+                    if error is not None:
+                        raise error
 
-            expected_paths = sorted(path for session_paths in paths for path in session_paths)
-            if sorted(origin.request_paths) != expected_paths:
-                raise RuntimeError(f"unexpected origin paths: {origin.request_paths!r}")
+                for index, session_paths in enumerate(paths):
+                    expected = [response_body(path) for path in session_paths]
+                    if results[index] != expected:
+                        raise RuntimeError(
+                            f"session {index} received unexpected bodies: {results[index]!r}"
+                        )
+
+                expected_paths = sorted(path for session_paths in paths for path in session_paths)
+                if sorted(origin.request_paths) != expected_paths:
+                    raise RuntimeError(f"unexpected origin paths: {origin.request_paths!r}")
+            logs = relays.logs
         finally:
-            client_log = stop_and_read(client_proc)
-            server_log = stop_and_read(server_proc)
             stop_origin(origin)
 
-    logs = client_log + "\n" + server_log
     if logs.count("event=zero_rtt_authenticated") < 4:
         raise RuntimeError(f"expected both relays to authenticate two sessions:\n{logs}")
 

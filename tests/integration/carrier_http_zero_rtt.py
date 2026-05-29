@@ -11,10 +11,8 @@ from fps_https_harness import (
     https_get_roundtrips,
     prepare_zero_rtt_fixture_dir,
     start_carrier_origin,
-    start_process,
     terminate,
-    wait_for_tcp,
-    write_zero_rtt_relay_config,
+    ZeroRttRelayPair,
 )
 
 
@@ -28,8 +26,6 @@ def main():
     parser.add_argument("--carrier", default=DEFAULT_CARRIER)
     args = parser.parse_args()
 
-    server_proc = None
-    client_proc = None
     origin = None
     with tempfile.TemporaryDirectory(prefix="fps-carrier-http-") as tmpdir_str:
         tmpdir = Path(tmpdir_str)
@@ -41,28 +37,20 @@ def main():
         client_port = free_port()
         origin = start_carrier_origin(args.carrier, cert, key, origin_port, "/fps-carrier")
 
-        server_config = tmpdir / "server-v5.json"
-        client_config = tmpdir / "client-v5.json"
-        write_zero_rtt_relay_config(
-            server_config, server_port, "origin", origin_port, "server"
-        )
-        write_zero_rtt_relay_config(
-            client_config, client_port, "server", server_port, "client"
-        )
-
         try:
-            server_proc = start_process([args.fps_server, "--config", str(server_config)])
-            wait_for_tcp("127.0.0.1", server_port, server_proc)
-
-            client_proc = start_process([args.fps_client, "--config", str(client_config)])
-            wait_for_tcp("127.0.0.1", client_port, client_proc)
-
-            bodies = https_get_roundtrips(client_port, paths=["/"])
-            if bodies != [b"fps_carrier echo origin path=/\n"]:
-                raise RuntimeError(f"unexpected carrier HTTPS bodies: {bodies!r}")
+            with ZeroRttRelayPair(
+                tmpdir=tmpdir,
+                fps_client=args.fps_client,
+                fps_server=args.fps_server,
+                origin_port=origin_port,
+                server_port=server_port,
+                client_port=client_port,
+                log_level=None,
+            ):
+                bodies = https_get_roundtrips(client_port, paths=["/"])
+                if bodies != [b"fps_carrier echo origin path=/\n"]:
+                    raise RuntimeError(f"unexpected carrier HTTPS bodies: {bodies!r}")
         finally:
-            terminate(client_proc)
-            terminate(server_proc)
             terminate(origin)
 
     return 0

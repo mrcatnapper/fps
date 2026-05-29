@@ -23,28 +23,16 @@ from docker_multi_client_sim import (
     write_compose,
     write_config,
 )
-from docker_tun_iperf_sim import (
+from fps_docker_common import (
     compose,
     compose_exec,
     docker,
     docker_base,
     generate_server_keypair,
     repo_root,
+    wait_for_services,
+    write_json,
 )
-
-
-def wait_for_services(base: list[str], compose_file: Path, project: str, services: list[str], timeout: float):
-    deadline = time.monotonic() + timeout
-    last = ""
-    expected = set(services)
-    while time.monotonic() < deadline:
-        result = compose(base, compose_file, project, ["ps", "--services", "--status", "running"])
-        running = set(result.stdout.split())
-        if expected.issubset(running):
-            return
-        last = result.stdout
-        time.sleep(0.5)
-    raise RuntimeError(f"services did not all become running: expected={services!r} running={last!r}")
 
 
 def wait_for_client_leases(
@@ -233,10 +221,7 @@ def main():
             )
             server_config = json.loads((config_dir / "server.json").read_text(encoding="utf-8"))
             server_config["ops"] = {"status_socket": "/run/fps/server.status"}
-            (config_dir / "server.json").write_text(
-                json.dumps(server_config, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+            write_json(config_dir / "server.json", server_config)
             for suffix, data in CLIENTS.items():
                 write_config(
                     config_dir / f"client-{suffix}.json",
