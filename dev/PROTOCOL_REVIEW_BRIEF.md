@@ -15,7 +15,7 @@ should be reviewed before public beta.
 - Metadata-only logging/status rules.
 
 Out of scope for this review pass: advanced timing/size shaping, Android
-`VpnService`, IPv6 allocation, proxy overlay policy and native packaging.
+`VpnService`, IPv6 allocation and proxy overlay policy.
 
 Primary references:
 
@@ -164,6 +164,6 @@ Reviewer questions:
   construction has not had independent review.
 - Precheck is not a full CPU DoS defense; plausible server hints still force
   allowlist hint checks and one small AEAD attempt for a likely client.
-- No timestamp or replay cache is active in v4; replay assumptions depend on
+- No timestamp or replay cache is active in v5; replay assumptions depend on
   carrier transcript uniqueness under honest origins.
 - Advanced timing/size traffic shaping is deferred.

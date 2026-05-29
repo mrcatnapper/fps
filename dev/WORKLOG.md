@@ -4,6 +4,53 @@
 
 ## 2026-05-29
 
+### Refresh docs and dev artifacts as current snapshots
+
+Goal:
+
+- Move the current local Python-refactor commit from `main` to `develop` and
+  continue work there.
+- Review `dev/`, `docs/`, `examples/` and `tools/` for stale public-service
+  references, old-design narrative and files that should be current runbooks or
+  snapshots rather than historical reports.
+
+Changes:
+
+- Preserved the old local `develop` as
+  `backup/develop-before-python-helper-refactor`, moved
+  `Reduce Python integration helper duplication` onto `develop`, and reset
+  local `main` to `origin/main`.
+- Rewrote `dev/UX_FLOW_REVIEW.md` from a historical public-origin test report
+  into a concise current UX snapshot with operator flow, acceptable beta state
+  and remaining friction.
+- Rewrote `dev/NETWORK_RECOVERY.md` as a current network/capture cleanup
+  runbook instead of an incident report.
+- Tightened `dev/REVIEW.md` and `dev/PROTOCOL_REVIEW_BRIEF.md` wording to
+  remove stale process/history phrasing; fixed the active replay note to v5.
+- Removed unnecessary future-DNS-helper discussion from public carrier/routing
+  docs; current docs now state the supported hosts/router-DNS override policy
+  directly.
+- Reworded tool comments/messages that looked like stale design markers during
+  repository scans but described current pcap plotting and Docker fallback
+  behavior.
+- Removed local ignored `__pycache__` output from `tools/` and integration
+  tests.
+
+Verification:
+
+- `rg` scans over `dev/`, `docs/`, `examples/`, `tools/`, `README.md` and
+  `AGENTS.md` for stale public-origin, old compatibility and removed-design
+  markers, excluding `dev/WORKLOG.md`.
+- `python3 -m py_compile tools/*.py tests/integration/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+
+Notes:
+
+- `dev/WORKLOG.md` intentionally remains historical and still contains old
+  design references.
+- Commit: this commit, `Refresh docs and dev runbooks`.
+
 ### Reduce Python helper duplication
 
 Goal:

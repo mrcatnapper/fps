@@ -3,8 +3,6 @@
 The near-term goal is to turn the verified transcript-bound Zero-RTT beta
 candidate into a deployable Linux-first client/server VPN framework. Docker is
 the primary runtime path.
-Native distro packaging is intentionally deferred unless it later provides a
-clear operational advantage over containers.
 
 Advanced full-flow shaping remains future work. The current priority is a
 reliable tunnel, clear operator workflow and TLS-record-shaped wire behavior

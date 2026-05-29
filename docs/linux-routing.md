@@ -60,9 +60,8 @@ Important constraints:
   IPv6-capable clients can bypass the IPv4 hosts entry.
 - Browser DNS-over-HTTPS or application-internal resolvers can bypass system
   hosts resolution and must be disabled or configured separately.
-- FPS does not provide a beta DNS proxy. A future helper should be scoped to
-  explicit carrier domains with system-DNS fallback, not installed as a silent
-  global resolver.
+- FPS does not provide a DNS proxy. Use explicit hosts entries or router DNS
+  overrides for selected carrier domains.
 
 On a home router or OpenWrt-style LAN gateway, the same idea can be applied once
 at the LAN DNS layer instead of on every client device. Configure the router DNS

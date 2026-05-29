@@ -90,10 +90,8 @@ local FPS client must listen on `127.0.0.1:443` or the user must open an explici
 URL with the configured port. Add an `::1` hosts entry only when the local FPS
 client also listens on IPv6; otherwise IPv6 lookups can bypass the listener.
 
-FPS does not ship a beta DNS proxy. A future DNS helper, if added, should be an
-explicit per-domain route-only tool with system DNS fallback, not a magical
-global resolver replacement. For now, document and review the small hosts-file
-change instead.
+FPS does not ship a DNS proxy. Use a reviewed hosts-file entry or router DNS
+override for selected carrier domains.
 
 ## UUID Sharing Policy
 
@@ -190,10 +188,10 @@ through a named volume so one-shot status containers can query the daemon.
 - Lease-list output shows non-secret lease metadata and fingerprints, not UUIDs
   or full keys by default.
 
-## Future Work
+## Planned UX Work
 
 - Provide a higher-level deployment bundle/init helper that writes server and
   client config files with safe permissions and prints the exact next commands.
 - Add QR/mobile import on top of the existing `fps://v1` URI schema.
-- Convert the documented quickstart into a future interactive admin tool only
-  after manual beta feedback proves the flow stable.
+- Consider an interactive admin tool only after manual beta feedback confirms
+  the stable setup flow.

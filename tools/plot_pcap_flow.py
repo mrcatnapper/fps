@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render readable FPS pcap flow plots from analyzer CSV/JSON artifacts.
 
-This is an optional research/analysis helper, not a project runtime dependency.
+This is an optional traffic-analysis helper, not a project runtime dependency.
 It requires a developer venv or globally installed Python packages:
 
     python3 -m venv .venv
