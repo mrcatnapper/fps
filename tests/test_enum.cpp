@@ -24,12 +24,12 @@ BOOST_AUTO_TEST_SUITE(enum_helpers)
 BOOST_AUTO_TEST_CASE(names_and_indexes_described_enums) {
     BOOST_TEST(fps::enum_name_or(fps::Direction::client_to_server) == "client_to_server");
     BOOST_TEST(fps::enum_name_or(fps::RelayRole::server) == "server");
-    BOOST_TEST(fps::enum_count<fps::net::SessionManagerEvent>() == 9U);
+    BOOST_TEST(fps::enum_count<fps::net::SessionManagerEvent>() == 10U);
     BOOST_REQUIRE(fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source));
-    BOOST_TEST(*fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source) == 8U);
-    BOOST_REQUIRE(fps::enum_name_at<fps::net::SessionManagerEvent>(8U));
-    BOOST_TEST(*fps::enum_name_at<fps::net::SessionManagerEvent>(8U) == "ignored_spoofed_tun_source");
-    BOOST_TEST(!fps::enum_name_at<fps::net::SessionManagerEvent>(9U).has_value());
+    BOOST_TEST(*fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source) == 9U);
+    BOOST_REQUIRE(fps::enum_name_at<fps::net::SessionManagerEvent>(9U));
+    BOOST_TEST(*fps::enum_name_at<fps::net::SessionManagerEvent>(9U) == "ignored_spoofed_tun_source");
+    BOOST_TEST(!fps::enum_name_at<fps::net::SessionManagerEvent>(10U).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(parses_enum_names_and_underlying_values) {
@@ -71,6 +71,7 @@ BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeRole, server);
     FPS_CHECK_ENUM_NAME(fps::net::EndpointParseError, unsupported_ipv6_literal);
     FPS_CHECK_ENUM_NAME(fps::net::SessionManagerError, unassigned_tun_destination);
+    FPS_CHECK_ENUM_NAME(fps::net::SessionManagerEvent, ignored_reassembly_limit);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseComponent, classified_record_encode);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseReason, write_queue_full);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseStage, classified_record);

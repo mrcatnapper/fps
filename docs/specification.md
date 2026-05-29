@@ -293,8 +293,13 @@ TUN fragmentation:
 - fragment header inside encrypted frame payload contains `packet_id`,
   `fragment_index`, `fragment_count` and `total_size`;
 - all fragments of one packet stay on one carrier in the current increment;
+- inbound reassembly is keyed by source carrier and `packet_id`, so fragments
+  from different carriers or different packets can be interleaved without
+  sharing state;
+- active reassembly state is bounded; excess new fragmented packets are dropped
+  with metadata-only counters/log events;
 - malformed, out-of-order, mismatched or oversized fragments are dropped/reset
-  without logging packet bytes.
+  per affected packet without logging packet bytes.
 
 Server-assigned IPv4 leases:
 

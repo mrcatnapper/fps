@@ -74,6 +74,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   spoof-drop liveness, mixed UDP/TCP traffic and status-counter assertions.
 - [x] Keep Docker strict `write_queue_full` as diagnostic until saturation is
   deterministic; cover lease-aware queue overflow in unit tests.
+- [x] Harden inbound TUN fragment reassembly for multi-carrier use by keying
+  reassembly state by source carrier and packet id with a bounded state cap.
 - [x] Run a two-host 30-minute Docker/TUN soak on a weak remote Linux host for
   the current beta candidate.
 - Repeat two-host soak for release candidates until it is promoted to a
@@ -126,6 +128,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Document minimal kernel capabilities and deployment topology.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
+- Split reusable protocol core from Asio/Linux transport targets before Android
+  implementation work.
 
 ## Phase 7: Fuzzing And Soak
 
