@@ -10,6 +10,7 @@
 #include <string_view>
 
 #include "fps/core/fps_upgrade_controller.hpp"
+#include "fps/core/protocol_constants.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/net/tcp_bridge_session.hpp"
 #include "fps/net/tun_lease.hpp"
@@ -57,8 +58,8 @@ struct TcpRelayConfig {
     EndpointAddress target;
     std::size_t read_buffer_size = 64U * 1024U;
     std::size_t max_session_write_queue_bytes = 1024U * 1024U;
-    std::size_t max_frame_payload_size = 16U * 1024U;
-    std::size_t max_frame_padding_size = 2048U;
+    std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
+    std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
     bool allow_fragmentation = true;
     log::LoggingConfig logging;
     std::optional<ZeroRttRelayConfig> zero_rtt;

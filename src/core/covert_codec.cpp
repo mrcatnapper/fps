@@ -12,8 +12,6 @@ constexpr std::size_t kWireSequenceSize = sizeof(std::uint64_t);
 constexpr std::size_t kPlainHeaderSize = 1U + 1U + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kMinimumWireSize = kWireSequenceSize + kAeadTagSize + kPlainHeaderSize;
 
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
-
 [[nodiscard]] auto fits_u32(std::size_t value) -> bool { return value <= std::numeric_limits<std::uint32_t>::max(); }
 
 } // namespace

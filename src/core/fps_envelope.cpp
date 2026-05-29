@@ -14,8 +14,6 @@ namespace {
 constexpr std::size_t kPlainHeaderSize = sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 constexpr std::size_t kFrameHeaderSize = 1U + 1U + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
-
 [[nodiscard]] auto fits_u16(std::size_t value) -> bool { return value <= std::numeric_limits<std::uint16_t>::max(); }
 
 [[nodiscard]] auto fits_u32(std::size_t value) -> bool { return value <= std::numeric_limits<std::uint32_t>::max(); }

@@ -3,10 +3,10 @@
 #include <iterator>
 #include <utility>
 
+#include "fps/core/wire.hpp"
+
 namespace fps {
 namespace {
-
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
 
 void append_content(FpsEnvelopePipelineProcessResult& result, FpsEnvelopeContent content) {
     result.inner_tls_bytes.insert(result.inner_tls_bytes.end(), content.inner_tls_bytes.begin(), content.inner_tls_bytes.end());

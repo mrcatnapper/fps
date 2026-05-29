@@ -7,33 +7,13 @@
 #include <span>
 #include <utility>
 
+#include "support/fps_test_helpers.hpp"
+
 namespace {
 
-auto bytes(std::initializer_list<unsigned int> values) -> fps::ByteVector {
-    fps::ByteVector out;
-    out.reserve(values.size());
-    for(const auto value : values) {
-        out.push_back(static_cast<std::byte>(value));
-    }
-    return out;
-}
-
-auto private_key(std::uint8_t seed) -> fps::X25519PrivateKey {
-    fps::X25519PrivateKey out{};
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
-    fps::X25519KeyPair pair;
-    pair.private_key = private_key(seed);
-    auto public_key = fps::x25519_public_from_private(pair.private_key);
-    BOOST_REQUIRE(public_key);
-    pair.public_key = public_key.value();
-    return pair;
-}
+using fps::test::bytes;
+using fps::test::key_pair;
+using fps::test::parse_record;
 
 auto client_zero_rtt(const fps::X25519KeyPair& client, const fps::X25519KeyPair& server) -> fps::ZeroRttUpgradeConfig {
     return fps::ZeroRttUpgradeConfig{
@@ -43,7 +23,7 @@ auto client_zero_rtt(const fps::X25519KeyPair& client, const fps::X25519KeyPair&
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
         .profile_id = "unit-origin-v5",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .capabilities = 1,
         .max_padding_size = 64,
     };
@@ -57,7 +37,7 @@ auto server_zero_rtt(const fps::X25519KeyPair& server, const fps::X25519KeyPair&
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {client.public_key},
         .profile_id = "unit-origin-v5",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .capabilities = 1,
         .max_padding_size = 64,
     };
@@ -74,20 +54,7 @@ auto controller_config(fps::ZeroRttUpgradeConfig zero_rtt) -> fps::FpsUpgradeCon
     };
 }
 
-auto app_record(std::initializer_list<unsigned int> values) -> fps::ByteVector {
-    auto record = fps::build_tls_application_data_record(bytes(values));
-    BOOST_REQUIRE(record);
-    return record.value();
-}
-
-auto parse_record(std::span<const std::byte> wire) -> fps::TlsRecord {
-    fps::TlsRecordParser parser;
-    auto parsed = parser.feed(wire);
-    BOOST_TEST(parsed.errors.empty());
-    BOOST_TEST(parsed.pending_bytes == 0U);
-    BOOST_REQUIRE_EQUAL(parsed.records.size(), 1U);
-    return std::move(parsed.records.front());
-}
+auto app_record(std::initializer_list<unsigned int> values) -> fps::ByteVector { return fps::test::tls_app_record(bytes(values)); }
 
 auto observe_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
     const auto record = parse_record(wire);

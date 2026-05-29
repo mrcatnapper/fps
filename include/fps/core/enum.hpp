@@ -115,4 +115,17 @@ template <typename Enum>
     return index;
 }
 
+template <typename Enum>
+[[nodiscard]] auto enum_name_at(std::size_t index) noexcept -> std::optional<std::string_view> {
+    std::optional<std::string_view> name;
+    std::size_t current = 0;
+    boost::mp11::mp_for_each<boost::describe::describe_enumerators<Enum>>([&](auto described) {
+        if(current == index) {
+            name = described.name;
+        }
+        ++current;
+    });
+    return name;
+}
+
 } // namespace fps

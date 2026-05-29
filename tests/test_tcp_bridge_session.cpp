@@ -12,48 +12,20 @@
 #include <utility>
 #include <vector>
 
+#include "support/fps_test_helpers.hpp"
+
 namespace {
 
 using tcp = boost::asio::ip::tcp;
-
-struct ConnectedPair {
-    tcp::socket external;
-    tcp::socket bridge;
-};
-
-auto bytes(std::initializer_list<unsigned int> values) -> fps::ByteVector {
-    fps::ByteVector out;
-    out.reserve(values.size());
-    for(const auto value : values) {
-        out.push_back(static_cast<std::byte>(value));
-    }
-    return out;
-}
-
-auto patterned_bytes(std::size_t size, std::uint8_t seed) -> fps::ByteVector {
-    fps::ByteVector out(size);
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i % 251U));
-    }
-    return out;
-}
-
-auto private_key(std::uint8_t seed) -> fps::X25519PrivateKey {
-    fps::X25519PrivateKey out{};
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
-    fps::X25519KeyPair pair;
-    pair.private_key = private_key(seed);
-    auto public_key = fps::x25519_public_from_private(pair.private_key);
-    BOOST_REQUIRE(public_key);
-    pair.public_key = public_key.value();
-    return pair;
-}
+using fps::test::ConnectedPair;
+using fps::test::bytes;
+using fps::test::connect_pair;
+using fps::test::key_pair;
+using fps::test::parse_record;
+using fps::test::patterned_bytes;
+using fps::test::read_tls_record;
+using fps::test::run_until;
+using fps::test::tls_app_record;
 
 auto classified_config(
     fps::Direction send_direction, const fps::SessionKeys& keys, const fps::X25519PublicKey& client_public_key, const fps::X25519PublicKey& server_public_key
@@ -64,7 +36,7 @@ auto classified_config(
         .client_public_key = client_public_key,
         .server_public_key = server_public_key,
         .profile_id = "bridge-v5-profile",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .max_frame_payload_size = 1024,
         .max_frame_padding_size = 64,
         .max_record_padding_size = 64,
@@ -79,41 +51,6 @@ auto passthrough_pipelines() -> fps::net::TcpBridgeSessionPipelines {
         .outbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
         .outbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
     };
-}
-
-auto tls_app_record(std::initializer_list<unsigned int> payload) -> fps::ByteVector {
-    auto record = fps::build_tls_application_data_record(bytes(payload));
-    BOOST_REQUIRE(record);
-    return std::move(record).value();
-}
-
-auto tls_app_record(std::span<const std::byte> payload) -> fps::ByteVector {
-    auto record = fps::build_tls_application_data_record(payload);
-    BOOST_REQUIRE(record);
-    return std::move(record).value();
-}
-
-auto read_tls_record(tcp::socket& socket) -> fps::ByteVector {
-    std::array<std::byte, 5> header{};
-    boost::asio::read(socket, boost::asio::buffer(header));
-    const auto length = static_cast<std::size_t>(
-        (static_cast<std::uint16_t>(std::to_integer<unsigned char>(header[3])) << 8U) | static_cast<std::uint16_t>(std::to_integer<unsigned char>(header[4]))
-    );
-    fps::ByteVector wire(header.begin(), header.end());
-    wire.resize(header.size() + length);
-    if(length > 0U) {
-        boost::asio::read(socket, boost::asio::buffer(wire.data() + header.size(), length));
-    }
-    return wire;
-}
-
-auto parse_record(std::span<const std::byte> wire) -> fps::TlsRecord {
-    fps::TlsRecordParser parser;
-    auto parsed = parser.feed(wire);
-    BOOST_TEST(parsed.errors.empty());
-    BOOST_TEST(parsed.pending_bytes == 0U);
-    BOOST_REQUIRE_EQUAL(parsed.records.size(), 1U);
-    return std::move(parsed.records.front());
 }
 
 auto observe_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
@@ -135,7 +72,7 @@ auto zero_rtt_controller_config(fps::ZeroRttUpgradeRole role, const fps::X25519K
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {},
         .profile_id = "bridge-v5-profile",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .capabilities = 1,
         .max_padding_size = 64,
     };
@@ -170,34 +107,6 @@ auto bridge_zero_rtt_options(
         .max_envelope_padding_size = 64,
         .max_envelope_frames = 8,
     };
-}
-
-auto connect_pair(boost::asio::io_context& io) -> ConnectedPair {
-    tcp::acceptor acceptor{io, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), 0}};
-    tcp::socket bridge{io};
-    boost::system::error_code accept_error;
-    bool accepted = false;
-    acceptor.async_accept(bridge, [&](const boost::system::error_code& error) {
-        accept_error = error;
-        accepted = true;
-    });
-
-    tcp::socket external{io};
-    external.connect(acceptor.local_endpoint());
-    io.run();
-    io.restart();
-
-    BOOST_REQUIRE(accepted);
-    BOOST_REQUIRE(!accept_error);
-    return ConnectedPair{std::move(external), std::move(bridge)};
-}
-
-template <typename Predicate>
-void run_until(boost::asio::io_context& io, Predicate predicate) {
-    for(auto i = 0; i < 100 && !predicate(); ++i) {
-        io.run_for(std::chrono::milliseconds{5});
-        io.restart();
-    }
 }
 
 struct BridgeFixture {

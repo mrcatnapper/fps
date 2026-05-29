@@ -5,42 +5,13 @@
 #include <algorithm>
 #include <cstddef>
 
+#include "support/fps_test_helpers.hpp"
+
 namespace {
 
-auto bytes(std::initializer_list<unsigned int> values) -> fps::ByteVector {
-    fps::ByteVector out;
-    out.reserve(values.size());
-    for(const auto value : values) {
-        out.push_back(static_cast<std::byte>(value));
-    }
-    return out;
-}
-
-auto material(std::uint8_t seed) -> fps::AeadMaterial {
-    fps::AeadMaterial out;
-    for(std::size_t i = 0; i < out.key.size(); ++i) {
-        out.key[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    for(std::size_t i = 0; i < out.nonce_salt.size(); ++i) {
-        out.nonce_salt[i] = static_cast<std::byte>(seed + 80U + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto key(std::uint8_t seed) -> fps::X25519PublicKey {
-    fps::X25519PublicKey out{};
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto session_keys() -> fps::SessionKeys {
-    return fps::SessionKeys{
-        .client_to_server = material(10),
-        .server_to_client = material(90),
-    };
-}
+using fps::test::bytes;
+using fps::test::public_key;
+using fps::test::tls_app_record;
 
 auto binding(fps::Direction direction = fps::Direction::client_to_server, std::uint8_t seed = 1) -> fps::ZeroRttChannelBinding {
     fps::ZeroRttChannelBinding out{
@@ -58,22 +29,16 @@ auto binding(fps::Direction direction = fps::Direction::client_to_server, std::u
 auto config(fps::Direction send_direction) -> fps::FpsClassifiedRecordConfig {
     return fps::FpsClassifiedRecordConfig{
         .send_direction = send_direction,
-        .session_keys = session_keys(),
-        .client_public_key = key(31),
-        .server_public_key = key(91),
+        .session_keys = fps::test::session_keys(10U, 90U, 90U, 170U),
+        .client_public_key = public_key(31),
+        .server_public_key = public_key(91),
         .profile_id = "classified-unit-v5",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .max_frame_payload_size = 128,
         .max_frame_padding_size = 16,
         .max_record_padding_size = 16,
         .max_frames = 4,
     };
-}
-
-auto tls_app_record(std::span<const std::byte> payload) -> fps::ByteVector {
-    auto record = fps::build_tls_application_data_record(payload);
-    BOOST_REQUIRE(record);
-    return record.value();
 }
 
 } // namespace
@@ -141,6 +106,41 @@ BOOST_AUTO_TEST_CASE(wrong_transcript_falls_back_to_carrier) {
     auto decoded = receiver.decode(encoded.value(), binding(fps::Direction::client_to_server, 2));
 
     BOOST_CHECK(decoded.classification == fps::FpsClassifiedRecordClassification::carrier);
+}
+
+BOOST_AUTO_TEST_CASE(sequence_accessor_tracks_successful_encodes) {
+    fps::FpsClassifiedRecordCodec sender{config(fps::Direction::client_to_server)};
+
+    BOOST_TEST(sender.next_send_sequence() == 0U);
+
+    auto encoded = sender.encode(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server));
+
+    BOOST_REQUIRE(encoded);
+    BOOST_TEST(sender.next_send_sequence() == 1U);
+}
+
+BOOST_AUTO_TEST_CASE(pipeline_reports_tls_record_encode_error) {
+    fps::TlsRecordLayerOptions tiny_record_limit{.legacy_version = 0x0303, .max_payload_size = 1};
+    fps::FpsClassifiedRecordPipeline sender{fps::FpsClassifiedRecordCodec{config(fps::Direction::client_to_server)}, fps::TlsRecordParser{}, tiny_record_limit};
+
+    auto encoded = sender.encode_tls_record(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server));
+
+    BOOST_REQUIRE(!encoded);
+    BOOST_CHECK(encoded.error().stage == fps::FpsClassifiedRecordPipelineEncodeStage::tls_record);
+    BOOST_CHECK(encoded.error().tls_record_error == fps::TlsRecordLayerError::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(pipeline_exposes_pending_tls_bytes) {
+    fps::FpsClassifiedRecordPipeline receiver{fps::FpsClassifiedRecordCodec{config(fps::Direction::server_to_client)}};
+    const auto carrier = tls_app_record(bytes({0xde, 0xad, 0xbe, 0xef}));
+
+    auto result = receiver.process_inbound_tls(
+        fps::Direction::client_to_server, std::span<const std::byte>{carrier}.first(3), [](fps::Direction direction) { return binding(direction); },
+        [](fps::Direction, const fps::TlsRecord&) {}
+    );
+
+    BOOST_TEST(result.pending_tls_bytes == 3U);
+    BOOST_TEST(receiver.pending_bytes() == 3U);
 }
 
 BOOST_AUTO_TEST_CASE(pipeline_forwards_carrier_records_and_swallows_fps_records) {

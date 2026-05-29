@@ -27,6 +27,9 @@ BOOST_AUTO_TEST_CASE(names_and_indexes_described_enums) {
     BOOST_TEST(fps::enum_count<fps::net::SessionManagerEvent>() == 9U);
     BOOST_REQUIRE(fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source));
     BOOST_TEST(*fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source) == 8U);
+    BOOST_REQUIRE(fps::enum_name_at<fps::net::SessionManagerEvent>(8U));
+    BOOST_TEST(*fps::enum_name_at<fps::net::SessionManagerEvent>(8U) == "ignored_spoofed_tun_source");
+    BOOST_TEST(!fps::enum_name_at<fps::net::SessionManagerEvent>(9U).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(parses_enum_names_and_underlying_values) {

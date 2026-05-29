@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 
+#include "fps/core/protocol_constants.hpp"
 #include "fps/core/tls_record_parser.hpp"
 #include "fps/core/types.hpp"
 
@@ -22,7 +23,7 @@ using CovertRecordClassifier = std::function<bool(const TlsRecord&)>;
 
 struct TlsRecordLayerOptions {
     std::uint16_t legacy_version = 0x0303;
-    std::size_t max_payload_size = 16U * 1024U + 2048U;
+    std::size_t max_payload_size = kDefaultTlsRecordPayloadLimit;
 };
 
 struct FilteredTlsRecords {

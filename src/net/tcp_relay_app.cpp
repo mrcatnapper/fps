@@ -185,70 +185,9 @@ template <typename Array, typename NameFn>
     };
 }
 
-[[nodiscard]] auto session_manager_event_name_for_index(std::size_t index) -> std::string_view {
-    switch(index) {
-    case 0:
-        return "ignored_non_tun_frame";
-    case 1:
-        return "ignored_wrong_direction";
-    case 2:
-        return "ignored_malformed_fragment";
-    case 3:
-        return "ignored_out_of_order_fragment";
-    case 4:
-        return "ignored_mismatched_fragment";
-    case 5:
-        return "ignored_oversized_fragment";
-    case 6:
-        return "ignored_non_ipv4_tun_packet";
-    case 7:
-        return "ignored_unassigned_tun_source";
-    case 8:
-        return "ignored_spoofed_tun_source";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] auto session_manager_error_name_for_index(std::size_t index) -> std::string_view {
-    switch(index) {
-    case 0:
-        return "no_carrier_session";
-    case 1:
-        return "session_closed";
-    case 2:
-        return "empty_packet";
-    case 3:
-        return "packet_too_large";
-    case 4:
-        return "codec_error";
-    case 5:
-        return "tls_record_error";
-    case 6:
-        return "write_queue_full";
-    case 7:
-        return "non_ipv4_tun_destination";
-    case 8:
-        return "unassigned_tun_destination";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] auto tun_packet_pump_error_name_for_index(std::size_t index) -> std::string_view {
-    switch(index) {
-    case 0:
-        return "closed";
-    case 1:
-        return "empty_packet";
-    case 2:
-        return "packet_too_large";
-    case 3:
-        return "write_queue_full";
-    case 4:
-        return "read_failed";
-    case 5:
-        return "write_failed";
-    }
-    return "unknown";
+template <typename Enum>
+[[nodiscard]] auto enum_name_for_counter_index(std::size_t index) -> std::string_view {
+    return enum_name_at<Enum>(index).value_or("unknown");
 }
 
 [[nodiscard]] auto should_rate_limit_tun_session_error(SessionManagerError error) noexcept -> bool {
@@ -635,9 +574,11 @@ private:
                 tun["leased_client_address"] = format_ipv4_address(tun_lease_->client_ipv4);
             }
         }
-        tun["session_errors"] = counters_to_json(stats_.tun_session_errors, session_manager_error_name_for_index);
-        tun["pump_errors"] = counters_to_json(stats_.tun_pump_errors, tun_packet_pump_error_name_for_index);
-        tun["session_manager_events"] = counters_to_json(stats_.session_manager_events, session_manager_event_name_for_index);
+        tun["session_errors"] =
+            counters_to_json(stats_.tun_session_errors, [](std::size_t index) { return enum_name_for_counter_index<SessionManagerError>(index); });
+        tun["pump_errors"] = counters_to_json(stats_.tun_pump_errors, [](std::size_t index) { return enum_name_for_counter_index<TunPacketPumpError>(index); });
+        tun["session_manager_events"] =
+            counters_to_json(stats_.session_manager_events, [](std::size_t index) { return enum_name_for_counter_index<SessionManagerEvent>(index); });
 
         json::object shaper;
         shaper["queued"] = stats_.shaper_queued;
@@ -1007,8 +948,7 @@ private:
                 ++self->classified_record_stats_.decode_failed;
                 ++self->classified_record_stats_.tampered_or_invalid;
             }
-            FPS_LOG_WARNING("classified_record") << "event=classified_record_error session_id=" << session_id
-                                                 << " direction=" << direction_name(direction)
+            FPS_LOG_WARNING("classified_record") << "event=classified_record_error session_id=" << session_id << " direction=" << direction_name(direction)
                                                  << " error=" << classified_record_error_message(error);
         };
         handlers.on_classified_record_encode_error = [weak_self, session_id](Direction direction, FpsClassifiedRecordPipelineEncodeError error) {

@@ -6,33 +6,12 @@
 #include <cstddef>
 #include <optional>
 
+#include "support/fps_test_helpers.hpp"
+
 namespace {
 
-auto bytes(std::initializer_list<unsigned int> values) -> fps::ByteVector {
-    fps::ByteVector out;
-    out.reserve(values.size());
-    for(const auto value : values) {
-        out.push_back(static_cast<std::byte>(value));
-    }
-    return out;
-}
-
-auto private_key(std::uint8_t seed) -> fps::X25519PrivateKey {
-    fps::X25519PrivateKey out{};
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
-    fps::X25519KeyPair pair;
-    pair.private_key = private_key(seed);
-    auto public_key = fps::x25519_public_from_private(pair.private_key);
-    BOOST_REQUIRE(public_key);
-    pair.public_key = public_key.value();
-    return pair;
-}
+using fps::test::bytes;
+using fps::test::key_pair;
 
 auto channel_binding(fps::Direction direction, std::uint8_t seed) -> fps::ZeroRttChannelBinding {
     fps::ZeroRttChannelBinding out{
@@ -69,7 +48,7 @@ auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& s
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
         .profile_id = "unit-origin-v5",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };
@@ -83,7 +62,7 @@ auto server_config(const fps::X25519KeyPair& server, std::vector<fps::X25519Publ
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = std::move(allowed_clients),
         .profile_id = "unit-origin-v5",
-        .version = 5,
+        .version = fps::kFpsWireVersion,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };

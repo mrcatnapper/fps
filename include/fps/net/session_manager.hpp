@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 
+#include "fps/core/protocol_constants.hpp"
 #include "fps/core/types.hpp"
 #include "fps/net/tcp_bridge_session.hpp"
 #include "fps/net/tun_lease.hpp"
@@ -17,7 +18,7 @@ namespace fps::net {
 struct SessionManagerConfig {
     RelayRole role{RelayRole::client};
     std::size_t max_tun_packet_size = 1500;
-    std::size_t max_frame_payload_size = 16U * 1024U;
+    std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     bool allow_fragmentation = true;
     bool enforce_leased_clients = false;
 };
@@ -104,8 +105,15 @@ private:
         std::optional<ClientInstanceId> client_instance_id;
     };
 
+    struct CarrierEnqueueAttempt {
+        SessionManagerResult result{SessionManagerResult::failure(SessionManagerError::no_carrier_session)};
+        bool saw_matching_carrier = false;
+        bool saw_write_queue_full = false;
+    };
+
     [[nodiscard]] auto enqueue_packet_on_session(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> packet) -> SessionManagerResult;
     [[nodiscard]] auto enqueue_fragmented_packet(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> packet) -> SessionManagerResult;
+    [[nodiscard]] auto try_enqueue_on_carriers(std::span<const std::byte> packet, std::optional<std::uint32_t> assigned_destination) -> CarrierEnqueueAttempt;
     [[nodiscard]] auto handle_tun_packet_round_robin(std::span<const std::byte> packet) -> SessionManagerResult;
     [[nodiscard]] auto handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> SessionManagerResult;
     void prune_expired_carriers();

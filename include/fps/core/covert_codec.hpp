@@ -5,6 +5,7 @@
 #include <span>
 
 #include "fps/core/crypto.hpp"
+#include "fps/core/protocol_constants.hpp"
 
 namespace fps {
 
@@ -50,8 +51,8 @@ using CodecFrameResult = Result<DecodedFrame, CodecError>;
 struct CovertCodecConfig {
     Direction send_direction{Direction::client_to_server};
     SessionKeys session_keys;
-    std::size_t max_payload_size = 16U * 1024U;
-    std::size_t max_padding_size = 2048U;
+    std::size_t max_payload_size = kDefaultFramePayloadSize;
+    std::size_t max_padding_size = kDefaultFramePaddingSize;
     std::uint64_t initial_send_sequence = 0;
     std::uint64_t initial_receive_sequence = 0;
 };

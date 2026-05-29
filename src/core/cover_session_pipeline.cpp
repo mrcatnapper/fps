@@ -11,8 +11,6 @@ namespace {
 
 constexpr std::size_t kSequenceSize = sizeof(std::uint64_t);
 
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
-
 } // namespace
 
 auto CoverSessionPipeline::passthrough(TlsRecordParser parser, TlsRecordLayerOptions record_options) -> CoverSessionPipeline {

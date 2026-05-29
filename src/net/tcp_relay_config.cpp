@@ -21,6 +21,7 @@
 
 #include "fps/core/enum.hpp"
 #include "fps/core/identity.hpp"
+#include "fps/core/protocol_constants.hpp"
 
 namespace fps::net {
 namespace {
@@ -155,13 +156,13 @@ struct AllowedClientConfig {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
 
-    auto version = parse_u16_config(tree, "security.zero_rtt.version", 5);
+    auto version = parse_u16_config(tree, "security.zero_rtt.version", kFpsWireVersion);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
     if(!version || !capabilities) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(!version ? version.error() : capabilities.error());
     }
-    if(version.value() != 5U) {
-        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.version must be 5");
+    if(version.value() != kFpsWireVersion) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure("security.zero_rtt.version must be " + std::to_string(kFpsWireVersion));
     }
 
     ZeroRttUpgradeConfig upgrade{
@@ -377,8 +378,8 @@ auto load_tcp_relay_config(std::string_view path, std::string_view target_name, 
         config.logging.level = parsed.value();
     }
 
-    auto frame_payload = parse_positive_size_config(tree, "codec.max_frame_payload", 16U * 1024U);
-    auto frame_padding = parse_non_negative_size_config(tree, "codec.max_frame_padding", 2048U);
+    auto frame_payload = parse_positive_size_config(tree, "codec.max_frame_payload", kDefaultFramePayloadSize);
+    auto frame_padding = parse_non_negative_size_config(tree, "codec.max_frame_padding", kDefaultFramePaddingSize);
     auto allow_fragmentation = bool_config(tree, "codec.allow_fragmentation", true);
     if(!frame_payload || !frame_padding || !allow_fragmentation) {
         return TcpRelayConfigResult::failure(!frame_payload ? frame_payload.error() : (!frame_padding ? frame_padding.error() : allow_fragmentation.error()));
