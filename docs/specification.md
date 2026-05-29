@@ -28,13 +28,11 @@ core from Linux TUN and `ip` runtime boundaries.
 
 ```text
 Browser / cover client
-        |
-        v
+        |                                            server TUN
+        v                                                |
 fps_client == TLS-application-record-shaped FPS link == fps_server
         |                                                |
-   client TUN                                      server TUN
-                                                         |
-                                                         v
+   client TUN                                            v
                                                    real HTTPS origin
 ```
 
