@@ -17,6 +17,7 @@
 #include "fps/core/cover_session_pipeline.hpp"
 #include "fps/core/fps_classified_record.hpp"
 #include "fps/core/fps_upgrade_controller.hpp"
+#include "fps/core/protocol_constants.hpp"
 #include "fps/core/shaper.hpp"
 #include "fps/core/types.hpp"
 
@@ -30,10 +31,10 @@ struct TcpBridgeZeroRttOptions {
     std::optional<X25519KeyPair> client_ephemeral_key_pair;
     bool auto_start_client = true;
     std::size_t max_inner_tls_bytes = 64U * 1024U;
-    std::size_t max_frame_payload_size = 16U * 1024U;
-    std::size_t max_frame_padding_size = 2048U;
-    std::size_t max_envelope_padding_size = 2048U;
-    std::size_t max_envelope_frames = 64;
+    std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
+    std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_envelope_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_envelope_frames = kDefaultEnvelopeFrameLimit;
 };
 
 struct TcpBridgeSessionConfig {

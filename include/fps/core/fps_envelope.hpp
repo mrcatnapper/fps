@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "fps/core/covert_codec.hpp"
+#include "fps/core/protocol_constants.hpp"
 
 namespace fps {
 
@@ -47,10 +48,10 @@ struct FpsEnvelopeConfig {
     Direction send_direction{Direction::client_to_server};
     SessionKeys session_keys;
     std::size_t max_inner_tls_bytes = 64U * 1024U;
-    std::size_t max_frame_payload_size = 16U * 1024U;
-    std::size_t max_frame_padding_size = 2048U;
-    std::size_t max_envelope_padding_size = 2048U;
-    std::size_t max_frames = 64;
+    std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
+    std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_envelope_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_frames = kDefaultEnvelopeFrameLimit;
     std::uint64_t initial_send_sequence = 0;
     std::uint64_t initial_receive_sequence = 0;
 };

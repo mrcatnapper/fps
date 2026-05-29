@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include "fps/core/wire.hpp"
+
 namespace fps::net {
 
 using detail::add_stat;
@@ -26,8 +28,6 @@ using detail::is_tun_frame;
 using detail::tcp_bridge_error_from_classified_encode;
 
 namespace {
-
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
 
 [[nodiscard]] auto parse_single_tls_record(std::span<const std::byte> bytes) -> std::optional<TlsRecord> {
     TlsRecordParser parser;
@@ -443,8 +443,7 @@ auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, 
     }
     const auto encoded_size = built.value().size();
     if(!can_enqueue_write(accept_direction, encoded_size)) {
-        set_pending_close_info(
-            close_info(TcpBridgeCloseReason::write_queue_full, accept_direction, TcpBridgeCloseComponent::queue, "server_accept_queue_full")
+        set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, accept_direction, TcpBridgeCloseComponent::queue, "server_accept_queue_full")
         );
         return false;
     }

@@ -11,26 +11,13 @@
 namespace fps {
 namespace {
 
-constexpr std::size_t kHintSize = 8;
+constexpr std::size_t kHintSize = kFpsHintSize;
 constexpr std::size_t kHintsSize = 2U * kHintSize;
 constexpr std::size_t kPlainHeaderSize = sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 constexpr std::size_t kFrameHeaderSize = 1U + 1U + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kMinimumWireSize = kHintsSize + kPlainHeaderSize + kAeadTagSize;
 
 using Hint = std::array<std::byte, kHintSize>;
-
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
-
-void append_label(ByteVector& out, std::string_view label) {
-    for(const auto ch : label) {
-        out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
-    }
-}
-
-template <typename T, std::size_t Size>
-void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
 
 [[nodiscard]] auto fits_u16(std::size_t value) -> bool { return value <= std::numeric_limits<std::uint16_t>::max(); }
 

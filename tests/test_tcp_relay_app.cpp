@@ -5,6 +5,7 @@
 
 #include "fps/core/identity.hpp"
 #include "fps/net/tun_runtime.hpp"
+#include "support/fps_test_helpers.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -61,22 +62,7 @@ auto file_permission_bits(const std::filesystem::path& path) -> unsigned int {
     return static_cast<unsigned int>(permissions);
 }
 
-auto private_key(std::uint8_t seed) -> fps::X25519PrivateKey {
-    fps::X25519PrivateKey out{};
-    for(std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
-    }
-    return out;
-}
-
-auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
-    fps::X25519KeyPair pair;
-    pair.private_key = private_key(seed);
-    auto public_key = fps::x25519_public_from_private(pair.private_key);
-    BOOST_REQUIRE(public_key);
-    pair.public_key = public_key.value();
-    return pair;
-}
+using fps::test::key_pair;
 
 template <typename Key>
 auto key_base64(const Key& key) -> std::string {

@@ -4,6 +4,68 @@
 
 ## 2026-05-29
 
+### Reduce helper duplication in core and tests
+
+Goal:
+
+- Reduce source/test duplication without changing protocol, runtime behavior or
+  public UX.
+- Keep the refactor small enough to validate with local and TUN regression
+  suites.
+
+Changes:
+
+- Added shared protocol constants for current FPS wire version, hint size and
+  default frame/envelope limits.
+- Moved repeated byte-appending helpers into `fps/core/wire.hpp` and reused
+  them across Zero-RTT, classified records, envelopes, covert codec and bridge
+  I/O.
+- Added `enum_name_at` on top of Boost.Describe and replaced manual status
+  counter index-to-name switches in relay status JSON.
+- Factored duplicated SessionManager carrier enqueue loops into one helper that
+  preserves round-robin, leased-destination routing and write-queue fallback
+  semantics.
+- Added `tests/support/fps_test_helpers.hpp` for repeated unit-test fixtures:
+  deterministic byte vectors, X25519 test keys, session keys, TLS record
+  helpers and connected socket pairs.
+- Migrated repeated unit-test helpers to the shared support header and formatted
+  the touched C++ files with `clang-format-20`.
+- Added focused classified-record pipeline tests for sequence accessors,
+  TLS-record encode errors and pending TLS byte reporting after the first
+  extended coverage run showed function coverage at `79.80%`, below the `80%`
+  gate.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `FPS_FUZZ_RUNS=16 tools/run_quality_checks.sh --fuzz`
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local build/tests passed;
+  - ASan+UBSan local tests passed;
+  - Valgrind unit pass: 0 errors, no leaks;
+  - coverage: `71.97%` total lines, `80.30%` total functions;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- Documentation consistency grep over `docs/`, `README.md` and `articles/`
+  found no stale user-facing markers for old research docs, old compatibility
+  language, removed public echo/hold-wss flow, Postman, or explicit GFW/TSPU
+  references.
+
+Notes:
+
+- Docker image/simulation soak was intentionally not run for this PR; Docker
+  smoke/build and compose validation passed.
+- Commit: this commit, `Reduce helper duplication in core and tests`.
+
 ### Run v5 self-review and full quality suite
 
 Goal:

@@ -161,57 +161,10 @@ auto SessionManager::handle_tun_packet(std::span<const std::byte> packet) -> Ses
     return handle_tun_packet_round_robin(packet);
 }
 
-auto SessionManager::handle_tun_packet_round_robin(std::span<const std::byte> packet) -> SessionManagerResult {
+auto SessionManager::try_enqueue_on_carriers(std::span<const std::byte> packet, std::optional<std::uint32_t> assigned_destination) -> CarrierEnqueueAttempt {
     prune_expired_carriers();
-    if(carrier_sessions_.empty()) {
-        return SessionManagerResult::failure(SessionManagerError::no_carrier_session);
-    }
 
-    auto saw_write_queue_full = false;
-    auto attempts_remaining = carrier_sessions_.size();
-    while(attempts_remaining > 0U && !carrier_sessions_.empty()) {
-        --attempts_remaining;
-        next_carrier_index_ %= carrier_sessions_.size();
-        const auto index = next_carrier_index_;
-        auto session = carrier_sessions_[index].session.lock();
-        if(!session) {
-            carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
-            continue;
-        }
-
-        auto queued = enqueue_packet_on_session(session, packet);
-        if(queued) {
-            next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
-            return queued;
-        }
-
-        if(queued.error() == SessionManagerError::session_closed) {
-            carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
-            continue;
-        }
-        if(queued.error() == SessionManagerError::write_queue_full) {
-            saw_write_queue_full = true;
-            next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
-            continue;
-        }
-        return queued;
-    }
-
-    if(saw_write_queue_full) {
-        return SessionManagerResult::failure(SessionManagerError::write_queue_full);
-    }
-    return SessionManagerResult::failure(SessionManagerError::no_carrier_session);
-}
-
-auto SessionManager::handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> SessionManagerResult {
-    const auto destination = ipv4_packet_destination(packet);
-    if(!destination.has_value()) {
-        return SessionManagerResult::failure(SessionManagerError::non_ipv4_tun_destination);
-    }
-
-    prune_expired_carriers();
-    auto saw_matching_carrier = false;
-    auto saw_write_queue_full = false;
+    CarrierEnqueueAttempt attempt;
     auto attempts_remaining = carrier_sessions_.size();
     while(attempts_remaining > 0U && !carrier_sessions_.empty()) {
         --attempts_remaining;
@@ -223,33 +176,65 @@ auto SessionManager::handle_tun_packet_to_leased_client(std::span<const std::byt
             carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
         }
-        if(!carrier.assigned_client_ipv4.has_value() || *carrier.assigned_client_ipv4 != *destination) {
+        if(assigned_destination.has_value() && (!carrier.assigned_client_ipv4.has_value() || *carrier.assigned_client_ipv4 != *assigned_destination)) {
             next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
             continue;
         }
 
-        saw_matching_carrier = true;
+        attempt.saw_matching_carrier = true;
         auto queued = enqueue_packet_on_session(session, packet);
         if(queued) {
             next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
-            return queued;
+            attempt.result = queued;
+            return attempt;
         }
+
         if(queued.error() == SessionManagerError::session_closed) {
             carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
         }
         if(queued.error() == SessionManagerError::write_queue_full) {
-            saw_write_queue_full = true;
+            attempt.saw_write_queue_full = true;
             next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
             continue;
         }
-        return queued;
+        attempt.result = queued;
+        return attempt;
     }
 
-    if(saw_write_queue_full) {
+    if(attempt.saw_write_queue_full) {
+        attempt.result = SessionManagerResult::failure(SessionManagerError::write_queue_full);
+        return attempt;
+    }
+    attempt.result = SessionManagerResult::failure(SessionManagerError::no_carrier_session);
+    return attempt;
+}
+
+auto SessionManager::handle_tun_packet_round_robin(std::span<const std::byte> packet) -> SessionManagerResult {
+    const auto attempt = try_enqueue_on_carriers(packet, std::nullopt);
+    if(attempt.result) {
+        return attempt.result;
+    }
+    if(attempt.saw_write_queue_full) {
         return SessionManagerResult::failure(SessionManagerError::write_queue_full);
     }
-    return SessionManagerResult::failure(saw_matching_carrier ? SessionManagerError::no_carrier_session : SessionManagerError::unassigned_tun_destination);
+    return attempt.result;
+}
+
+auto SessionManager::handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> SessionManagerResult {
+    const auto destination = ipv4_packet_destination(packet);
+    if(!destination.has_value()) {
+        return SessionManagerResult::failure(SessionManagerError::non_ipv4_tun_destination);
+    }
+
+    const auto attempt = try_enqueue_on_carriers(packet, destination);
+    if(attempt.result) {
+        return attempt.result;
+    }
+    if(attempt.saw_write_queue_full) {
+        return SessionManagerResult::failure(SessionManagerError::write_queue_full);
+    }
+    return attempt.saw_matching_carrier ? attempt.result : SessionManagerResult::failure(SessionManagerError::unassigned_tun_destination);
 }
 
 void SessionManager::handle_covert_frame(Direction direction, const DecodedFrame& frame) { handle_covert_frame(nullptr, direction, frame); }

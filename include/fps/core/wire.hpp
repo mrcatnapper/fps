@@ -2,14 +2,29 @@
 
 #include <boost/endian/conversion.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <string_view>
 #include <type_traits>
 
 #include "fps/core/types.hpp"
 
 namespace fps {
+
+inline void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
+
+inline void append_label(ByteVector& out, std::string_view label) {
+    for(const auto ch : label) {
+        out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
+    }
+}
+
+template <typename T, std::size_t Size>
+void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
+    out.insert(out.end(), bytes.begin(), bytes.end());
+}
 
 template <typename Integer>
 void append_be(ByteVector& out, Integer value) {

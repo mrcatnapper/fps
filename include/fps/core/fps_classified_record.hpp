@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "fps/core/fps_envelope.hpp"
+#include "fps/core/protocol_constants.hpp"
 #include "fps/core/tls_record_layer.hpp"
 #include "fps/core/tls_record_parser.hpp"
 #include "fps/core/zero_rtt_upgrade.hpp"
@@ -56,11 +57,11 @@ struct FpsClassifiedRecordConfig {
     X25519PublicKey client_public_key{};
     X25519PublicKey server_public_key{};
     std::string profile_id;
-    std::uint16_t version = 5;
-    std::size_t max_frame_payload_size = 16U * 1024U;
-    std::size_t max_frame_padding_size = 2048U;
-    std::size_t max_record_padding_size = 2048U;
-    std::size_t max_frames = 64;
+    std::uint16_t version = kFpsWireVersion;
+    std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
+    std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_record_padding_size = kDefaultFramePaddingSize;
+    std::size_t max_frames = kDefaultEnvelopeFrameLimit;
     std::uint64_t initial_send_sequence = 0;
     std::uint64_t initial_receive_sequence = 0;
 };

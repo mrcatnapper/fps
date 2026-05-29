@@ -3,21 +3,10 @@
 #include <algorithm>
 #include <utility>
 
+#include "fps/core/wire.hpp"
+
 namespace fps {
 namespace {
-
-void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
-
-void append_label(ByteVector& out, std::string_view label) {
-    for(const auto ch : label) {
-        out.push_back(static_cast<std::byte>(static_cast<unsigned char>(ch)));
-    }
-}
-
-template <typename T, std::size_t Size>
-void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
 
 [[nodiscard]] auto
 transcript_seed(const ZeroRttUpgradeConfig& config, std::string_view profile_id, Direction direction, const X25519PublicKey& server_public_key)
@@ -221,8 +210,8 @@ auto FpsUpgradeController::current_transcript_snapshot(Direction direction) cons
 auto FpsUpgradeController::current_handshake_binding() const -> std::optional<ZeroRttHandshakeBinding> {
     const auto& c2s = transcripts_[direction_index(Direction::client_to_server)];
     const auto& s2c = transcripts_[direction_index(Direction::server_to_client)];
-    if(!c2s.valid || !s2c.valid || !c2s.saw_application_data || !s2c.saw_application_data ||
-       c2s.record_index < config_.min_records_before_trial || s2c.record_index < config_.min_records_before_trial) {
+    if(!c2s.valid || !s2c.valid || !c2s.saw_application_data || !s2c.saw_application_data || c2s.record_index < config_.min_records_before_trial ||
+       s2c.record_index < config_.min_records_before_trial) {
         return std::nullopt;
     }
     return ZeroRttHandshakeBinding{

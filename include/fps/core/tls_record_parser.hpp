@@ -5,6 +5,7 @@
 #include <span>
 #include <vector>
 
+#include "fps/core/protocol_constants.hpp"
 #include "fps/core/types.hpp"
 
 namespace fps {
@@ -29,7 +30,7 @@ struct TlsRecord {
 struct TlsRecordParserOptions {
     std::uint16_t min_legacy_version = 0x0301;
     std::uint16_t max_legacy_version = 0x0304;
-    std::size_t max_record_payload = 16U * 1024U + 2048U;
+    std::size_t max_record_payload = kDefaultTlsRecordPayloadLimit;
     std::size_t max_pending_bytes = 1024U * 1024U;
     bool resync_on_invalid_header = true;
 };

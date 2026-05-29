@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "fps/core/crypto.hpp"
+#include "fps/core/protocol_constants.hpp"
 
 namespace fps {
 
@@ -61,9 +62,9 @@ struct ZeroRttUpgradeConfig {
     std::optional<X25519PublicKey> peer_static_public;
     std::vector<X25519PublicKey> allowed_client_public_keys;
     std::string profile_id;
-    std::uint16_t version = 5;
+    std::uint16_t version = kFpsWireVersion;
     std::uint16_t capabilities = 1;
-    std::size_t max_padding_size = 512;
+    std::size_t max_padding_size = kDefaultZeroRttMaxPaddingSize;
 };
 
 struct ZeroRttBuiltUpgrade {
@@ -116,9 +117,9 @@ public:
         std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt
     ) const -> ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>;
 
-    [[nodiscard]] auto verify_server_accept(
-        std::span<const std::byte> wire, const ZeroRttHandshakeBinding& binding, const ZeroRttBuiltUpgrade& client_auth
-    ) const -> ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>;
+    [[nodiscard]] auto
+    verify_server_accept(std::span<const std::byte> wire, const ZeroRttHandshakeBinding& binding, const ZeroRttBuiltUpgrade& client_auth) const
+        -> ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>;
 
 private:
     [[nodiscard]] auto validate_config() const noexcept -> bool;
@@ -134,9 +135,9 @@ private:
     [[nodiscard]] auto derive_session_keys(
         const std::array<std::byte, kX25519KeySize>& dh_static, const std::array<std::byte, kX25519KeySize>& dh_client_ephemeral,
         const std::array<std::byte, kX25519KeySize>& dh_server_ephemeral, const std::array<std::byte, kX25519KeySize>& dh_ephemeral_ephemeral,
-        const X25519PublicKey& client_ephemeral_public_key, const X25519PublicKey& server_ephemeral_public_key,
-        const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key, const ZeroRttHandshakeBinding& binding,
-        std::span<const std::byte> client_auth_wire, std::span<const std::byte> server_accept_wire
+        const X25519PublicKey& client_ephemeral_public_key, const X25519PublicKey& server_ephemeral_public_key, const X25519PublicKey& client_public_key,
+        const X25519PublicKey& server_public_key, const ZeroRttHandshakeBinding& binding, std::span<const std::byte> client_auth_wire,
+        std::span<const std::byte> server_accept_wire
     ) const -> CryptoResult<SessionKeys>;
 
     ZeroRttUpgradeConfig config_;
