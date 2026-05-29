@@ -4,6 +4,54 @@
 
 ## 2026-05-29
 
+### Implement Zero-RTT v5 1-RTT finalization
+
+Goal:
+
+- Close the fast c2s replay surface left by the v4 classified-record baseline.
+- Require a server accept leg before final classified-record keys exist.
+- Ensure FPS does not send an auth response until the carrier has produced TLS
+  Application Data in both directions.
+
+Decisions:
+
+- Keep the current class names for now (`ZeroRttUpgradeEngine`,
+  `FpsUpgradeController`) to avoid a broad rename-only diff.
+- Use a bidirectional handshake binding for client auth and server accept, while
+  keeping per-direction transcript bindings for post-auth classified records.
+- Carry the client runtime instance id in the encrypted client-auth payload and
+  carry the assigned TUN lease in the encrypted server-accept payload.
+- Keep timestamp/replay-cache fields out of active config/wire format; replay
+  resistance now depends on the bidirectional carrier transcript plus the server
+  accept leg.
+
+Done:
+
+- Bumped active Zero-RTT/classified-record wire version to `5`.
+- Split authentication into client-auth and server-accept records with separate
+  hint labels, encrypted capsules and final session-key derivation.
+- Gated channel opening on observed TLS Application Data in both directions.
+- Updated `TcpBridgeSession` and relay runtime integration so server-side lease
+  assignment happens before accept and reaches the client inside accept payload.
+- Updated unit/integration fixtures, Docker examples and public protocol docs
+  for v5.
+- Adjusted the adversarial replay-style test: c2s-only replay/mutation must not
+  authenticate under the bidirectional gate, but it no longer necessarily
+  increments a precheck-failure counter.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+
+Commit:
+
+- This logical commit: `Implement Zero-RTT v5 1-RTT finalization`
+
 ### Make TCP bridge TLS framing session-owned
 
 Goal:

@@ -356,12 +356,11 @@ def transcript_mismatch_probe(fps_client, fps_server, tmpdir, origin_port):
         )
         if not wait_for(lambda: len(proxy.c2s_records) >= 2):
             raise RuntimeError(f"proxy did not record enough c2s records: {proxy.c2s_records!r}")
-        precheck_before = int(
+        auth_before = int(
             query_status(fps_server, server_config, server_status_socket)
             .get("auth", {})
-            .get("precheck_failed", 0)
+            .get("authenticated", 0)
         )
-        status = None
         mutated_prefix = bytearray(proxy.c2s_records[0])
         if len(mutated_prefix) > 5:
             mutated_prefix[-1] ^= 0x01
@@ -373,16 +372,13 @@ def transcript_mismatch_probe(fps_client, fps_server, tmpdir, origin_port):
                     time.sleep(0.2)
             except OSError:
                 pass
-            candidate_status = query_status(fps_server, server_config, server_status_socket)
-            if int(candidate_status.get("auth", {}).get("precheck_failed", 0)) > precheck_before:
-                status = candidate_status
-                break
-        if status is None:
+        status = query_status(fps_server, server_config, server_status_socket)
+        if int(status.get("auth", {}).get("authenticated", 0)) != auth_before:
             summary = [
                 [record[0], int.from_bytes(record[3:5], "big")]
                 for record in proxy.c2s_records[:12]
             ]
-            raise RuntimeError(f"transcript mismatch did not trigger precheck failure; c2s records={summary!r}")
+            raise RuntimeError(f"mutated c2s-only replay unexpectedly authenticated; c2s records={summary!r} status={status!r}")
         assert_no_status_secrets(status)
     finally:
         stop_and_read(client)

@@ -205,7 +205,7 @@ def check_client_profile_generation(fps_server, fps_client):
                     "security": {
                         "zero_rtt": {
                             "enabled": True,
-                            "profile_id": "cli-profile-v4",
+                            "profile_id": "cli-profile-v5",
                             "server_private_key_base64": keys[
                                 "server_private_key_base64"
                             ],

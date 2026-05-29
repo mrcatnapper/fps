@@ -217,7 +217,7 @@ def main():
             config_dir.mkdir()
             server_keys = generate_server_keypair(base, args.image)
             allowed_uuids = sorted({data["uuid"] for data in CLIENTS.values()})
-            profile_id = "docker-duplicate-uuid-v4"
+            profile_id = "docker-duplicate-uuid-v5"
             write_config(
                 config_dir / "server.json",
                 role="server",

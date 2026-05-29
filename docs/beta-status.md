@@ -91,9 +91,10 @@ deliberately deferred until the private release policy is settled.
 - Local adversarial Zero-RTT coverage now checks no-upgrade passthrough, unknown
   clients, transcript-prefix mismatch and post-auth carrier tamper against live
   FPS daemons with status-counter assertions.
-- Timestamp and replay-cache fields are not active Zero-RTT v4 config or wire
-  features. Replay resistance relies on the transcript-bound carrier prefix;
-  durable replay state remains a possible protocol-review outcome.
+- Timestamp and replay-cache fields are not active Zero-RTT v5 config or wire
+  features. Replay resistance relies on the bidirectional carrier transcript
+  prefix plus the server accept leg; durable replay state remains a possible
+  protocol-review outcome.
 
 ## Repository And CI State
 

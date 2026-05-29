@@ -161,7 +161,7 @@ Client:
 - `carriers_current=3`, `carriers_registered=8`, `carriers_removed=5`;
 - `auth.authenticated=8`;
 - `auth.precheck_failed=0`, `unknown_client=0`, `decrypt_failed=0`,
-  `confirmation_failed=0`;
+  `server_accept_failed=0`;
 - `envelope.decode_failed=0`, `encode_failed=0`, `tampered_or_invalid=0`;
 - `tun.leased_client_address=10.66.0.2`;
 - TUN counters: `packets_from_device=746`, `bytes_from_device=191879`,

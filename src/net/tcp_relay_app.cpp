@@ -141,7 +141,7 @@ struct RelayAuthStats {
     std::uint64_t precheck_failed = 0;
     std::uint64_t unknown_client = 0;
     std::uint64_t decrypt_failed = 0;
-    std::uint64_t confirmation_failed = 0;
+    std::uint64_t server_accept_failed = 0;
 };
 
 struct RelayClassifiedRecordStats {
@@ -360,6 +360,11 @@ private:
         bool carrier_registered = false;
     };
 
+    struct CarrierRegistrationResult {
+        bool registered = false;
+        std::optional<TunLease> assigned_lease;
+    };
+
     [[nodiscard]] auto observe_tun_session_error_log(SessionManagerError error) -> RepeatedLogDecision {
         return observe_repeated_log(tun_session_error_log_limits_[session_manager_error_index(error)]);
     }
@@ -373,8 +378,8 @@ private:
     }
 
     void record_closed_session(std::uint64_t session_id, bool authenticated, TcpBridgeCloseInfo close) {
-        if(close.component == TcpBridgeCloseComponent::zero_rtt && close.error == "confirmation_failed") {
-            ++auth_stats_.confirmation_failed;
+        if(close.component == TcpBridgeCloseComponent::zero_rtt && close.error.find("server_accept") != std::string::npos) {
+            ++auth_stats_.server_accept_failed;
         }
         recent_closed_sessions_.push_back(
             ClosedSessionSnapshot{
@@ -428,27 +433,27 @@ private:
 
     [[nodiscard]] auto register_authenticated_carrier(
         std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session, BridgeSessionRuntimeState& state,
-        std::optional<ClientInstanceId> client_instance_id
-    ) -> bool {
+        std::optional<ClientInstanceId> client_instance_id, bool send_lease_control
+    ) -> CarrierRegistrationResult {
         if(!session_manager_ || !session || state.carrier_registered) {
-            return false;
+            return {};
         }
 
         std::optional<TunLease> assigned_lease;
         if(config_.role == RelayRole::server && lease_allocator_) {
             if(!state.authenticated_client_public_key.has_value()) {
                 FPS_LOG_WARNING("tun") << "event=tun_lease_assign_failed session_id=" << session_id << " error=missing_client_public_key";
-                return false;
+                return {};
             }
             if(!client_instance_id.has_value()) {
                 FPS_LOG_WARNING("relay") << "event=client_instance_metadata_required session_id=" << session_id;
-                return false;
+                return {};
             }
 
             auto lease = lease_allocator_->acquire(*state.authenticated_client_public_key);
             if(!lease) {
                 FPS_LOG_WARNING("tun") << "event=tun_lease_assign_failed session_id=" << session_id << " error=" << tun_lease_error_message(lease.error());
-                return false;
+                return {};
             }
             assigned_lease = lease.value();
         }
@@ -460,7 +465,7 @@ private:
             state.carrier_registered = session_manager_->is_carrier_session(session);
             FPS_LOG_DEBUG("relay") << "event=carrier_already_registered source=zero_rtt session_id=" << session_id
                                    << " carrier_count=" << session_manager_->carrier_count();
-            return false;
+            return {.registered = false, .assigned_lease = std::move(assigned_lease)};
         }
 
         state.carrier_registered = true;
@@ -478,11 +483,13 @@ private:
             ++stats_.tun_leases_assigned;
             FPS_LOG_INFO("tun") << "event=tun_lease_assigned session_id=" << session_id << " address=" << format_ipv4_address(assigned_lease->client_ipv4)
                                 << "/" << static_cast<unsigned int>(assigned_lease->prefix_length);
-            auto payload = encode_tun_lease_control(*assigned_lease);
-            auto queued = session->enqueue_covert_frame(Direction::server_to_client, FrameType::control, payload);
-            if(!queued) {
-                FPS_LOG_WARNING("tun") << "event=tun_lease_send_failed session_id=" << session_id
-                                       << " error=" << tcp_bridge_enqueue_error_message(queued.error());
+            if(send_lease_control) {
+                auto payload = encode_tun_lease_control(*assigned_lease);
+                auto queued = session->enqueue_covert_frame(Direction::server_to_client, FrameType::control, payload);
+                if(!queued) {
+                    FPS_LOG_WARNING("tun") << "event=tun_lease_send_failed session_id=" << session_id
+                                           << " error=" << tcp_bridge_enqueue_error_message(queued.error());
+                }
             }
         }
 
@@ -491,7 +498,7 @@ private:
                 replaced->stop();
             }
         }
-        return true;
+        return {.registered = true, .assigned_lease = std::move(assigned_lease)};
     }
 
     [[nodiscard]] auto try_handle_pre_registration_control(
@@ -510,7 +517,7 @@ private:
             return true;
         }
 
-        (void)register_authenticated_carrier(session_id, session, state, metadata.value().client_instance_id);
+        (void)register_authenticated_carrier(session_id, session, state, metadata.value().client_instance_id, true);
         return true;
     }
 
@@ -608,7 +615,7 @@ private:
         auth["precheck_failed"] = auth_stats_.precheck_failed;
         auth["unknown_client"] = auth_stats_.unknown_client;
         auth["decrypt_failed"] = auth_stats_.decrypt_failed;
-        auth["confirmation_failed"] = auth_stats_.confirmation_failed;
+        auth["server_accept_failed"] = auth_stats_.server_accept_failed;
 
         json::object classified_record;
         classified_record["decode_failed"] = classified_record_stats_.decode_failed;
@@ -1051,12 +1058,47 @@ private:
                     return;
                 }
                 runtime_state->authenticated_client_public_key = client_public_key;
-                self->send_client_instance_metadata(session_id, session);
                 if(!self->session_manager_ || self->server_requires_client_instance_metadata()) {
                     return;
                 }
-                (void)self->register_authenticated_carrier(session_id, session, *runtime_state, std::nullopt);
+                (void)self->register_authenticated_carrier(session_id, session, *runtime_state, std::nullopt, true);
             }
+        };
+        handlers.on_zero_rtt_server_accept_payload = [weak_self, session_slot, runtime_state, session_id](
+                                                         const X25519PublicKey& client_public_key, std::span<const std::byte> client_auth_payload
+                                                     ) -> std::optional<ByteVector> {
+            const auto self = weak_self.lock();
+            if(!self) {
+                return std::nullopt;
+            }
+            runtime_state->authenticated_client_public_key = client_public_key;
+            const auto session = session_slot->lock();
+            if(!session) {
+                return std::nullopt;
+            }
+            if(!self->session_manager_) {
+                return ByteVector{};
+            }
+
+            std::optional<ClientInstanceId> client_instance_id;
+            if(self->server_requires_client_instance_metadata()) {
+                auto metadata = decode_client_instance_control(client_auth_payload);
+                if(!metadata) {
+                    FPS_LOG_WARNING("relay") << "event=client_instance_metadata_decode_failed session_id=" << session_id
+                                             << " error=" << tun_lease_error_message(metadata.error());
+                    return std::nullopt;
+                }
+                client_instance_id = metadata.value().client_instance_id;
+            }
+
+            auto registration = self->register_authenticated_carrier(session_id, session, *runtime_state, client_instance_id, false);
+            if(!registration.registered && !runtime_state->carrier_registered) {
+                return std::nullopt;
+            }
+            if(registration.assigned_lease.has_value()) {
+                return encode_tun_lease_control(*registration.assigned_lease);
+            }
+            return ByteVector{};
         };
         handlers.on_shaper_event = [weak_self, session_id](const TcpBridgeShaperEvent& event) {
             if(const auto self = weak_self.lock()) {
@@ -1082,6 +1124,9 @@ private:
             options.controller_config = config_.zero_rtt->controller_config;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
+            if(config_.role == RelayRole::client && client_instance_id_.has_value()) {
+                options.client_upgrade_padding = encode_client_instance_control(*client_instance_id_);
+            }
             zero_rtt_options = std::move(options);
         }
 

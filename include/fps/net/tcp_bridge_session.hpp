@@ -146,6 +146,7 @@ struct TcpBridgeSessionHandlers {
     std::function<void(Direction, std::size_t)> on_classified_records_decoded;
     std::function<void(Direction, std::size_t)> on_classified_records_encoded;
     std::function<void(const SessionKeys&, const std::optional<X25519PublicKey>&)> on_zero_rtt_authenticated;
+    std::function<std::optional<ByteVector>(const X25519PublicKey&, std::span<const std::byte>)> on_zero_rtt_server_accept_payload;
     std::function<void(const TcpBridgeShaperEvent&)> on_shaper_event;
     std::function<void(const TcpBridgeSessionStats&)> on_closed;
 };
@@ -246,7 +247,8 @@ private:
     [[nodiscard]] auto maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput;
     [[nodiscard]] auto zero_rtt_peer_direction() const noexcept -> Direction;
     void activate_zero_rtt_classified_pipelines(const SessionKeys& session_keys, const X25519PublicKey& client_public_key);
-    [[nodiscard]] auto send_zero_rtt_key_confirmation(Direction upgrade_direction) -> bool;
+    [[nodiscard]] auto send_zero_rtt_server_accept(Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload)
+        -> bool;
     [[nodiscard]] auto can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool;
     [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult;
     [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames)

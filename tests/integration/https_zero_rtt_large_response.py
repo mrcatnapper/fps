@@ -46,8 +46,8 @@ def main():
         client_port = free_port()
         origin = start_https_origin(cert, key, origin_port)
 
-        server_config = tmpdir / "server-v4.json"
-        client_config = tmpdir / "client-v4.json"
+        server_config = tmpdir / "server-v5.json"
+        client_config = tmpdir / "client-v5.json"
         write_zero_rtt_relay_config(
             server_config,
             server_port,

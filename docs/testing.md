@@ -312,9 +312,9 @@ Unit tests cover:
   implicit sequence, tamper rejection and no-plaintext-metadata smoke.
 - Shaper deterministic plans, CDF validation, ratio budget, burst limit,
   backpressure clear/block, direction isolation and profile exhaustion.
-- `TcpBridgeSession` passthrough, Zero-RTT strip/confirmation/classify, client late
-  upgrade, race-safe confirmation wait with cover-record fallback, fragmented
-  confirmation wait, post-confirmation carrier passthrough plus classified
+- `TcpBridgeSession` passthrough, Zero-RTT client-auth/server-accept/classify,
+  client late upgrade, race-safe server-accept wait with cover-record fallback,
+  fragmented server-accept wait, post-accept carrier passthrough plus classified
   record insertion and unauthenticated enqueue
   rejection.
 - `SessionManager` and `TunPacketPump` carrier registration/removal,

@@ -51,7 +51,7 @@ auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& s
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
         .profile_id = "fuzz-zero-rtt-v1",
-        .version = 4,
+        .version = 5,
         .capabilities = 1,
         .max_padding_size = 128,
     };
@@ -65,7 +65,7 @@ auto server_config(const fps::X25519KeyPair& server, const fps::X25519KeyPair& c
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = {client.public_key},
         .profile_id = "fuzz-zero-rtt-v1",
-        .version = 4,
+        .version = 5,
         .capabilities = 1,
         .max_padding_size = 128,
     };

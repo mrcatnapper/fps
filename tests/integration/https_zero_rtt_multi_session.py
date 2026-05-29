@@ -67,8 +67,8 @@ def main():
         client_port = free_port()
         origin = start_https_origin(cert, key, origin_port)
 
-        server_config = tmpdir / "server-v4.json"
-        client_config = tmpdir / "client-v4.json"
+        server_config = tmpdir / "server-v5.json"
+        client_config = tmpdir / "client-v5.json"
         write_zero_rtt_relay_config(
             server_config, server_port, "origin", origin_port, "server"
         )
@@ -88,8 +88,8 @@ def main():
             wait_for_tcp("127.0.0.1", client_port, client_proc)
 
             paths = [
-                ["/v4/session/a/0", "/v4/session/a/1", "/v4/session/a/2"],
-                ["/v4/session/b/0", "/v4/session/b/1", "/v4/session/b/2"],
+                ["/v5/session/a/0", "/v5/session/a/1", "/v5/session/a/2"],
+                ["/v5/session/b/0", "/v5/session/b/1", "/v5/session/b/2"],
             ]
             barrier = threading.Barrier(2)
             results = [None, None]

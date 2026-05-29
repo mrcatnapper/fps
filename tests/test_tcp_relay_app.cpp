@@ -112,7 +112,7 @@ auto server_config_json(const fps::X25519KeyPair& server, const std::string& tun
     "security": {
       "zero_rtt": {
         "enabled": true,
-        "profile_id": "unit-origin-v4",
+        "profile_id": "unit-origin-v5",
 )json" + server_zero_rtt_json(server) +
            extra_zero_rtt_json + R"json(
       }
@@ -277,7 +277,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
     const auto server = key_pair(90);
     const auto expected_client = fps::derive_client_key_pair_from_uuid(kClientUuid);
     BOOST_REQUIRE(expected_client);
-    const auto config_path = temp.path / "client-v4.json";
+    const auto config_path = temp.path / "client-v5.json";
     write_text(
         config_path,
         R"json({
@@ -288,10 +288,10 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
                "security": {
                  "zero_rtt": {
                    "enabled": true,
-                   "profile_id": "unit-origin-v4",
+                   "profile_id": "unit-origin-v5",
 )json" + client_zero_rtt_json(server.public_key) +
             R"json(,
-                   "version": 4,
+                   "version": 5,
                    "capabilities": 7,
                    "max_padding_size": 19,
                    "min_records_before_trial": 2,
@@ -312,7 +312,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
     BOOST_CHECK(controller.zero_rtt.local_static_public == expected_client.value().public_key);
     BOOST_REQUIRE(controller.zero_rtt.peer_static_public.has_value());
     BOOST_CHECK(*controller.zero_rtt.peer_static_public == server.public_key);
-    BOOST_TEST(controller.zero_rtt.version == 4U);
+    BOOST_TEST(controller.zero_rtt.version == 5U);
     BOOST_TEST(controller.zero_rtt.capabilities == 7U);
     BOOST_TEST(controller.min_records_before_trial == 2U);
 }
@@ -322,7 +322,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_server_json_config_with_base64_keys_and_uuid
     const auto server = key_pair(92);
     const auto expected_client = fps::derive_client_key_pair_from_uuid(kClientUuid);
     BOOST_REQUIRE(expected_client);
-    const auto config_path = temp.path / "server-v4.json";
+    const auto config_path = temp.path / "server-v5.json";
     write_text(config_path, server_config_json(server, "", R"json(,
                    "upgrade_direction": "server_to_client")json"));
 
@@ -380,7 +380,7 @@ BOOST_AUTO_TEST_CASE(loads_tun_lease_pool_and_client_auto_config) {
                "security": {
                  "zero_rtt": {
                    "enabled": true,
-                   "profile_id": "unit-origin-v4",
+                   "profile_id": "unit-origin-v5",
 )json" + client_zero_rtt_json(server.public_key) +
             R"json(
                  }
@@ -547,7 +547,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_tun_json_config) {
                  "security": {
                    "zero_rtt": {
                      "enabled": true,
-                     "profile_id": "unit-origin-v4",
+                     "profile_id": "unit-origin-v5",
 )json" + server_zero_rtt_json(server) +
                 R"json(
                    }
@@ -710,7 +710,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
             "server_public_key_base64": ")json" +
             key_base64(server.public_key) + R"json(",
@@ -721,13 +721,13 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         "server", fps::RelayRole::client
     );
     BOOST_REQUIRE(!removed_timestamp);
-    BOOST_TEST(removed_timestamp.error() == "security.zero_rtt.timestamp_window_sec is not a valid Zero-RTT v4 field");
+    BOOST_TEST(removed_timestamp.error() == "security.zero_rtt.timestamp_window_sec is not a valid Zero-RTT v5 field");
 
     auto removed_trial_limit = fps::net::load_tcp_relay_config(
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
             "server_public_key_base64": ")json" +
             key_base64(server.public_key) + R"json(",
@@ -738,13 +738,13 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         "server", fps::RelayRole::client
     );
     BOOST_REQUIRE(!removed_trial_limit);
-    BOOST_TEST(removed_trial_limit.error() == "security.zero_rtt.trial_decrypt_limit is not a valid Zero-RTT v4 field");
+    BOOST_TEST(removed_trial_limit.error() == "security.zero_rtt.trial_decrypt_limit is not a valid Zero-RTT v5 field");
 
     auto unsupported_version = fps::net::load_tcp_relay_config(
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
             "server_public_key_base64": ")json" +
             key_base64(server.public_key) + R"json(",
@@ -755,13 +755,13 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         "server", fps::RelayRole::client
     );
     BOOST_REQUIRE(!unsupported_version);
-    BOOST_TEST(unsupported_version.error() == "security.zero_rtt.version must be 4");
+    BOOST_TEST(unsupported_version.error() == "security.zero_rtt.version must be 5");
 
     auto bad_direction = fps::net::load_tcp_relay_config(
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
             "server_public_key_base64": ")json" +
             key_base64(server.public_key) + R"json(",
@@ -778,7 +778,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "not-a-uuid",
             "server_public_key_base64": ")json" +
             key_base64(server.public_key) + R"json("
@@ -794,7 +794,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
         write_client_config(
             R"json({
             "enabled": true,
-            "profile_id": "unit-origin-v4",
+            "profile_id": "unit-origin-v5",
             "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
             "server_public_key_base64": "AAAA"
           })json"
@@ -816,7 +816,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
                "security": {
                  "zero_rtt": {
                    "enabled": true,
-                   "profile_id": "unit-origin-v4",
+                   "profile_id": "unit-origin-v5",
                    "server_private_key_base64": ")json" +
             key_base64(server.private_key) + R"json(",
                    "server_public_key_base64": ")json" +
@@ -840,7 +840,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
                "security": {
                  "zero_rtt": {
                    "enabled": true,
-                   "profile_id": "unit-origin-v4",
+                   "profile_id": "unit-origin-v5",
                    "server_private_key_base64": ")json" +
             key_base64(server.private_key) + R"json(",
                    "server_public_key_base64": ")json" +
@@ -865,7 +865,7 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
                "security": {
                  "zero_rtt": {
                    "enabled": true,
-                   "profile_id": "unit-origin-v4",
+                   "profile_id": "unit-origin-v5",
                    "server_private_key_base64": ")json" +
             key_base64(server.private_key) + R"json(",
                    "server_public_key_base64": ")json" +

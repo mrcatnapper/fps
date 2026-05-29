@@ -65,7 +65,7 @@ def write_config(
     zero_rtt = {
         "enabled": True,
         "profile_id": profile_id,
-        "version": 4,
+        "version": 5,
         "capabilities": 1,
         "max_padding_size": 64,
         "min_records_before_trial": 1,
@@ -464,7 +464,7 @@ def main():
         config_dir.mkdir()
         server_keys = generate_server_keypair(base, args.image)
         allowed_uuids = [data["uuid"] for data in CLIENTS.values()]
-        profile_id = "docker-multi-client-v4"
+        profile_id = "docker-multi-client-v5"
         write_config(
             config_dir / "server.json",
             role="server",

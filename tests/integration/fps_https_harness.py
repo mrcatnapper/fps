@@ -362,8 +362,8 @@ def write_zero_rtt_relay_config(
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "integration-origin-v4",
-%s      "version": 4,
+      "profile_id": "integration-origin-v5",
+%s      "version": 5,
       "capabilities": 1,
       "max_padding_size": 64,
       "min_records_before_trial": 1,

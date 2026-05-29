@@ -47,7 +47,7 @@ auto binding(fps::Direction direction = fps::Direction::client_to_server, std::u
         .direction = direction,
         .record_index = 3,
         .transcript_byte_count = 512U + seed,
-        .profile_id = "classified-unit-v4",
+        .profile_id = "classified-unit-v5",
     };
     for(std::size_t i = 0; i < out.transcript_hash.size(); ++i) {
         out.transcript_hash[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
@@ -61,8 +61,8 @@ auto config(fps::Direction send_direction) -> fps::FpsClassifiedRecordConfig {
         .session_keys = session_keys(),
         .client_public_key = key(31),
         .server_public_key = key(91),
-        .profile_id = "classified-unit-v4",
-        .version = 4,
+        .profile_id = "classified-unit-v5",
+        .version = 5,
         .max_frame_payload_size = 128,
         .max_frame_padding_size = 16,
         .max_record_padding_size = 16,
