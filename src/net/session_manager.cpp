@@ -1,6 +1,7 @@
 #include "fps/net/session_manager.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -33,6 +34,9 @@ SessionManager::SessionManager(SessionManagerConfig config, SessionManagerHandle
     }
     if(config_.allow_fragmentation && config_.max_frame_payload_size <= kTunFragmentHeaderSize) {
         throw std::invalid_argument("SessionManager max_frame_payload_size must exceed TUN fragment header size");
+    }
+    if(config_.max_fragment_reassembly_states == 0U) {
+        throw std::invalid_argument("SessionManager max_fragment_reassembly_states must be positive");
     }
 }
 
@@ -79,6 +83,9 @@ auto SessionManager::add_carrier_session_with_metadata(
             next_carrier_index_ = 0;
         } else {
             next_carrier_index_ %= carrier_sessions_.size();
+        }
+        for(const auto& replaced : result.replaced_sessions) {
+            remove_fragment_reassemblies_for_session(replaced);
         }
     }
 
@@ -133,11 +140,15 @@ auto SessionManager::remove_carrier_session_if(const std::shared_ptr<TcpBridgeSe
     } else {
         next_carrier_index_ %= carrier_sessions_.size();
     }
+    if(removed) {
+        remove_fragment_reassemblies_for_session(session);
+    }
     return removed;
 }
 
 void SessionManager::clear_carrier_sessions() noexcept {
     carrier_sessions_.clear();
+    fragment_reassemblies_.clear();
     next_carrier_index_ = 0;
 }
 
@@ -326,6 +337,7 @@ void SessionManager::prune_expired_carriers() {
         std::remove_if(carrier_sessions_.begin(), carrier_sessions_.end(), [](const CarrierEntry& carrier) { return carrier.session.expired(); }),
         carrier_sessions_.end()
     );
+    prune_expired_fragment_reassemblies();
     if(carrier_sessions_.empty()) {
         next_carrier_index_ = 0;
     } else {
@@ -391,7 +403,6 @@ void SessionManager::deliver_inbound_packet(const std::shared_ptr<TcpBridgeSessi
 
 void SessionManager::handle_tun_fragment(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> payload) {
     if(payload.size() <= kTunFragmentHeaderSize) {
-        reset_fragment_reassembly();
         emit_event(SessionManagerEvent::ignored_malformed_fragment);
         return;
     }
@@ -403,45 +414,52 @@ void SessionManager::handle_tun_fragment(const std::shared_ptr<TcpBridgeSession>
     const auto chunk = payload.subspan(kTunFragmentHeaderSize);
 
     if(fragment_count == 0U || fragment_index >= fragment_count || total_size == 0U || total_size > config_.max_tun_packet_size) {
-        reset_fragment_reassembly();
+        reset_fragment_reassembly(session, packet_id);
         emit_event(
             total_size > config_.max_tun_packet_size ? SessionManagerEvent::ignored_oversized_fragment : SessionManagerEvent::ignored_malformed_fragment
         );
         return;
     }
 
-    if(!fragment_reassembly_.has_value()) {
+    prune_expired_fragment_reassemblies();
+    auto state_it = find_fragment_reassembly(session, packet_id);
+    if(state_it == fragment_reassemblies_.end()) {
         if(fragment_index != 0U) {
             emit_event(SessionManagerEvent::ignored_out_of_order_fragment);
             return;
         }
-        fragment_reassembly_.emplace(
+        if(fragment_reassemblies_.size() >= config_.max_fragment_reassembly_states) {
+            emit_event(SessionManagerEvent::ignored_reassembly_limit);
+            return;
+        }
+        fragment_reassemblies_.push_back(
             FragmentReassemblyState{
                 .packet_id = packet_id,
                 .next_fragment_index = 0,
                 .fragment_count = fragment_count,
                 .total_size = total_size,
                 .packet = {},
+                .has_source_session = static_cast<bool>(session),
                 .source_session = session,
             }
         );
-        fragment_reassembly_->packet.reserve(total_size);
+        state_it = std::prev(fragment_reassemblies_.end());
+        state_it->packet.reserve(total_size);
     }
 
-    auto& state = *fragment_reassembly_;
-    if(state.packet_id != packet_id || state.fragment_count != fragment_count || state.total_size != total_size ||
-       !same_session(state.source_session, session)) {
-        reset_fragment_reassembly();
+    auto& state = *state_it;
+    if(state.fragment_count != fragment_count || state.total_size != total_size || !same_fragment_source(state, session)) {
+        fragment_reassemblies_.erase(state_it);
         emit_event(SessionManagerEvent::ignored_mismatched_fragment);
         return;
     }
     if(state.next_fragment_index != fragment_index) {
-        reset_fragment_reassembly();
+        fragment_reassemblies_.erase(state_it);
         emit_event(SessionManagerEvent::ignored_out_of_order_fragment);
         return;
     }
     if(chunk.size() > static_cast<std::size_t>(state.total_size) - state.packet.size()) {
-        reset_fragment_reassembly();
+        fragment_reassemblies_.erase(state_it);
         emit_event(SessionManagerEvent::ignored_mismatched_fragment);
         return;
     }
@@ -453,17 +471,58 @@ void SessionManager::handle_tun_fragment(const std::shared_ptr<TcpBridgeSession>
         return;
     }
     if(state.packet.size() != state.total_size) {
-        reset_fragment_reassembly();
+        fragment_reassemblies_.erase(state_it);
         emit_event(SessionManagerEvent::ignored_mismatched_fragment);
         return;
     }
 
     auto packet = std::move(state.packet);
-    reset_fragment_reassembly();
+    fragment_reassemblies_.erase(state_it);
     deliver_inbound_packet(session, std::move(packet));
 }
 
-void SessionManager::reset_fragment_reassembly() noexcept { fragment_reassembly_.reset(); }
+auto SessionManager::same_fragment_source(const FragmentReassemblyState& state, const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool {
+    if(!state.has_source_session) {
+        return !session;
+    }
+    return same_session(state.source_session, session);
+}
+
+auto SessionManager::fragment_source_expired(const FragmentReassemblyState& state) noexcept -> bool {
+    return state.has_source_session && state.source_session.expired();
+}
+
+auto SessionManager::find_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id) -> FragmentReassemblyIterator {
+    return std::find_if(fragment_reassemblies_.begin(), fragment_reassemblies_.end(), [&](const FragmentReassemblyState& state) {
+        return state.packet_id == packet_id && same_fragment_source(state, session);
+    });
+}
+
+void SessionManager::reset_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id) {
+    auto state = find_fragment_reassembly(session, packet_id);
+    if(state != fragment_reassemblies_.end()) {
+        fragment_reassemblies_.erase(state);
+    }
+}
+
+void SessionManager::remove_fragment_reassemblies_for_session(const std::shared_ptr<TcpBridgeSession>& session) {
+    fragment_reassemblies_.erase(
+        std::remove_if(
+            fragment_reassemblies_.begin(), fragment_reassemblies_.end(),
+            [&](const FragmentReassemblyState& state) { return same_fragment_source(state, session); }
+        ),
+        fragment_reassemblies_.end()
+    );
+}
+
+void SessionManager::prune_expired_fragment_reassemblies() {
+    fragment_reassemblies_.erase(
+        std::remove_if(
+            fragment_reassemblies_.begin(), fragment_reassemblies_.end(), [](const FragmentReassemblyState& state) { return fragment_source_expired(state); }
+        ),
+        fragment_reassemblies_.end()
+    );
+}
 
 auto SessionManager::map_enqueue_error(TcpBridgeEnqueueError error) -> SessionManagerError {
     const auto name = enum_name(error);

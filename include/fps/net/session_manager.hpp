@@ -21,6 +21,7 @@ struct SessionManagerConfig {
     std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     bool allow_fragmentation = true;
     bool enforce_leased_clients = false;
+    std::size_t max_fragment_reassembly_states = 64;
 };
 
 enum class SessionManagerError {
@@ -46,13 +47,14 @@ enum class SessionManagerEvent {
     ignored_out_of_order_fragment,
     ignored_mismatched_fragment,
     ignored_oversized_fragment,
+    ignored_reassembly_limit,
     ignored_non_ipv4_tun_packet,
     ignored_unassigned_tun_source,
     ignored_spoofed_tun_source,
 };
 BOOST_DESCRIBE_ENUM(
     SessionManagerEvent, ignored_non_tun_frame, ignored_wrong_direction, ignored_malformed_fragment, ignored_out_of_order_fragment, ignored_mismatched_fragment,
-    ignored_oversized_fragment, ignored_non_ipv4_tun_packet, ignored_unassigned_tun_source, ignored_spoofed_tun_source
+    ignored_oversized_fragment, ignored_reassembly_limit, ignored_non_ipv4_tun_packet, ignored_unassigned_tun_source, ignored_spoofed_tun_source
 )
 
 using SessionManagerResult = Result<std::size_t, SessionManagerError>;
@@ -96,8 +98,10 @@ private:
         std::uint16_t fragment_count{};
         std::uint32_t total_size{};
         ByteVector packet;
+        bool has_source_session = false;
         std::weak_ptr<TcpBridgeSession> source_session;
     };
+    using FragmentReassemblyIterator = std::vector<FragmentReassemblyState>::iterator;
 
     struct CarrierEntry {
         std::weak_ptr<TcpBridgeSession> session;
@@ -122,7 +126,12 @@ private:
     [[nodiscard]] auto should_accept_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> packet) const -> bool;
     void deliver_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, ByteVector packet);
     void handle_tun_fragment(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> payload);
-    void reset_fragment_reassembly() noexcept;
+    [[nodiscard]] static auto same_fragment_source(const FragmentReassemblyState& state, const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool;
+    [[nodiscard]] static auto fragment_source_expired(const FragmentReassemblyState& state) noexcept -> bool;
+    [[nodiscard]] auto find_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id) -> FragmentReassemblyIterator;
+    void reset_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id);
+    void remove_fragment_reassemblies_for_session(const std::shared_ptr<TcpBridgeSession>& session);
+    void prune_expired_fragment_reassemblies();
 
     [[nodiscard]] static auto map_enqueue_error(TcpBridgeEnqueueError error) -> SessionManagerError;
     void emit_event(SessionManagerEvent event) const;
@@ -132,7 +141,7 @@ private:
     std::vector<CarrierEntry> carrier_sessions_;
     std::size_t next_carrier_index_ = 0;
     std::uint32_t next_fragment_packet_id_ = 1;
-    std::optional<FragmentReassemblyState> fragment_reassembly_;
+    std::vector<FragmentReassemblyState> fragment_reassemblies_;
 };
 
 } // namespace fps::net

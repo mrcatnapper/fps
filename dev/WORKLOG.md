@@ -4,6 +4,108 @@
 
 ## 2026-05-29
 
+### Harden inbound TUN fragment reassembly
+
+Goal:
+
+- Fix the architecture-review finding that inbound TUN fragment reassembly used
+  one global slot and could drop valid interleaved fragmented packets in
+  multi-carrier or multi-client scenarios.
+- Record the next architecture cleanup items without implementing them in this
+  focused increment.
+
+Changes:
+
+- Replaced the single `SessionManager` fragment reassembly slot with bounded
+  reassembly states keyed by source carrier session and `packet_id`.
+- Added `SessionManagerConfig::max_fragment_reassembly_states` with default
+  `64` and a metadata-only `ignored_reassembly_limit` event for overflow.
+- Preserved existing per-packet ordered-fragment validation and server-side
+  source-IP lease enforcement after reassembly.
+- Added unit coverage for interleaved fragments across carriers, interleaved
+  packets on the same carrier, mismatch isolation, bounded-state overflow and
+  reassembled spoof-source drops.
+- Updated `docs/specification.md`, `dev/REVIEW.md` and `dev/ROADMAP.md` with
+  current behavior and remaining architecture-review follow-ups.
+
+Decisions:
+
+- Keep the TUN fragment wire format unchanged.
+- Support interleaving across packets and carriers, but still require ordered
+  fragments within each packet.
+- Keep the cap internal to `SessionManagerConfig`; no JSON config or CLI surface
+  is needed for this beta hardening.
+
+Self review:
+
+- No wire-format, config, CLI or Docker contract changes were introduced.
+- Reassembly state is bounded and source-scoped, so malformed or mismatched
+  fragments reset only the affected `(carrier, packet_id)` packet.
+- Carrier removal, duplicate-client replacement and explicit carrier clear now
+  clean associated incomplete reassembly state.
+- Residual risk: incomplete fragment states have no TTL/LRU while a carrier
+  stays alive. The state cap bounds memory and emits `ignored_reassembly_limit`;
+  add time-based eviction only if field evidence shows this cap is noisy.
+
+Verification:
+
+- `cmake --build build -j 2 --target fps_unit_tests`
+- `./build/fps_unit_tests --run_test=session_manager,enum_helpers --log_level=test_suite`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `git diff --check`
+- PR-readiness sweep:
+  - `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+    - clang local build/tests passed;
+    - ASan+UBSan local tests passed;
+    - Valgrind unit pass: 0 errors, no leaks;
+    - coverage: `72.12%` total lines, `80.39%` total functions;
+    - libFuzzer smoke passed for TLS records, covert codec, envelope,
+      Zero-RTT and TUN frames.
+  - `cmake --build build -j 2`
+  - `ctest --test-dir build --output-on-failure`
+  - `ctest --test-dir build -L local --output-on-failure`
+  - `cmake --build cmake-build-tun -j 2`
+  - `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+  - `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+  - `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+  - `tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+    - `4.9995 Mbit/s`, `0%` loss.
+  - `tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 10 --bandwidth 5M --length 1200`
+    - `5.0001 Mbit/s`, `0%` loss.
+  - `tools/docker_multi_client_sim.py --sudo --image fps:local --duration 10 --bandwidth 1M --length 1000`
+    - two distinct leases, bidirectional UDP at about `1 Mbit/s`, `0%`
+      loss, spoof drop observed, all services alive.
+  - `tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+    - old duplicate client blocked, new client OK.
+  - `tools/docker_socks_smoke.py --sudo --image fps:local --proxy-image fps-dante-proxy:local --build`
+    - SOCKS HTTP probe OK, all six services alive.
+- Remote 5-minute `fpshop` Docker/TUN resilience soak using temporary image tag
+  `fps:soak-frag-a66f909` loaded from the local checked tree:
+  - command:
+    `python3 tools/docker_resilience_soak.py --image fps:soak-frag-a66f909 --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90`;
+  - main mixed client-to-server UDP: `300.05s`, `14,649` packets, `0%`
+    loss, about `0.200 Mbit/s`, plus `541` HTTP probes;
+  - server-to-client UDP probes to both leases: `489` packets each, `0%`
+    loss;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier stop/start recovery passed with `489` recovered packets, `0%`
+    loss;
+  - final status: two active carriers, non-zero TUN counters, all six services
+    running;
+  - Docker-level pressure did not produce `write_queue_full`, which remains
+    acceptable for routine soak because it is topology/timing dependent.
+- Temporary remote directory and local/remote soak image tag were removed.
+
+Notes:
+
+- Commit: this commit, `Harden inbound TUN fragment reassembly`.
+
 ### Remove empty native packaging directories
 
 Goal:

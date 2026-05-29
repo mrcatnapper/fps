@@ -20,6 +20,7 @@ namespace {
 using fps::test::ConnectedPair;
 using fps::test::bytes;
 using fps::test::connect_pair;
+using fps::test::patterned_bytes;
 using fps::test::payload_of_size;
 using fps::test::read_queued_bytes;
 using fps::test::run_until;
@@ -615,6 +616,174 @@ BOOST_AUTO_TEST_CASE(malformed_tun_fragments_are_dropped_and_reset) {
     BOOST_CHECK(events[1] == fps::net::SessionManagerEvent::ignored_out_of_order_fragment);
     BOOST_CHECK(events[2] == fps::net::SessionManagerEvent::ignored_oversized_fragment);
     BOOST_CHECK(events[3] == fps::net::SessionManagerEvent::ignored_mismatched_fragment);
+}
+
+BOOST_AUTO_TEST_CASE(interleaved_fragments_from_different_carriers_reassemble_independently) {
+    CodecSessionFixture first_carrier;
+    CodecSessionFixture second_carrier;
+    const auto first_packet = ipv4_packet(ipv4(10, 77, 0, 2), ipv4(10, 77, 0, 1));
+    const auto second_packet = ipv4_packet(ipv4(10, 77, 0, 3), ipv4(10, 77, 0, 1));
+    std::vector<fps::ByteVector> packets;
+    std::vector<fps::net::SessionManagerEvent> events;
+    fps::net::SessionManager manager{
+        fps::net::SessionManagerConfig{.role = fps::RelayRole::server, .max_tun_packet_size = 64, .max_frame_payload_size = 20, .allow_fragmentation = true},
+        fps::net::SessionManagerHandlers{
+            .on_tun_packet = [&](fps::ByteVector packet) { packets.push_back(std::move(packet)); },
+            .on_event = [&](fps::net::SessionManagerEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier_session(first_carrier.session));
+    BOOST_CHECK(manager.add_carrier_session(second_carrier.session));
+
+    fps::DecodedFrame first_a;
+    first_a.frame_type = fps::FrameType::tun_packet_fragment;
+    first_a.payload =
+        fragment_payload(100, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 10});
+    fps::DecodedFrame second_a;
+    second_a.frame_type = fps::FrameType::tun_packet_fragment;
+    second_a.payload =
+        fragment_payload(200, 0, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin(), second_packet.begin() + 10});
+    fps::DecodedFrame first_b;
+    first_b.frame_type = fps::FrameType::tun_packet_fragment;
+    first_b.payload =
+        fragment_payload(100, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 10, first_packet.end()});
+    fps::DecodedFrame second_b;
+    second_b.frame_type = fps::FrameType::tun_packet_fragment;
+    second_b.payload =
+        fragment_payload(200, 1, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin() + 10, second_packet.end()});
+
+    manager.handle_covert_frame(first_carrier.session, fps::Direction::client_to_server, first_a);
+    manager.handle_covert_frame(second_carrier.session, fps::Direction::client_to_server, second_a);
+    manager.handle_covert_frame(first_carrier.session, fps::Direction::client_to_server, first_b);
+    manager.handle_covert_frame(second_carrier.session, fps::Direction::client_to_server, second_b);
+
+    BOOST_REQUIRE_EQUAL(packets.size(), 2U);
+    BOOST_CHECK(packets[0] == first_packet);
+    BOOST_CHECK(packets[1] == second_packet);
+    BOOST_TEST(events.empty());
+}
+
+BOOST_AUTO_TEST_CASE(interleaved_fragments_from_same_carrier_reassemble_by_packet_id) {
+    CodecSessionFixture carrier;
+    const auto first_packet = patterned_bytes(24, 0x11);
+    const auto second_packet = patterned_bytes(24, 0x22);
+    std::vector<fps::ByteVector> packets;
+    std::vector<fps::net::SessionManagerEvent> events;
+    fps::net::SessionManager manager{
+        fps::net::SessionManagerConfig{.role = fps::RelayRole::server, .max_tun_packet_size = 64, .max_frame_payload_size = 20, .allow_fragmentation = true},
+        fps::net::SessionManagerHandlers{
+            .on_tun_packet = [&](fps::ByteVector packet) { packets.push_back(std::move(packet)); },
+            .on_event = [&](fps::net::SessionManagerEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier_session(carrier.session));
+
+    fps::DecodedFrame first_a;
+    first_a.frame_type = fps::FrameType::tun_packet_fragment;
+    first_a.payload =
+        fragment_payload(300, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 12});
+    fps::DecodedFrame second_a;
+    second_a.frame_type = fps::FrameType::tun_packet_fragment;
+    second_a.payload =
+        fragment_payload(400, 0, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin(), second_packet.begin() + 12});
+    fps::DecodedFrame first_b;
+    first_b.frame_type = fps::FrameType::tun_packet_fragment;
+    first_b.payload =
+        fragment_payload(300, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 12, first_packet.end()});
+    fps::DecodedFrame second_b;
+    second_b.frame_type = fps::FrameType::tun_packet_fragment;
+    second_b.payload =
+        fragment_payload(400, 1, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin() + 12, second_packet.end()});
+
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, first_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, second_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, first_b);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, second_b);
+
+    BOOST_REQUIRE_EQUAL(packets.size(), 2U);
+    BOOST_CHECK(packets[0] == first_packet);
+    BOOST_CHECK(packets[1] == second_packet);
+    BOOST_TEST(events.empty());
+}
+
+BOOST_AUTO_TEST_CASE(mismatched_fragment_resets_only_matching_reassembly_state) {
+    CodecSessionFixture carrier;
+    const auto good_packet = patterned_bytes(24, 0x33);
+    std::vector<fps::ByteVector> packets;
+    std::vector<fps::net::SessionManagerEvent> events;
+    fps::net::SessionManager manager{
+        fps::net::SessionManagerConfig{.role = fps::RelayRole::server, .max_tun_packet_size = 64, .max_frame_payload_size = 20, .allow_fragmentation = true},
+        fps::net::SessionManagerHandlers{
+            .on_tun_packet = [&](fps::ByteVector packet) { packets.push_back(std::move(packet)); },
+            .on_event = [&](fps::net::SessionManagerEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier_session(carrier.session));
+
+    fps::DecodedFrame good_a;
+    good_a.frame_type = fps::FrameType::tun_packet_fragment;
+    good_a.payload =
+        fragment_payload(500, 0, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin(), good_packet.begin() + 12});
+    fps::DecodedFrame bad_a;
+    bad_a.frame_type = fps::FrameType::tun_packet_fragment;
+    bad_a.payload = fragment_payload(600, 0, 2, 4, bytes({0x01, 0x02}));
+    fps::DecodedFrame bad_b;
+    bad_b.frame_type = fps::FrameType::tun_packet_fragment;
+    bad_b.payload = fragment_payload(600, 1, 2, 5, bytes({0x03, 0x04}));
+    fps::DecodedFrame good_b;
+    good_b.frame_type = fps::FrameType::tun_packet_fragment;
+    good_b.payload = fragment_payload(500, 1, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin() + 12, good_packet.end()});
+
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, good_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, bad_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, bad_b);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, good_b);
+
+    BOOST_REQUIRE_EQUAL(packets.size(), 1U);
+    BOOST_CHECK(packets[0] == good_packet);
+    BOOST_REQUIRE_EQUAL(events.size(), 1U);
+    BOOST_CHECK(events[0] == fps::net::SessionManagerEvent::ignored_mismatched_fragment);
+}
+
+BOOST_AUTO_TEST_CASE(fragment_reassembly_limit_drops_new_state_without_disturbing_existing_packet) {
+    CodecSessionFixture carrier;
+    const auto packet = patterned_bytes(24, 0x44);
+    std::vector<fps::ByteVector> packets;
+    std::vector<fps::net::SessionManagerEvent> events;
+    fps::net::SessionManager manager{
+        fps::net::SessionManagerConfig{
+            .role = fps::RelayRole::server,
+            .max_tun_packet_size = 64,
+            .max_frame_payload_size = 20,
+            .allow_fragmentation = true,
+            .enforce_leased_clients = false,
+            .max_fragment_reassembly_states = 1,
+        },
+        fps::net::SessionManagerHandlers{
+            .on_tun_packet = [&](fps::ByteVector reassembled) { packets.push_back(std::move(reassembled)); },
+            .on_event = [&](fps::net::SessionManagerEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier_session(carrier.session));
+
+    fps::DecodedFrame first_a;
+    first_a.frame_type = fps::FrameType::tun_packet_fragment;
+    first_a.payload = fragment_payload(700, 0, 2, static_cast<std::uint32_t>(packet.size()), fps::ByteVector{packet.begin(), packet.begin() + 12});
+    fps::DecodedFrame overflow_a;
+    overflow_a.frame_type = fps::FrameType::tun_packet_fragment;
+    overflow_a.payload = fragment_payload(800, 0, 2, 4, bytes({0x01, 0x02}));
+    fps::DecodedFrame first_b;
+    first_b.frame_type = fps::FrameType::tun_packet_fragment;
+    first_b.payload = fragment_payload(700, 1, 2, static_cast<std::uint32_t>(packet.size()), fps::ByteVector{packet.begin() + 12, packet.end()});
+
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, first_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, overflow_a);
+    manager.handle_covert_frame(carrier.session, fps::Direction::client_to_server, first_b);
+
+    BOOST_REQUIRE_EQUAL(packets.size(), 1U);
+    BOOST_CHECK(packets[0] == packet);
+    BOOST_REQUIRE_EQUAL(events.size(), 1U);
+    BOOST_CHECK(events[0] == fps::net::SessionManagerEvent::ignored_reassembly_limit);
 }
 
 BOOST_AUTO_TEST_CASE(incoming_tun_packet_writes_exact_payload_to_sink) {

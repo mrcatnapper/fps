@@ -31,6 +31,9 @@ Date: 2026-05-29
    Docker multi-client smoke covers owner routing, spoof drop and liveness; the
    two-host soak additionally covered sustained mixed traffic, server-to-client
    lease routing, spoof drop and carrier restart/recovery for two clients.
+   Inbound TUN fragment reassembly is now keyed by source carrier and packet id
+   rather than one global slot, which removes a correctness risk for interleaved
+   fragmented packets.
 
 4. **Fuzzing now protects the right parser edges.** TLS record framing, covert
    frame decode, FPS envelope decode, Zero-RTT v5 client-auth/server-accept
@@ -131,7 +134,15 @@ Date: 2026-05-29
   pass confirms which checks and file layout operators actually need.
 - Treat router/LAN-gateway mode as a documented experimental pattern until it
   passes a real hardware or close VM validation run.
+- Split protocol core from Asio/Linux transport targets before Android work:
+  keep crypto, identity, TLS parsing, Zero-RTT, classified records, shaper and
+  lease/control serialization in a smaller reusable core; keep TCP bridge and
+  TUN pump in transport/runtime targets.
 - Continue splitting relay runtime helpers by responsibility, starting with
+  status service, TUN service, carrier registration/lease logic and
   CLI/profile/status/lease command helpers if `tcp_relay_app.cpp` grows again.
+- Keep `TcpBridgeSession` refactors focused on explicit state-machine helpers:
+  socket IO, Zero-RTT transition, classified-record processing, shaper queues
+  and half-close handling should not grow more tightly coupled.
 - Plan UUID/key rotation and revocation workflow beyond basic lease
   prune/revoke.
