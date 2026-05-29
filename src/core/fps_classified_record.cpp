@@ -91,13 +91,13 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
 [[nodiscard]] auto make_server_hint(const ZeroRttChannelBinding& binding, const X25519PublicKey& server_public_key, std::uint64_t sequence)
     -> CryptoResult<Hint> {
     X25519PublicKey no_client{};
-    return make_hint("fps/classified-record/server-hint/v4", binding, no_client, server_public_key, sequence);
+    return make_hint("fps/classified-record/server-hint/v5", binding, no_client, server_public_key, sequence);
 }
 
 [[nodiscard]] auto make_client_hint(
     const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key, std::uint64_t sequence
 ) -> CryptoResult<Hint> {
-    return make_hint("fps/classified-record/client-hint/v4", binding, client_public_key, server_public_key, sequence);
+    return make_hint("fps/classified-record/client-hint/v5", binding, client_public_key, server_public_key, sequence);
 }
 
 [[nodiscard]] auto make_hints(const Hint& server_hint, const Hint& client_hint) -> ByteVector {
@@ -112,7 +112,7 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
     const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key, std::uint64_t sequence,
     std::span<const std::byte> hints, std::size_t visible_payload_size
 ) -> ByteVector {
-    ByteVector out = context_info("fps/classified-record/aead/v4", binding, client_public_key, server_public_key, sequence, hints);
+    ByteVector out = context_info("fps/classified-record/aead/v5", binding, client_public_key, server_public_key, sequence, hints);
     append_be(out, static_cast<std::uint32_t>(std::min<std::size_t>(visible_payload_size, std::numeric_limits<std::uint32_t>::max())));
     return out;
 }
@@ -349,7 +349,7 @@ auto FpsClassifiedRecordCodec::next_send_sequence() const noexcept -> std::uint6
 auto FpsClassifiedRecordCodec::next_receive_sequence() const noexcept -> std::uint64_t { return next_receive_sequence_; }
 
 auto FpsClassifiedRecordCodec::validate_config() const noexcept -> bool {
-    return config_.version == 4U && !config_.profile_id.empty() && config_.max_frames <= std::numeric_limits<std::uint16_t>::max();
+    return config_.version == 5U && !config_.profile_id.empty() && config_.max_frames <= std::numeric_limits<std::uint16_t>::max();
 }
 
 auto FpsClassifiedRecordCodec::material_for(Direction direction) const -> const AeadMaterial& {

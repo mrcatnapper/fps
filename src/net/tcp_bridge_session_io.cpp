@@ -258,22 +258,27 @@ auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRec
         auto result = zero_rtt_controller_->process_inbound_record(direction, record);
         auto forward_bytes = std::move(result.forward_bytes);
         const auto cover_bytes = forward_bytes.size();
-        const auto authenticated = result.session_keys.has_value();
-        if(authenticated && !zero_rtt_authenticated_) {
+        if(result.client_auth_accepted && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
                 stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_client_public_key"));
                 return {};
             }
-            activate_zero_rtt_classified_pipelines(*result.session_keys, *result.client_public_key);
-            zero_rtt_authenticated_ = true;
-            if(!send_zero_rtt_key_confirmation(direction)) {
+            std::optional<ByteVector> accept_payload = ByteVector{};
+            if(handlers_.on_zero_rtt_server_accept_payload) {
+                accept_payload = handlers_.on_zero_rtt_server_accept_payload(*result.client_public_key, result.client_auth_payload);
+            }
+            if(!accept_payload.has_value()) {
+                stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "server_accept_payload_failed"));
+                return {};
+            }
+            if(!send_zero_rtt_server_accept(direction, *result.client_public_key, *accept_payload)) {
                 stop_with(pending_or_default_close(
-                    close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "confirmation_failed")
+                    close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "server_accept_failed")
                 ));
                 return {};
             }
             if(handlers_.on_zero_rtt_authenticated) {
-                handlers_.on_zero_rtt_authenticated(*result.session_keys, result.client_public_key);
+                handlers_.on_zero_rtt_authenticated(*zero_rtt_controller_->session_keys(), result.client_public_key);
             }
         }
         emit_zero_rtt_process_result(direction, result);
@@ -293,44 +298,44 @@ auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRec
 }
 
 auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
-    if(!classified_pipelines_ || !zero_rtt_controller_) {
-        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+    if(!zero_rtt_controller_) {
+        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_zero_rtt_controller"));
         return {};
     }
 
-    auto result = inbound_classified_pipeline(direction).process_inbound_record(
-        direction, record, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-        [this](Direction record_direction, const TlsRecord& observed_record) {
-            auto observed = zero_rtt_controller_->observe_tls_record(record_direction, observed_record);
-            emit_zero_rtt_observe_result(record_direction, observed);
-        }
-    );
-    auto forward_tls = std::move(result.forward_tls_bytes);
+    auto result = zero_rtt_controller_->process_inbound_record(direction, record);
+    auto forward_tls = std::move(result.forward_bytes);
     const auto cover_bytes = forward_tls.size();
-    const auto confirmed = direction == zero_rtt_peer_direction() && result.decoded_fps_records > 0U;
-    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
-        emit_classified_process_result(direction, result);
-        stop_with(close_info_from_classified_result(direction, result));
+
+    if(!result.record_errors.empty()) {
+        emit_zero_rtt_process_result(direction, result);
+        stop_with(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "server_accept_record_error"));
         return {};
     }
-    if(result.decoded_fps_records > 0U && !confirmed) {
-        emit_classified_process_result(direction, result);
-        stop_with(close_info(
-            TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record, "unexpected_confirmation_direction"
-        ));
-        return {};
-    }
-    if(confirmed) {
+    if(result.server_accept_accepted) {
+        if(!result.session_keys.has_value()) {
+            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_server_accept_keys"));
+            return {};
+        }
+        activate_zero_rtt_classified_pipelines(*result.session_keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
         zero_rtt_authenticated_ = true;
-        if(const auto& keys = zero_rtt_controller_->session_keys()) {
-            if(handlers_.on_zero_rtt_authenticated) {
-                handlers_.on_zero_rtt_authenticated(*keys, std::nullopt);
-            }
+        if(handlers_.on_zero_rtt_authenticated) {
+            handlers_.on_zero_rtt_authenticated(*result.session_keys, std::nullopt);
+        }
+        if(!result.server_accept_payload.empty() && handlers_.on_covert_frame) {
+            handlers_.on_covert_frame(
+                direction,
+                DecodedFrame{
+                    .frame_type = FrameType::control,
+                    .flags = 0,
+                    .payload = result.server_accept_payload,
+                }
+            );
         }
         pump(config_.zero_rtt->controller_config.upgrade_direction);
     }
 
-    emit_classified_process_result(direction, result);
+    emit_zero_rtt_process_result(direction, result);
     return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
 }
 
@@ -420,45 +425,46 @@ void TcpBridgeSession::activate_zero_rtt_classified_pipelines(const SessionKeys&
     });
 }
 
-auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_direction) -> bool {
-    if(!classified_pipelines_ || !zero_rtt_controller_) {
+auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload)
+    -> bool {
+    if(!zero_rtt_controller_) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::internal_error, upgrade_direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline")
+            close_info(TcpBridgeCloseReason::internal_error, upgrade_direction, TcpBridgeCloseComponent::zero_rtt, "missing_zero_rtt_controller")
         );
         return false;
     }
-    const auto confirmation_direction = opposite_direction(upgrade_direction);
-    const auto binding = zero_rtt_controller_->current_transcript_snapshot(confirmation_direction);
-    if(!binding.has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, confirmation_direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript")
-        );
+    const auto accept_direction = opposite_direction(upgrade_direction);
+    auto built = zero_rtt_controller_->build_server_accept_record(payload);
+    if(!built) {
+        if(handlers_.on_zero_rtt_build_error) {
+            handlers_.on_zero_rtt_build_error(built.error());
+        }
         return false;
     }
-    auto encoded = outbound_classified_pipeline(confirmation_direction)
-                       .encode_tls_record(FpsEnvelopeContent{.inner_tls_bytes = {}, .frames = {}, .padding_size = 0}, *binding);
-    if(!encoded) {
-        emit_classified_encode_error(confirmation_direction, encoded.error());
-        return false;
-    }
-    const auto encoded_size = encoded.value().size();
-    if(!can_enqueue_write(confirmation_direction, encoded_size)) {
+    const auto encoded_size = built.value().size();
+    if(!can_enqueue_write(accept_direction, encoded_size)) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::write_queue_full, confirmation_direction, TcpBridgeCloseComponent::queue, "confirmation_queue_full")
+            close_info(TcpBridgeCloseReason::write_queue_full, accept_direction, TcpBridgeCloseComponent::queue, "server_accept_queue_full")
         );
         return false;
     }
-    const auto record = std::move(encoded).value();
+    auto record = std::move(built).value();
     auto parsed = parse_single_tls_record(record);
     if(!parsed.has_value()) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::tls_record_error, confirmation_direction, TcpBridgeCloseComponent::tls_record, "malformed_confirmation_record")
+            close_info(TcpBridgeCloseReason::tls_record_error, accept_direction, TcpBridgeCloseComponent::tls_record, "malformed_server_accept_record")
         );
         return false;
     }
-    enqueue_write(confirmation_direction, WriteItem{.bytes = record});
-    auto observed = zero_rtt_controller_->observe_tls_record(confirmation_direction, *parsed);
-    emit_zero_rtt_observe_result(confirmation_direction, observed);
-    emit_classified_records_encoded(confirmation_direction, 1U);
+    if(!zero_rtt_controller_->session_keys().has_value()) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, accept_direction, TcpBridgeCloseComponent::zero_rtt, "missing_final_keys"));
+        return false;
+    }
+    activate_zero_rtt_classified_pipelines(*zero_rtt_controller_->session_keys(), client_public_key);
+    zero_rtt_authenticated_ = true;
+    enqueue_write(accept_direction, WriteItem{.bytes = record});
+    auto observed = zero_rtt_controller_->observe_tls_record(accept_direction, *parsed);
+    emit_zero_rtt_observe_result(accept_direction, observed);
     return true;
 }
 

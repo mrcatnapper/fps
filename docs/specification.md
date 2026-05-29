@@ -1,6 +1,6 @@
 # FPS Protocol And Architecture Specification
 
-Version: 0.9, classified FPS records beta increment
+Version: 0.10, 1-RTT Zero-RTT finalization beta increment
 
 Implementation language: C++20, Boost.Asio, Boost.Test, Boost.JSON, Boost.Log
 and OpenSSL.
@@ -38,7 +38,7 @@ fps_client == TLS-application-record-shaped FPS link == fps_server
                                                    real HTTPS origin
 ```
 
-Key v4 properties:
+Key v5 properties:
 
 - `security.zero_rtt` is the only supported carrier authentication mechanism.
 - After a successful Zero-RTT upgrade, ordinary carrier TLS records remain
@@ -89,7 +89,7 @@ Rules:
 
 Wire-shape checks:
 
-- local tests cover passthrough and v4 classified-record paths;
+- local tests cover passthrough and v5 classified-record paths;
 - manual capture uses `tools/capture_tls_wire.sh --port PORT -- COMMAND`;
 - when `tshark` is installed, the generated TLS summary should show parseable
   TLS records rather than Wireshark falling back to an opaque TCP stream.
@@ -108,23 +108,25 @@ Current construction:
 - `client_uuid` is a per-device/per-profile bearer secret. Shared or group UUIDs
   are unsupported because one UUID maps to one client public key and one
   persistent TUN lease identity.
-- The client builds one encrypted upgrade record after observing enough real
-  carrier TLS records to form a transcript binding.
-- Upgrade associated data binds the attempt to direction, TLS record index,
-  transcript byte count, transcript hash and profile id.
+- The client builds one encrypted auth record only after observing TLS
+  Application Data in both carrier directions and enough real carrier TLS
+  records to form a bidirectional transcript binding.
+- Upgrade associated data binds the attempt to the bidirectional TLS record
+  indices, transcript byte counts, transcript hashes and profile id.
 - The transcript is an incremental cryptographic hash of visible carrier TLS
   record bytes before the candidate record, seeded with public
   domain-separated material: server public key, profile id, direction and
   protocol version.
 - The auth record starts with two short opaque hints, not with a public-key
   shaped field. The rest of the capsule is encrypted.
-- Timestamp and replay-cache fields are not part of the active v4 wire format.
-  Replay resistance relies on reproducing the exact carrier transcript prefix
-  before the candidate; reintroducing durable replay state remains a possible
-  protocol-review outcome.
-- The server's first encrypted classified record confirms that both peers
-  derived the same session keys. It can also carry control metadata in later
-  records.
+- Timestamp and replay-cache fields are not part of the active v5 wire format.
+  Replay resistance relies on reproducing the exact bidirectional carrier
+  transcript prefix and completing the server accept leg. Reintroducing durable
+  replay state remains a possible protocol-review outcome.
+- The server sends a distinct encrypted accept record after authenticating the
+  client. Final classified-record keys are derived only after this accept leg.
+  The accept payload can carry encrypted control metadata such as the
+  server-assigned TUN lease.
 
 Security constraints:
 
@@ -140,7 +142,8 @@ Security constraints:
 
 ### 4.1 Transcript-Bound Precheck
 
-Implemented v4 precheck layout inside the TLS Application Data payload:
+Implemented v5 client-auth precheck layout inside the TLS Application Data
+payload:
 
 ```text
 server_hint[8] | client_hint[8] | encrypted_capsule | capsule_tag[16]
@@ -149,41 +152,53 @@ server_hint[8] | client_hint[8] | encrypted_capsule | capsule_tag[16]
 Hints are derived from the pre-candidate transcript snapshot:
 
 ```text
-server_hint = H("fps/zero-rtt/server-hint/v4" ||
-                transcript_snapshot || server_public_key || profile_id)[0..8]
+server_hint = H("fps/zero-rtt/client-auth/server-hint/v5" ||
+                bidirectional_transcript_snapshot ||
+                server_public_key || profile_id)[0..8]
 
-client_hint = H("fps/zero-rtt/client-hint/v4" ||
-                transcript_snapshot || client_public_key ||
+client_hint = H("fps/zero-rtt/client-auth/client-hint/v5" ||
+                bidirectional_transcript_snapshot || client_public_key ||
                 server_public_key || profile_id)[0..8]
 ```
 
 Server-side verification first rejects candidates with a wrong `server_hint`,
 then scans the configured UUID-derived client public keys for `client_hint`, and
 only then attempts capsule decryption for the likely client. The encrypted
-capsule contains protocol version, capabilities, the client ephemeral public key
-and padding. Session keys are derived from static DH, ephemeral DH, the
-transcript snapshot and the encrypted wire bytes.
+client-auth capsule contains protocol version, capabilities, the client
+ephemeral public key and opaque client payload.
+
+The server accept record uses the same visible shape with server-accept labels:
+
+```text
+server_hint[8] | client_hint[8] | encrypted_accept_capsule | accept_tag[16]
+```
+
+The encrypted accept capsule contains protocol version, capabilities, the
+server ephemeral public key and opaque server payload. Session keys are derived
+from static-static DH, client-ephemeral/server-static DH,
+server-ephemeral/client-static DH, ephemeral-ephemeral DH, the bidirectional
+transcript snapshot and both encrypted auth/accept wire records.
 
 This is not a complete active CPU DoS defense because an attacker that knows the
 public construction can create plausible `server_hint` values. Its main value is
 removing visible public-key-shaped handshake material and avoiding full decrypt
 work for ordinary random carrier records.
 
-### 4.2 Server Confirmation Race Handling
+### 4.2 Server Accept Race Handling
 
-The server confirmation classified record is not guaranteed to be the very next TLS
-record observed by the client after it sends the Zero-RTT upgrade. Browser and
+The server accept record is not guaranteed to be the very next TLS record
+observed by the client after it sends the Zero-RTT auth record. Browser and
 origin TCP streams are independent, and ordinary origin-to-browser TLS records
-can race ahead of the FPS server's confirmation record.
+can race ahead of the FPS server's accept record.
 
-Required client behavior: after sending an upgrade candidate and deriving
-tentative session keys, the client must trial-decrypt plausible peer-direction
-TLS Application Data records as possible server confirmations. If a record does
-not classify as a valid confirmation record, the client must forward it
+Required client behavior: after sending an auth candidate, the client must
+trial-decrypt plausible peer-direction TLS Application Data records as possible
+server accepts. If a record does not classify as a valid accept record, the
+client must forward it
 byte-for-byte to the browser as cover traffic and keep waiting until the
-confirmation arrives or a bounded policy expires. Only after a valid confirmation
-does the client treat the carrier as authenticated. Treating the first
-peer-direction record as mandatory confirmation is a correctness bug and can
+accept arrives or a bounded policy expires. Only after a valid accept does the
+client treat the carrier as authenticated. Treating the first peer-direction
+record as mandatory accept is a correctness bug and can
 break otherwise valid cover sessions.
 
 ### 4.3 Future No-Bootstrap Classifier
@@ -324,7 +339,7 @@ Deferred work:
 
 Config format: JSON parsed through Boost.JSON.
 
-Minimal server-side v4 shape:
+Minimal server-side v5 shape:
 
 ```json
 {
@@ -336,11 +351,11 @@ Minimal server-side v4 shape:
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "example-origin-v4",
+      "profile_id": "example-origin-v5",
       "server_private_key_base64": "PASTE_server_private_key_base64_HERE",
       "server_public_key_base64": "PASTE_server_public_key_base64_HERE",
       "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"],
-      "version": 4,
+      "version": 5,
       "min_records_before_trial": 1,
       "upgrade_direction": "client_to_server"
     }
@@ -377,8 +392,8 @@ Client config uses `network.server`, `client_uuid`,
 config uses only inline padded RFC4648 base64 fields
 `server_private_key_base64`/`server_public_key_base64` and
 `allowed_client_uuids`.
-`security.zero_rtt.version` is optional and defaults to `4`. When present it
-must be `4`; pre-production wire formats are intentionally not accepted as
+`security.zero_rtt.version` is optional and defaults to `5`. When present it
+must be `5`; pre-production wire formats are intentionally not accepted as
 compatibility modes.
 
 Validation rules:
@@ -415,7 +430,7 @@ Operational status:
   `auth`, classified-record counters under `classified_record`, TUN packet/drop
   counters and shaper/backpressure counters;
 - `auth` contains candidate, authenticated, precheck failure, unknown-client,
-  decrypt failure and confirmation failure counters;
+  decrypt failure and server-accept failure counters;
 - `classified_record` contains decode/encode failure, tamper/invalid and
   records-decoded/records-encoded counters;
 - close metadata contains only `session_id`, authentication state, close reason

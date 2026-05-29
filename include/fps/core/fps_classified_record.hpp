@@ -56,7 +56,7 @@ struct FpsClassifiedRecordConfig {
     X25519PublicKey client_public_key{};
     X25519PublicKey server_public_key{};
     std::string profile_id;
-    std::uint16_t version = 4;
+    std::uint16_t version = 5;
     std::size_t max_frame_payload_size = 16U * 1024U;
     std::size_t max_frame_padding_size = 2048U;
     std::size_t max_record_padding_size = 2048U;

@@ -57,13 +57,14 @@ Current construction:
 - Server-side precheck rejects wrong server hints, scans the UUID allowlist for
   a matching client hint and then attempts one capsule decrypt for the likely
   client.
-- The server confirmation classified record is race-safe: the client classifies
-  plausible peer records and forwards non-confirmation records as cover traffic
-  until confirmation succeeds or policy expires.
-- Timestamp and replay-cache fields are removed from active v4. Replay
-  resistance relies on reproducing the exact carrier transcript prefix before
-  the candidate; durable replay state is left for reviewer feedback if this
-  model is insufficient.
+- The server accept record is race-safe: the client classifies plausible peer
+  records and forwards non-accept records as cover traffic until accept
+  succeeds or policy expires.
+- Timestamp and replay-cache fields are removed from active v5. Replay
+  resistance relies on reproducing the exact bidirectional carrier transcript
+  prefix and completing the server accept leg before final classified keys
+  exist; durable replay state is left for reviewer feedback if this model is
+  insufficient.
 
 Reviewer questions:
 

@@ -34,17 +34,31 @@ auto key_pair(std::uint8_t seed) -> fps::X25519KeyPair {
     return pair;
 }
 
-auto binding(std::uint8_t seed = 1) -> fps::ZeroRttChannelBinding {
+auto channel_binding(fps::Direction direction, std::uint8_t seed) -> fps::ZeroRttChannelBinding {
     fps::ZeroRttChannelBinding out{
-        .direction = fps::Direction::client_to_server,
-        .record_index = 7,
+        .direction = direction,
+        .record_index = static_cast<std::uint64_t>(7U + seed),
         .transcript_byte_count = 4096U + static_cast<std::uint64_t>(seed),
-        .profile_id = "unit-origin-v1",
+        .profile_id = "unit-origin-v5",
     };
     for(std::size_t i = 0; i < out.transcript_hash.size(); ++i) {
         out.transcript_hash[i] = static_cast<std::byte>(seed + static_cast<std::uint8_t>(i));
     }
     return out;
+}
+
+auto binding(std::uint8_t seed = 1) -> fps::ZeroRttHandshakeBinding {
+    const auto c2s = channel_binding(fps::Direction::client_to_server, seed);
+    const auto s2c = channel_binding(fps::Direction::server_to_client, static_cast<std::uint8_t>(seed + 31U));
+    return fps::ZeroRttHandshakeBinding{
+        .client_to_server_record_index = c2s.record_index,
+        .client_to_server_byte_count = c2s.transcript_byte_count,
+        .client_to_server_hash = c2s.transcript_hash,
+        .server_to_client_record_index = s2c.record_index,
+        .server_to_client_byte_count = s2c.transcript_byte_count,
+        .server_to_client_hash = s2c.transcript_hash,
+        .profile_id = "unit-origin-v5",
+    };
 }
 
 auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& server) -> fps::ZeroRttUpgradeConfig {
@@ -54,8 +68,8 @@ auto client_config(const fps::X25519KeyPair& client, const fps::X25519KeyPair& s
         .local_static_public = client.public_key,
         .peer_static_public = server.public_key,
         .allowed_client_public_keys = {},
-        .profile_id = "unit-origin-v1",
-        .version = 4,
+        .profile_id = "unit-origin-v5",
+        .version = 5,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };
@@ -68,8 +82,8 @@ auto server_config(const fps::X25519KeyPair& server, std::vector<fps::X25519Publ
         .local_static_public = server.public_key,
         .peer_static_public = std::nullopt,
         .allowed_client_public_keys = std::move(allowed_clients),
-        .profile_id = "unit-origin-v1",
-        .version = 4,
+        .profile_id = "unit-origin-v5",
+        .version = 5,
         .capabilities = 0x0005,
         .max_padding_size = 64,
     };
@@ -94,27 +108,34 @@ BOOST_AUTO_TEST_CASE(x25519_helpers_derive_matching_shared_secret) {
     BOOST_CHECK(alice_secret.value() == bob_secret.value());
 }
 
-BOOST_AUTO_TEST_CASE(valid_upgrade_derives_identical_session_keys) {
+BOOST_AUTO_TEST_CASE(valid_1rtt_upgrade_derives_identical_session_keys) {
     const auto client = key_pair(11);
     const auto server = key_pair(81);
-    const auto ephemeral = key_pair(123);
+    const auto client_ephemeral = key_pair(123);
+    const auto server_ephemeral = key_pair(124);
     const auto channel = binding();
-    const auto padding = bytes({0xaa, 0xbb, 0xcc});
+    const auto client_payload = bytes({0xaa, 0xbb, 0xcc});
+    const auto server_payload = bytes({0x11, 0x22});
 
     fps::ZeroRttUpgradeEngine client_engine{client_config(client, server)};
     fps::ZeroRttUpgradeEngine server_engine{server_config(server, {client.public_key})};
 
-    auto built = client_engine.build_client_upgrade(channel, padding, ephemeral);
+    auto built = client_engine.build_client_upgrade(channel, client_payload, client_ephemeral);
     BOOST_REQUIRE(built);
     auto verified = server_engine.verify_client_upgrade(built.value().wire, channel);
     BOOST_REQUIRE(verified);
+    auto accepted = server_engine.build_server_accept(channel, verified.value(), server_payload, server_ephemeral);
+    BOOST_REQUIRE(accepted);
+    auto client_accept = client_engine.verify_server_accept(accepted.value().wire, channel, built.value());
+    BOOST_REQUIRE(client_accept);
 
     BOOST_CHECK(verified.value().client_public_key == client.public_key);
-    BOOST_CHECK(verified.value().padding == padding);
-    BOOST_CHECK(verified.value().session_keys.client_to_server.key == built.value().session_keys.client_to_server.key);
-    BOOST_CHECK(verified.value().session_keys.client_to_server.nonce_salt == built.value().session_keys.client_to_server.nonce_salt);
-    BOOST_CHECK(verified.value().session_keys.server_to_client.key == built.value().session_keys.server_to_client.key);
-    BOOST_CHECK(verified.value().session_keys.server_to_client.nonce_salt == built.value().session_keys.server_to_client.nonce_salt);
+    BOOST_CHECK(verified.value().payload == client_payload);
+    BOOST_CHECK(client_accept.value().payload == server_payload);
+    BOOST_CHECK(client_accept.value().session_keys.client_to_server.key == accepted.value().session_keys.client_to_server.key);
+    BOOST_CHECK(client_accept.value().session_keys.client_to_server.nonce_salt == accepted.value().session_keys.client_to_server.nonce_salt);
+    BOOST_CHECK(client_accept.value().session_keys.server_to_client.key == accepted.value().session_keys.server_to_client.key);
+    BOOST_CHECK(client_accept.value().session_keys.server_to_client.nonce_salt == accepted.value().session_keys.server_to_client.nonce_salt);
 }
 
 BOOST_AUTO_TEST_CASE(wrong_channel_binding_rejects_candidate) {
@@ -235,6 +256,28 @@ BOOST_AUTO_TEST_CASE(tampered_upgrade_tag_rejects_candidate) {
 
     BOOST_REQUIRE(!verified);
     BOOST_CHECK(verified.error() == fps::ZeroRttUpgradeError::decrypt_failed);
+}
+
+BOOST_AUTO_TEST_CASE(tampered_server_accept_rejects_finalization) {
+    const auto client = key_pair(20);
+    const auto server = key_pair(90);
+    const auto channel = binding();
+    fps::ZeroRttUpgradeEngine client_engine{client_config(client, server)};
+    fps::ZeroRttUpgradeEngine server_engine{server_config(server, {client.public_key})};
+
+    auto built = client_engine.build_client_upgrade(channel, bytes({0x01}), key_pair(131));
+    BOOST_REQUIRE(built);
+    auto verified = server_engine.verify_client_upgrade(built.value().wire, channel);
+    BOOST_REQUIRE(verified);
+    auto accepted = server_engine.build_server_accept(channel, verified.value(), bytes({0x02}), key_pair(132));
+    BOOST_REQUIRE(accepted);
+    auto tampered = accepted.value().wire;
+    tampered.back() ^= std::byte{0x01};
+
+    auto client_accept = client_engine.verify_server_accept(tampered, channel, built.value());
+
+    BOOST_REQUIRE(!client_accept);
+    BOOST_CHECK(client_accept.error() == fps::ZeroRttUpgradeError::decrypt_failed);
 }
 
 BOOST_AUTO_TEST_CASE(duplicate_allowed_public_key_is_invalid_config) {

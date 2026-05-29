@@ -41,8 +41,8 @@ def main():
         client_port = free_port()
         origin = start_carrier_origin(args.carrier, cert, key, origin_port, "/fps-carrier")
 
-        server_config = tmpdir / "server-v4.json"
-        client_config = tmpdir / "client-v4.json"
+        server_config = tmpdir / "server-v5.json"
+        client_config = tmpdir / "client-v5.json"
         write_zero_rtt_relay_config(
             server_config, server_port, "origin", origin_port, "server"
         )

@@ -105,8 +105,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   profile/lease tooling.
 - Keep UUIDs as per-device/per-profile bearer secrets; do not add group/shared
   UUID semantics for L3 VPN mode.
-- [x] Remove active timestamp/replay-cache fields from Zero-RTT v4 and document
-  transcript-bound replay assumptions.
+- [x] Remove active timestamp/replay-cache fields from Zero-RTT v5 and document
+  bidirectional transcript plus server-accept replay assumptions.
 - [x] Add first adversarial local tests for no-upgrade passthrough,
   unknown-client, transcript-prefix mismatch and post-auth carrier tamper.
 - Expand negative integration tests into longer tamper/drop/transcript-mismatch

@@ -7,7 +7,7 @@
   "security": {
     "zero_rtt": {
       "enabled": true,
-      "profile_id": "debug-carrier-v4",
+      "profile_id": "debug-carrier-v5",
       "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
       "server_public_key_base64": "PASTE_server_public_key_base64_HERE"
     }

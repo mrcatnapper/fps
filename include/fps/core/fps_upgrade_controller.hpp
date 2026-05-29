@@ -16,10 +16,12 @@ namespace fps {
 
 enum class FpsUpgradeState {
     cover_passthrough,
+    client_auth_sent_wait_accept,
+    server_accept_ready,
     authenticated,
     closed,
 };
-BOOST_DESCRIBE_ENUM(FpsUpgradeState, cover_passthrough, authenticated, closed)
+BOOST_DESCRIBE_ENUM(FpsUpgradeState, cover_passthrough, client_auth_sent_wait_accept, server_accept_ready, authenticated, closed)
 
 enum class FpsUpgradeBuildError {
     invalid_role,
@@ -53,6 +55,10 @@ struct FpsUpgradeProcessResult {
     std::vector<ZeroRttUpgradeError> upgrade_errors;
     std::optional<SessionKeys> session_keys;
     std::optional<X25519PublicKey> client_public_key;
+    bool client_auth_accepted = false;
+    bool server_accept_accepted = false;
+    ByteVector client_auth_payload;
+    ByteVector server_accept_payload;
     FpsUpgradeState state{FpsUpgradeState::cover_passthrough};
     std::size_t pending_tls_bytes{};
 };
@@ -66,6 +72,10 @@ public:
     [[nodiscard]] auto build_client_upgrade_record(std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
         -> FpsUpgradeBuildResult;
 
+    [[nodiscard]] auto
+    build_server_accept_record(std::span<const std::byte> payload = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
+        -> FpsUpgradeBuildResult;
+
     [[nodiscard]] auto process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult;
 
     [[nodiscard]] auto state() const noexcept -> FpsUpgradeState;
@@ -74,12 +84,14 @@ public:
     [[nodiscard]] auto has_channel_binding() const noexcept -> bool;
     [[nodiscard]] auto current_transcript_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
     [[nodiscard]] auto current_transcript_snapshot(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
+    [[nodiscard]] auto current_handshake_binding() const -> std::optional<ZeroRttHandshakeBinding>;
 
 private:
     struct TranscriptState {
         HmacSha256 hash{};
         std::uint64_t byte_count{};
         std::uint64_t record_index{};
+        bool saw_application_data = false;
         bool valid = false;
     };
 
@@ -92,6 +104,8 @@ private:
     FpsUpgradeState state_{FpsUpgradeState::cover_passthrough};
     std::optional<SessionKeys> session_keys_;
     std::optional<X25519PublicKey> client_public_key_;
+    std::optional<ZeroRttBuiltUpgrade> pending_client_auth_;
+    std::optional<ZeroRttVerifiedUpgrade> pending_verified_client_auth_;
     std::array<TranscriptState, 2> transcripts_{};
 };
 

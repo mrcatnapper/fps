@@ -31,13 +31,15 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
-[[nodiscard]] auto serialize_binding(const ZeroRttChannelBinding& binding) -> ByteVector {
+[[nodiscard]] auto serialize_handshake_binding(const ZeroRttHandshakeBinding& binding) -> ByteVector {
     ByteVector out;
-    out.reserve(1U + sizeof(std::uint64_t) + sizeof(std::uint64_t) + binding.transcript_hash.size() + sizeof(std::uint16_t) + binding.profile_id.size());
-    out.push_back(static_cast<std::byte>(binding.direction == Direction::client_to_server ? 0U : 1U));
-    append_be(out, binding.record_index);
-    append_be(out, binding.transcript_byte_count);
-    append_array(out, binding.transcript_hash);
+    out.reserve((2U * (sizeof(std::uint64_t) + sizeof(std::uint64_t) + HmacSha256{}.size())) + sizeof(std::uint16_t) + binding.profile_id.size());
+    append_be(out, binding.client_to_server_record_index);
+    append_be(out, binding.client_to_server_byte_count);
+    append_array(out, binding.client_to_server_hash);
+    append_be(out, binding.server_to_client_record_index);
+    append_be(out, binding.server_to_client_byte_count);
+    append_array(out, binding.server_to_client_hash);
     const auto profile_size = std::min<std::size_t>(binding.profile_id.size(), std::numeric_limits<std::uint16_t>::max());
     append_be(out, static_cast<std::uint16_t>(profile_size));
     for(std::size_t i = 0; i < profile_size; ++i) {
@@ -47,31 +49,24 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
 }
 
 [[nodiscard]] auto binding_info(
-    std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
+    std::string_view label, const ZeroRttHandshakeBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
     std::span<const std::byte> extra = {}
 ) -> ByteVector {
     ByteVector out;
-    out.reserve(label.size() + (2U * kX25519KeySize) + extra.size() + 128U);
+    out.reserve(label.size() + (2U * kX25519KeySize) + extra.size() + 192U);
     append_label(out, label);
     append_array(out, client_public_key);
     append_array(out, server_public_key);
-    const auto binding_bytes = serialize_binding(binding);
+    const auto binding_bytes = serialize_handshake_binding(binding);
     append_bytes(out, binding_bytes);
     append_bytes(out, extra);
     return out;
 }
 
-[[nodiscard]] auto
-hint_input(std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key)
-    -> ByteVector {
-    return binding_info(label, binding, client_public_key, server_public_key);
-}
-
-[[nodiscard]] auto
-make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key)
-    -> CryptoResult<Hint> {
-    auto input = hint_input(label, binding, client_public_key, server_public_key);
-    auto digest = sha256(input);
+[[nodiscard]] auto make_hint(
+    std::string_view label, const ZeroRttHandshakeBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key
+) -> CryptoResult<Hint> {
+    auto digest = sha256(binding_info(label, binding, client_public_key, server_public_key));
     if(!digest) {
         return CryptoResult<Hint>::failure(digest.error());
     }
@@ -81,14 +76,17 @@ make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X2
     return CryptoResult<Hint>::success(out);
 }
 
-[[nodiscard]] auto make_server_hint(const ZeroRttChannelBinding& binding, const X25519PublicKey& server_public_key) -> CryptoResult<Hint> {
+[[nodiscard]] auto make_server_hint(
+    std::string_view label, const ZeroRttHandshakeBinding& binding, const X25519PublicKey& server_public_key
+) -> CryptoResult<Hint> {
     X25519PublicKey no_client{};
-    return make_hint("fps/zero-rtt/server-hint/v4", binding, no_client, server_public_key);
+    return make_hint(label, binding, no_client, server_public_key);
 }
 
-[[nodiscard]] auto make_client_hint(const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key)
-    -> CryptoResult<Hint> {
-    return make_hint("fps/zero-rtt/client-hint/v4", binding, client_public_key, server_public_key);
+[[nodiscard]] auto make_client_hint(
+    std::string_view label, const ZeroRttHandshakeBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key
+) -> CryptoResult<Hint> {
+    return make_hint(label, binding, client_public_key, server_public_key);
 }
 
 [[nodiscard]] auto make_hints(const Hint& server_hint, const Hint& client_hint) -> ByteVector {
@@ -99,22 +97,34 @@ make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X2
     return out;
 }
 
-[[nodiscard]] auto upgrade_aad(const ZeroRttChannelBinding& binding, std::span<const std::byte> hints) -> ByteVector {
+[[nodiscard]] auto capsule_aad(std::string_view label, const ZeroRttHandshakeBinding& binding, std::span<const std::byte> hints) -> ByteVector {
     ByteVector out;
-    constexpr std::string_view label{"fps/zero-rtt/capsule/v4"};
-    out.reserve(label.size() + hints.size() + 128U);
+    out.reserve(label.size() + hints.size() + 192U);
     append_label(out, label);
     append_bytes(out, hints);
-    const auto binding_bytes = serialize_binding(binding);
+    const auto binding_bytes = serialize_handshake_binding(binding);
     append_bytes(out, binding_bytes);
     return out;
 }
 
-[[nodiscard]] auto concat_dh(const std::array<std::byte, kX25519KeySize>& dh_ephemeral, const std::array<std::byte, kX25519KeySize>& dh_static) -> ByteVector {
+[[nodiscard]] auto concat2(const std::array<std::byte, kX25519KeySize>& lhs, const std::array<std::byte, kX25519KeySize>& rhs) -> ByteVector {
     ByteVector out;
-    out.reserve(dh_ephemeral.size() + dh_static.size());
-    append_array(out, dh_ephemeral);
-    append_array(out, dh_static);
+    out.reserve(lhs.size() + rhs.size());
+    append_array(out, lhs);
+    append_array(out, rhs);
+    return out;
+}
+
+[[nodiscard]] auto concat4(
+    const std::array<std::byte, kX25519KeySize>& first, const std::array<std::byte, kX25519KeySize>& second,
+    const std::array<std::byte, kX25519KeySize>& third, const std::array<std::byte, kX25519KeySize>& fourth
+) -> ByteVector {
+    ByteVector out;
+    out.reserve(first.size() + second.size() + third.size() + fourth.size());
+    append_array(out, first);
+    append_array(out, second);
+    append_array(out, third);
+    append_array(out, fourth);
     return out;
 }
 
@@ -124,33 +134,51 @@ make_hint(std::string_view label, const ZeroRttChannelBinding& binding, const X2
     return nonce;
 }
 
-[[nodiscard]] auto parse_plaintext(std::span<const std::byte> plain, const X25519PublicKey& expected_client_public_key)
-    -> ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade> {
+struct ParsedCapsule {
+    std::uint16_t version{};
+    std::uint16_t capabilities{};
+    X25519PublicKey ephemeral_public_key{};
+    ByteVector payload;
+};
+
+[[nodiscard]] auto parse_capsule(std::span<const std::byte> plain) -> ZeroRttUpgradeResult<ParsedCapsule> {
     if(plain.size() < kPlainHeaderSize) {
-        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::invalid_size);
+        return ZeroRttUpgradeResult<ParsedCapsule>::failure(ZeroRttUpgradeError::invalid_size);
     }
 
-    ZeroRttVerifiedUpgrade verified;
-    verified.client_public_key = expected_client_public_key;
+    ParsedCapsule parsed;
     std::size_t offset = 0;
-    verified.version = read_be<std::uint16_t>(plain, offset);
+    parsed.version = read_be<std::uint16_t>(plain, offset);
     offset += sizeof(std::uint16_t);
-    verified.capabilities = read_be<std::uint16_t>(plain, offset);
+    parsed.capabilities = read_be<std::uint16_t>(plain, offset);
     offset += sizeof(std::uint16_t);
 
-    X25519PublicKey ephemeral_public{};
     std::copy(
-        plain.begin() + static_cast<std::ptrdiff_t>(offset), plain.begin() + static_cast<std::ptrdiff_t>(offset + kX25519KeySize), ephemeral_public.begin()
+        plain.begin() + static_cast<std::ptrdiff_t>(offset), plain.begin() + static_cast<std::ptrdiff_t>(offset + kX25519KeySize),
+        parsed.ephemeral_public_key.begin()
     );
     offset += kX25519KeySize;
 
-    const auto padding_size = read_be<std::uint16_t>(plain, offset);
+    const auto payload_size = read_be<std::uint16_t>(plain, offset);
     offset += sizeof(std::uint16_t);
-    if(plain.size() != offset + padding_size) {
-        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::invalid_size);
+    if(plain.size() != offset + payload_size) {
+        return ZeroRttUpgradeResult<ParsedCapsule>::failure(ZeroRttUpgradeError::invalid_size);
     }
-    verified.padding.assign(plain.begin() + static_cast<std::ptrdiff_t>(offset), plain.end());
-    return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::success(std::move(verified));
+    parsed.payload.assign(plain.begin() + static_cast<std::ptrdiff_t>(offset), plain.end());
+    return ZeroRttUpgradeResult<ParsedCapsule>::success(std::move(parsed));
+}
+
+[[nodiscard]] auto serialize_capsule(
+    std::uint16_t version, std::uint16_t capabilities, const X25519PublicKey& ephemeral_public_key, std::span<const std::byte> payload
+) -> ByteVector {
+    ByteVector plain;
+    plain.reserve(kPlainHeaderSize + payload.size());
+    append_be(plain, version);
+    append_be(plain, capabilities);
+    append_array(plain, ephemeral_public_key);
+    append_be(plain, static_cast<std::uint16_t>(payload.size()));
+    append_bytes(plain, payload);
+    return plain;
 }
 
 } // namespace
@@ -169,18 +197,15 @@ ZeroRttUpgradeEngine::ZeroRttUpgradeEngine(ZeroRttUpgradeConfig config) : config
 }
 
 auto ZeroRttUpgradeEngine::build_client_upgrade(
-    const ZeroRttChannelBinding& binding, std::span<const std::byte> padding, std::optional<X25519KeyPair> ephemeral_key_pair
+    const ZeroRttHandshakeBinding& binding, std::span<const std::byte> payload, std::optional<X25519KeyPair> ephemeral_key_pair
 ) const -> ZeroRttUpgradeResult<ZeroRttBuiltUpgrade> {
-    if(!validate_config()) {
-        return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::invalid_config);
-    }
-    if(binding.profile_id != config_.profile_id) {
+    if(!validate_config() || binding.profile_id != config_.profile_id) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::invalid_config);
     }
     if(config_.role != ZeroRttUpgradeRole::client || !config_.peer_static_public.has_value()) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::invalid_role);
     }
-    if(padding.size() > config_.max_padding_size || padding.size() > std::numeric_limits<std::uint16_t>::max()) {
+    if(payload.size() > config_.max_padding_size || payload.size() > std::numeric_limits<std::uint16_t>::max()) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::oversized_padding);
     }
 
@@ -197,28 +222,22 @@ auto ZeroRttUpgradeEngine::build_client_upgrade(
 
     const auto& server_public = *config_.peer_static_public;
     auto dh_static = x25519_derive_shared_secret(config_.local_static_private, server_public);
-    auto dh_ephemeral = x25519_derive_shared_secret(ephemeral.value().private_key, server_public);
-    auto server_hint = make_server_hint(binding, server_public);
-    auto client_hint = make_client_hint(binding, config_.local_static_public, server_public);
-    if(!dh_static || !dh_ephemeral || !server_hint || !client_hint) {
+    auto server_hint = make_server_hint("fps/zero-rtt/client-auth/server-hint/v5", binding, server_public);
+    auto client_hint = make_client_hint("fps/zero-rtt/client-auth/client-hint/v5", binding, config_.local_static_public, server_public);
+    if(!dh_static || !server_hint || !client_hint) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
     const auto hints = make_hints(server_hint.value(), client_hint.value());
-    auto capsule_material = derive_capsule_material(dh_static.value(), config_.local_static_public, server_public, binding, hints);
+    auto capsule_material =
+        derive_capsule_material(dh_static.value(), config_.local_static_public, server_public, binding, hints, "fps/zero-rtt/client-auth-aead/v5");
     if(!capsule_material) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
 
-    ByteVector plain;
-    plain.reserve(kPlainHeaderSize + padding.size());
-    append_be(plain, config_.version);
-    append_be(plain, config_.capabilities);
-    append_array(plain, ephemeral.value().public_key);
-    append_be(plain, static_cast<std::uint16_t>(padding.size()));
-    append_bytes(plain, padding);
-
-    const auto encrypted =
-        aead_chacha20_poly1305_encrypt(capsule_material.value().key, make_nonce(capsule_material.value()), upgrade_aad(binding, hints), plain);
+    const auto plain = serialize_capsule(config_.version, config_.capabilities, ephemeral.value().public_key, payload);
+    const auto encrypted = aead_chacha20_poly1305_encrypt(
+        capsule_material.value().key, make_nonce(capsule_material.value()), capsule_aad("fps/zero-rtt/client-auth/capsule/v5", binding, hints), plain
+    );
     if(!encrypted) {
         return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
@@ -229,27 +248,20 @@ auto ZeroRttUpgradeEngine::build_client_upgrade(
     append_bytes(wire, encrypted.value().ciphertext);
     append_array(wire, encrypted.value().tag);
 
-    auto session_keys =
-        derive_session_keys(dh_ephemeral.value(), dh_static.value(), ephemeral.value().public_key, config_.local_static_public, server_public, binding, wire);
-    if(!session_keys) {
-        return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
-    }
-
     return ZeroRttUpgradeResult<ZeroRttBuiltUpgrade>::success(
         ZeroRttBuiltUpgrade{
             .wire = std::move(wire),
-            .session_keys = session_keys.value(),
-            .ephemeral_public_key = ephemeral.value().public_key,
+            .client_ephemeral_key_pair = ephemeral.value(),
+            .version = config_.version,
+            .capabilities = config_.capabilities,
+            .payload = ByteVector{payload.begin(), payload.end()},
         }
     );
 }
 
-auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire, const ZeroRttChannelBinding& binding)
+auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire, const ZeroRttHandshakeBinding& binding)
     -> ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade> {
-    if(!validate_config()) {
-        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::invalid_config);
-    }
-    if(binding.profile_id != config_.profile_id) {
+    if(!validate_config() || binding.profile_id != config_.profile_id) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::invalid_config);
     }
     if(config_.role != ZeroRttUpgradeRole::server) {
@@ -261,7 +273,7 @@ auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire
 
     const auto server_hint_wire = wire.first(kHintSize);
     const auto client_hint_wire = wire.subspan(kHintSize, kHintSize);
-    auto expected_server_hint = make_server_hint(binding, config_.local_static_public);
+    auto expected_server_hint = make_server_hint("fps/zero-rtt/client-auth/server-hint/v5", binding, config_.local_static_public);
     if(!expected_server_hint) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
@@ -271,7 +283,7 @@ auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire
 
     const X25519PublicKey* client_public = nullptr;
     for(const auto& candidate : config_.allowed_client_public_keys) {
-        auto expected_client_hint = make_client_hint(binding, candidate, config_.local_static_public);
+        auto expected_client_hint = make_client_hint("fps/zero-rtt/client-auth/client-hint/v5", binding, candidate, config_.local_static_public);
         if(!expected_client_hint) {
             return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
         }
@@ -292,51 +304,210 @@ auto ZeroRttUpgradeEngine::verify_client_upgrade(std::span<const std::byte> wire
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
 
-    auto capsule_material = derive_capsule_material(dh_static.value(), *client_public, config_.local_static_public, binding, hints);
+    auto capsule_material =
+        derive_capsule_material(dh_static.value(), *client_public, config_.local_static_public, binding, hints, "fps/zero-rtt/client-auth-aead/v5");
     if(!capsule_material) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
     }
 
-    auto decrypted =
-        aead_chacha20_poly1305_decrypt(capsule_material.value().key, make_nonce(capsule_material.value()), upgrade_aad(binding, hints), ciphertext, tag);
+    auto decrypted = aead_chacha20_poly1305_decrypt(
+        capsule_material.value().key, make_nonce(capsule_material.value()), capsule_aad("fps/zero-rtt/client-auth/capsule/v5", binding, hints), ciphertext,
+        tag
+    );
     if(!decrypted) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::decrypt_failed);
     }
 
-    auto parsed = parse_plaintext(decrypted.value(), *client_public);
+    auto parsed = parse_capsule(decrypted.value());
     if(!parsed) {
-        return parsed;
+        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(parsed.error());
     }
-    auto verified = std::move(parsed).value();
-    if(verified.version != config_.version) {
+    if(parsed.value().version != config_.version) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::unsupported_version);
     }
-    if(verified.padding.size() > config_.max_padding_size) {
+    if(parsed.value().payload.size() > config_.max_padding_size) {
         return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::oversized_padding);
     }
 
-    X25519PublicKey ephemeral_public{};
-    std::copy(
-        decrypted.value().begin() + static_cast<std::ptrdiff_t>(sizeof(std::uint16_t) + sizeof(std::uint16_t)),
-        decrypted.value().begin() + static_cast<std::ptrdiff_t>(sizeof(std::uint16_t) + sizeof(std::uint16_t) + kX25519KeySize), ephemeral_public.begin()
+    return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::success(
+        ZeroRttVerifiedUpgrade{
+            .client_public_key = *client_public,
+            .client_ephemeral_public_key = parsed.value().ephemeral_public_key,
+            .client_auth_wire = ByteVector{wire.begin(), wire.end()},
+            .version = parsed.value().version,
+            .capabilities = parsed.value().capabilities,
+            .payload = std::move(parsed).value().payload,
+        }
     );
+}
 
-    auto dh_ephemeral = x25519_derive_shared_secret(config_.local_static_private, ephemeral_public);
-    if(!dh_ephemeral) {
-        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
+auto ZeroRttUpgradeEngine::build_server_accept(
+    const ZeroRttHandshakeBinding& binding, const ZeroRttVerifiedUpgrade& client_auth, std::span<const std::byte> payload,
+    std::optional<X25519KeyPair> ephemeral_key_pair
+) const -> ZeroRttUpgradeResult<ZeroRttBuiltServerAccept> {
+    if(!validate_config() || binding.profile_id != config_.profile_id) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::invalid_config);
     }
-    auto session_keys =
-        derive_session_keys(dh_ephemeral.value(), dh_static.value(), ephemeral_public, *client_public, config_.local_static_public, binding, wire);
+    if(config_.role != ZeroRttUpgradeRole::server) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::invalid_role);
+    }
+    if(payload.size() > config_.max_padding_size || payload.size() > std::numeric_limits<std::uint16_t>::max()) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::oversized_padding);
+    }
+
+    auto ephemeral = ephemeral_key_pair.has_value() ? ZeroRttUpgradeResult<X25519KeyPair>::success(*ephemeral_key_pair) : [&] {
+        auto generated = random_x25519_key_pair();
+        if(!generated) {
+            return ZeroRttUpgradeResult<X25519KeyPair>::failure(ZeroRttUpgradeError::crypto_error);
+        }
+        return ZeroRttUpgradeResult<X25519KeyPair>::success(std::move(generated).value());
+    }();
+    if(!ephemeral) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ephemeral.error());
+    }
+
+    auto dh_static = x25519_derive_shared_secret(config_.local_static_private, client_auth.client_public_key);
+    auto dh_client_ephemeral = x25519_derive_shared_secret(config_.local_static_private, client_auth.client_ephemeral_public_key);
+    auto dh_server_ephemeral = x25519_derive_shared_secret(ephemeral.value().private_key, client_auth.client_public_key);
+    auto dh_ephemeral_ephemeral = x25519_derive_shared_secret(ephemeral.value().private_key, client_auth.client_ephemeral_public_key);
+    auto server_hint = make_server_hint("fps/zero-rtt/server-accept/server-hint/v5", binding, config_.local_static_public);
+    auto client_hint =
+        make_client_hint("fps/zero-rtt/server-accept/client-hint/v5", binding, client_auth.client_public_key, config_.local_static_public);
+    if(!dh_static || !dh_client_ephemeral || !dh_server_ephemeral || !dh_ephemeral_ephemeral || !server_hint || !client_hint) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+    const auto hints = make_hints(server_hint.value(), client_hint.value());
+    auto accept_material = derive_server_accept_material(
+        dh_static.value(), dh_client_ephemeral.value(), client_auth.client_public_key, config_.local_static_public, binding, hints, client_auth.client_auth_wire
+    );
+    if(!accept_material) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+
+    const auto plain = serialize_capsule(config_.version, config_.capabilities, ephemeral.value().public_key, payload);
+    auto encrypted = aead_chacha20_poly1305_encrypt(
+        accept_material.value().key, make_nonce(accept_material.value()), capsule_aad("fps/zero-rtt/server-accept/capsule/v5", binding, hints), plain
+    );
+    if(!encrypted) {
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+
+    ByteVector wire;
+    wire.reserve(hints.size() + encrypted.value().ciphertext.size() + kAeadTagSize);
+    append_bytes(wire, hints);
+    append_bytes(wire, encrypted.value().ciphertext);
+    append_array(wire, encrypted.value().tag);
+
+    auto session_keys = derive_session_keys(
+        dh_static.value(), dh_client_ephemeral.value(), dh_server_ephemeral.value(), dh_ephemeral_ephemeral.value(), client_auth.client_ephemeral_public_key,
+        ephemeral.value().public_key, client_auth.client_public_key, config_.local_static_public, binding, client_auth.client_auth_wire, wire
+    );
     if(!session_keys) {
-        return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::failure(ZeroRttUpgradeError::crypto_error);
+        return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
     }
 
-    verified.session_keys = session_keys.value();
-    return ZeroRttUpgradeResult<ZeroRttVerifiedUpgrade>::success(std::move(verified));
+    return ZeroRttUpgradeResult<ZeroRttBuiltServerAccept>::success(
+        ZeroRttBuiltServerAccept{
+            .wire = std::move(wire),
+            .session_keys = session_keys.value(),
+            .server_ephemeral_public_key = ephemeral.value().public_key,
+            .version = config_.version,
+            .capabilities = config_.capabilities,
+            .payload = ByteVector{payload.begin(), payload.end()},
+        }
+    );
+}
+
+auto ZeroRttUpgradeEngine::verify_server_accept(
+    std::span<const std::byte> wire, const ZeroRttHandshakeBinding& binding, const ZeroRttBuiltUpgrade& client_auth
+) const -> ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept> {
+    if(!validate_config() || binding.profile_id != config_.profile_id) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::invalid_config);
+    }
+    if(config_.role != ZeroRttUpgradeRole::client || !config_.peer_static_public.has_value()) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::invalid_role);
+    }
+    if(wire.size() < kMinimumWireSize) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::invalid_size);
+    }
+
+    const auto& server_public = *config_.peer_static_public;
+    const auto server_hint_wire = wire.first(kHintSize);
+    const auto client_hint_wire = wire.subspan(kHintSize, kHintSize);
+    auto expected_server_hint = make_server_hint("fps/zero-rtt/server-accept/server-hint/v5", binding, server_public);
+    auto expected_client_hint = make_client_hint("fps/zero-rtt/server-accept/client-hint/v5", binding, config_.local_static_public, server_public);
+    if(!expected_server_hint || !expected_client_hint) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+    if(!constant_time_equal(server_hint_wire, expected_server_hint.value())) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::precheck_failed);
+    }
+    if(!constant_time_equal(client_hint_wire, expected_client_hint.value())) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::unknown_client_id);
+    }
+
+    const auto hints = wire.first(kHintsSize);
+    const auto ciphertext = wire.subspan(kHintsSize, wire.size() - kHintsSize - kAeadTagSize);
+    const auto tag = wire.last(kAeadTagSize);
+    auto dh_static = x25519_derive_shared_secret(config_.local_static_private, server_public);
+    auto dh_client_ephemeral = x25519_derive_shared_secret(client_auth.client_ephemeral_key_pair.private_key, server_public);
+    if(!dh_static || !dh_client_ephemeral) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+
+    auto accept_material = derive_server_accept_material(
+        dh_static.value(), dh_client_ephemeral.value(), config_.local_static_public, server_public, binding, hints, client_auth.wire
+    );
+    if(!accept_material) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+
+    auto decrypted = aead_chacha20_poly1305_decrypt(
+        accept_material.value().key, make_nonce(accept_material.value()), capsule_aad("fps/zero-rtt/server-accept/capsule/v5", binding, hints), ciphertext,
+        tag
+    );
+    if(!decrypted) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::decrypt_failed);
+    }
+
+    auto parsed = parse_capsule(decrypted.value());
+    if(!parsed) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(parsed.error());
+    }
+    if(parsed.value().version != config_.version) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::unsupported_version);
+    }
+    if(parsed.value().payload.size() > config_.max_padding_size) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::oversized_padding);
+    }
+
+    auto dh_server_ephemeral = x25519_derive_shared_secret(config_.local_static_private, parsed.value().ephemeral_public_key);
+    auto dh_ephemeral_ephemeral = x25519_derive_shared_secret(client_auth.client_ephemeral_key_pair.private_key, parsed.value().ephemeral_public_key);
+    if(!dh_server_ephemeral || !dh_ephemeral_ephemeral) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+    auto session_keys = derive_session_keys(
+        dh_static.value(), dh_client_ephemeral.value(), dh_server_ephemeral.value(), dh_ephemeral_ephemeral.value(),
+        client_auth.client_ephemeral_key_pair.public_key, parsed.value().ephemeral_public_key, config_.local_static_public, server_public, binding,
+        client_auth.wire, wire
+    );
+    if(!session_keys) {
+        return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::failure(ZeroRttUpgradeError::crypto_error);
+    }
+
+    return ZeroRttUpgradeResult<ZeroRttVerifiedServerAccept>::success(
+        ZeroRttVerifiedServerAccept{
+            .session_keys = session_keys.value(),
+            .server_ephemeral_public_key = parsed.value().ephemeral_public_key,
+            .version = parsed.value().version,
+            .capabilities = parsed.value().capabilities,
+            .payload = std::move(parsed).value().payload,
+        }
+    );
 }
 
 auto ZeroRttUpgradeEngine::validate_config() const noexcept -> bool {
-    if(config_.version != 4U || config_.profile_id.empty()) {
+    if(config_.version != 5U || config_.profile_id.empty()) {
         return false;
     }
     if(config_.role == ZeroRttUpgradeRole::client) {
@@ -347,12 +518,31 @@ auto ZeroRttUpgradeEngine::validate_config() const noexcept -> bool {
 
 auto ZeroRttUpgradeEngine::derive_capsule_material(
     const std::array<std::byte, kX25519KeySize>& dh_static, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
-    const ZeroRttChannelBinding& binding, std::span<const std::byte> hints
+    const ZeroRttHandshakeBinding& binding, std::span<const std::byte> hints, std::string_view label
 ) const -> CryptoResult<AeadMaterial> {
-    const auto salt = serialize_binding(binding);
-    auto material = hkdf_sha256(
-        dh_static, salt, binding_info("fps/zero-rtt/capsule-aead/v4", binding, client_public_key, server_public_key, hints), kAeadKeySize + kAeadSaltSize
-    );
+    const auto salt = serialize_handshake_binding(binding);
+    auto material = hkdf_sha256(dh_static, salt, binding_info(label, binding, client_public_key, server_public_key, hints), kAeadKeySize + kAeadSaltSize);
+    if(!material) {
+        return CryptoResult<AeadMaterial>::failure(material.error());
+    }
+    AeadMaterial out;
+    auto iter = material.value().begin();
+    std::copy(iter, iter + static_cast<std::ptrdiff_t>(kAeadKeySize), out.key.begin());
+    iter += static_cast<std::ptrdiff_t>(kAeadKeySize);
+    std::copy(iter, iter + static_cast<std::ptrdiff_t>(kAeadSaltSize), out.nonce_salt.begin());
+    return CryptoResult<AeadMaterial>::success(out);
+}
+
+auto ZeroRttUpgradeEngine::derive_server_accept_material(
+    const std::array<std::byte, kX25519KeySize>& dh_static, const std::array<std::byte, kX25519KeySize>& dh_client_ephemeral,
+    const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key, const ZeroRttHandshakeBinding& binding,
+    std::span<const std::byte> hints, std::span<const std::byte> client_auth_wire
+) const -> CryptoResult<AeadMaterial> {
+    const auto dh = concat2(dh_static, dh_client_ephemeral);
+    const auto salt = serialize_handshake_binding(binding);
+    ByteVector info = binding_info("fps/zero-rtt/server-accept-aead/v5", binding, client_public_key, server_public_key, hints);
+    append_bytes(info, client_auth_wire);
+    auto material = hkdf_sha256(dh, salt, info, kAeadKeySize + kAeadSaltSize);
     if(!material) {
         return CryptoResult<AeadMaterial>::failure(material.error());
     }
@@ -365,14 +555,19 @@ auto ZeroRttUpgradeEngine::derive_capsule_material(
 }
 
 auto ZeroRttUpgradeEngine::derive_session_keys(
-    const std::array<std::byte, kX25519KeySize>& dh_ephemeral, const std::array<std::byte, kX25519KeySize>& dh_static,
-    const X25519PublicKey& ephemeral_public_key, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
-    const ZeroRttChannelBinding& binding, std::span<const std::byte> wire
+    const std::array<std::byte, kX25519KeySize>& dh_static, const std::array<std::byte, kX25519KeySize>& dh_client_ephemeral,
+    const std::array<std::byte, kX25519KeySize>& dh_server_ephemeral, const std::array<std::byte, kX25519KeySize>& dh_ephemeral_ephemeral,
+    const X25519PublicKey& client_ephemeral_public_key, const X25519PublicKey& server_ephemeral_public_key,
+    const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key, const ZeroRttHandshakeBinding& binding,
+    std::span<const std::byte> client_auth_wire, std::span<const std::byte> server_accept_wire
 ) const -> CryptoResult<SessionKeys> {
-    const auto dh = concat_dh(dh_ephemeral, dh_static);
-    const auto salt = serialize_binding(binding);
-    ByteVector info = binding_info("fps/zero-rtt/session-keys/v4", binding, client_public_key, server_public_key, wire);
-    append_array(info, ephemeral_public_key);
+    const auto dh = concat4(dh_static, dh_client_ephemeral, dh_server_ephemeral, dh_ephemeral_ephemeral);
+    const auto salt = serialize_handshake_binding(binding);
+    ByteVector info = binding_info("fps/zero-rtt/session-keys/v5", binding, client_public_key, server_public_key);
+    append_array(info, client_ephemeral_public_key);
+    append_array(info, server_ephemeral_public_key);
+    append_bytes(info, client_auth_wire);
+    append_bytes(info, server_accept_wire);
     auto material = hkdf_sha256(dh, salt, info, (2U * kAeadKeySize) + (2U * kAeadSaltSize));
     if(!material) {
         return CryptoResult<SessionKeys>::failure(material.error());

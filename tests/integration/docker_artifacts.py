@@ -384,7 +384,7 @@ def main():
         debug_server_config,
         [
             "fps-carrier-origin:9443",
-            "debug-carrier-v4",
+            "debug-carrier-v5",
             "server_private_key_base64",
             "server_public_key_base64",
             "allowed_client_uuids",
