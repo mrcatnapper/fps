@@ -25,6 +25,21 @@ using detail::frame_payload_size_sum;
 using detail::is_tun_frame;
 using detail::tcp_bridge_error_from_classified_encode;
 
+namespace {
+
+void append_bytes(ByteVector& out, std::span<const std::byte> bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); }
+
+[[nodiscard]] auto parse_single_tls_record(std::span<const std::byte> bytes) -> std::optional<TlsRecord> {
+    TlsRecordParser parser;
+    auto parsed = parser.feed(bytes);
+    if(!parsed.errors.empty() || parsed.pending_bytes != 0U || parsed.records.size() != 1U) {
+        return std::nullopt;
+    }
+    return std::move(parsed.records.front());
+}
+
+} // namespace
+
 auto TcpBridgeSession::enqueue_covert_frame(
     Direction direction, FrameType frame_type, std::span<const std::byte> payload, std::size_t padding_size, std::uint8_t flags
 ) -> TcpBridgeEnqueueResult {
@@ -158,100 +173,96 @@ void TcpBridgeSession::handle_read(Direction direction, const boost::system::err
     add_stat(stats_for(direction).tcp_read_bytes, bytes_read);
 
     auto& buffer = read_buffer(direction);
-    if(process_zero_rtt_if_needed(direction, std::span<const std::byte>{buffer.data(), bytes_read})) {
+    auto parsed = tls_record_parser(direction).feed(std::span<const std::byte>{buffer.data(), bytes_read});
+    const auto classified_mode =
+        zero_rtt_authenticated_ ||
+        (config_.zero_rtt.has_value() && config_.zero_rtt->controller_config.zero_rtt.role == ZeroRttUpgradeRole::client && zero_rtt_client_upgrade_sent_);
+    if(!parsed.errors.empty()) {
+        if(classified_mode) {
+            FpsClassifiedRecordPipelineProcessResult result;
+            result.parse_errors = std::move(parsed.errors);
+            result.pending_tls_bytes = parsed.pending_bytes;
+            emit_classified_process_result(direction, result);
+            stop_with(close_info_from_classified_result(direction, result));
+            return;
+        }
+        CoverSessionProcessResult result;
+        result.parse_errors = std::move(parsed.errors);
+        result.pending_tls_bytes = parsed.pending_bytes;
+        emit_process_result(direction, result);
+    }
+
+    ByteVector forward_bytes;
+    std::size_t cover_bytes = 0;
+    bool pause_read = false;
+    const auto append_output = [&](RecordProcessOutput output) {
+        cover_bytes += output.cover_bytes;
+        pause_read = pause_read || output.pause_read;
+        append_bytes(forward_bytes, output.bytes);
+    };
+
+    for(const auto& record : parsed.records) {
+        append_output(process_tls_record(direction, record));
+        if(stopped_) {
+            return;
+        }
+    }
+
+    append_output(maybe_build_client_upgrade_after_batch(direction));
+    if(stopped_) {
         return;
     }
 
-    auto result = inbound_pipeline(direction).process_inbound_tls(std::span<const std::byte>{buffer.data(), bytes_read});
-    auto forward_bytes = std::move(result.forward_bytes);
-    emit_process_result(direction, result);
     if(forward_bytes.empty()) {
-        pump(direction);
+        if(!pause_read) {
+            pump(direction);
+        }
         return;
     }
-    const auto cover_bytes = forward_bytes.size();
-    enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = true});
+    enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = !pause_read});
     observe_cover_bytes(direction, cover_bytes);
 }
 
-auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span<const std::byte> bytes) -> bool {
+auto TcpBridgeSession::process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     if(!config_.zero_rtt.has_value() || !zero_rtt_controller_.has_value()) {
-        return false;
+        return process_cover_record(direction, record);
     }
+    return process_zero_rtt_record(direction, record);
+}
 
+auto TcpBridgeSession::process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+    auto result = inbound_pipeline(direction).process_inbound_record(record);
+    auto forward_bytes = std::move(result.forward_bytes);
+    const auto cover_bytes = forward_bytes.size();
+    emit_process_result(direction, result);
+    return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
+}
+
+auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     const auto role = config_.zero_rtt->controller_config.zero_rtt.role;
     if(zero_rtt_authenticated_) {
-        return process_authenticated_tls_bytes(direction, bytes);
+        return process_authenticated_record(direction, record);
     }
 
-    if(role == ZeroRttUpgradeRole::client && zero_rtt_client_upgrade_sent_ && !zero_rtt_authenticated_) {
-        if(!classified_pipelines_) {
-            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
-            return true;
-        }
-
-        auto result = inbound_classified_pipeline(direction).process_inbound_tls(
-            direction, bytes, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-            [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
-        );
-        auto forward_tls = std::move(result.forward_tls_bytes);
-        const auto confirmed = direction == zero_rtt_peer_direction() && result.decoded_fps_records > 0U;
-        if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
-            emit_classified_process_result(direction, result);
-            stop_with(close_info_from_classified_result(direction, result));
-            return true;
-        }
-        if(result.decoded_fps_records > 0U && !confirmed) {
-            emit_classified_process_result(direction, result);
-            stop_with(close_info(TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record, "unexpected_confirmation_direction"));
-            return true;
-        }
-        if(!confirmed) {
-            emit_classified_process_result(direction, result);
-            if(forward_tls.empty()) {
-                pump(direction);
-                return true;
-            }
-            const auto cover_bytes = forward_tls.size();
-            enqueue_write(direction, WriteItem{.bytes = std::move(forward_tls), .resume_read_after_write = true});
-            observe_cover_bytes(direction, cover_bytes);
-            return true;
-        }
-
-        zero_rtt_authenticated_ = true;
-        if(const auto& keys = zero_rtt_controller_->session_keys()) {
-            if(handlers_.on_zero_rtt_authenticated) {
-                handlers_.on_zero_rtt_authenticated(*keys, std::nullopt);
-            }
-        }
-        emit_classified_process_result(direction, result);
-        pump(config_.zero_rtt->controller_config.upgrade_direction);
-
-        if(forward_tls.empty()) {
-            pump(direction);
-            return true;
-        }
-        const auto cover_bytes = forward_tls.size();
-        enqueue_write(direction, WriteItem{.bytes = std::move(forward_tls), .resume_read_after_write = true});
-        observe_cover_bytes(direction, cover_bytes);
-        return true;
+    if(role == ZeroRttUpgradeRole::client && zero_rtt_client_upgrade_sent_) {
+        return process_preconfirmed_client_record(direction, record);
     }
 
     if(role == ZeroRttUpgradeRole::server) {
         if(direction != config_.zero_rtt->controller_config.upgrade_direction) {
-            auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
+            auto observed = zero_rtt_controller_->observe_tls_record(direction, record);
             emit_zero_rtt_observe_result(direction, observed);
-            return false;
+            return process_cover_record(direction, record);
         }
 
-        auto result = zero_rtt_controller_->process_inbound_tls(direction, bytes);
+        auto result = zero_rtt_controller_->process_inbound_record(direction, record);
         auto forward_bytes = std::move(result.forward_bytes);
-        auto post_auth_bytes = std::move(result.post_auth_bytes);
+        const auto cover_bytes = forward_bytes.size();
         const auto authenticated = result.session_keys.has_value();
         if(authenticated && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
                 stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_client_public_key"));
-                return true;
+                return {};
             }
             activate_zero_rtt_classified_pipelines(*result.session_keys, *result.client_public_key);
             zero_rtt_authenticated_ = true;
@@ -259,89 +270,124 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
                 stop_with(pending_or_default_close(
                     close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "confirmation_failed")
                 ));
-                return true;
+                return {};
             }
             if(handlers_.on_zero_rtt_authenticated) {
                 handlers_.on_zero_rtt_authenticated(*result.session_keys, result.client_public_key);
             }
         }
         emit_zero_rtt_process_result(direction, result);
-
-        std::optional<FpsClassifiedRecordPipelineProcessResult> post_auth_result;
-        ByteVector post_auth_forward;
-        if(!post_auth_bytes.empty()) {
-            post_auth_result = inbound_classified_pipeline(direction).process_inbound_tls(
-                direction, post_auth_bytes,
-                [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-                [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
-            );
-            post_auth_forward = std::move(post_auth_result->forward_tls_bytes);
-            emit_classified_process_result(direction, *post_auth_result);
-            if(post_auth_result->close_required || !post_auth_result->parse_errors.empty() || !post_auth_result->record_errors.empty() ||
-               !post_auth_result->classified_errors.empty()) {
-                stop_with(close_info_from_classified_result(direction, *post_auth_result));
-                return true;
-            }
-        }
-
-        if(forward_bytes.empty() && post_auth_forward.empty()) {
-            pump(direction);
-            return true;
-        }
-        if(!forward_bytes.empty()) {
-            const auto cover_bytes = forward_bytes.size();
-            enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = post_auth_forward.empty()});
-            observe_cover_bytes(direction, cover_bytes);
-        }
-        if(!post_auth_forward.empty()) {
-            const auto cover_bytes = post_auth_forward.size();
-            enqueue_write(direction, WriteItem{.bytes = std::move(post_auth_forward), .resume_read_after_write = true});
-            observe_cover_bytes(direction, cover_bytes);
-        }
-        return true;
+        return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
     }
 
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction) {
-        auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
+        auto observed = zero_rtt_controller_->observe_tls_record(direction, record);
         emit_zero_rtt_observe_result(direction, observed);
-        return false;
+        return process_cover_record(direction, record);
     }
 
-    auto observed = zero_rtt_controller_->observe_tls(direction, bytes);
+    auto observed = zero_rtt_controller_->observe_tls_record(direction, record);
     emit_zero_rtt_observe_result(direction, observed);
 
-    std::optional<ByteVector> upgrade_record;
-    if(config_.zero_rtt->auto_start_client && !zero_rtt_client_upgrade_sent_ && observed.pending_tls_bytes == 0U &&
-       zero_rtt_controller_->has_channel_binding()) {
-        auto built = zero_rtt_controller_->build_client_upgrade_record(config_.zero_rtt->client_upgrade_padding, config_.zero_rtt->client_ephemeral_key_pair);
-        if(built) {
-            upgrade_record = std::move(built).value();
-            zero_rtt_client_upgrade_sent_ = true;
-            if(const auto& keys = zero_rtt_controller_->session_keys()) {
-                activate_zero_rtt_classified_pipelines(*keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
-            }
-        } else if(handlers_.on_zero_rtt_build_error) {
-            handlers_.on_zero_rtt_build_error(built.error());
-        }
+    return process_cover_record(direction, record);
+}
+
+auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+    if(!classified_pipelines_ || !zero_rtt_controller_) {
+        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+        return {};
     }
 
-    ByteVector forward_bytes(bytes.size());
-    std::copy(bytes.begin(), bytes.end(), forward_bytes.begin());
-    const auto cover_bytes = forward_bytes.size();
-    const auto has_forward_bytes = !forward_bytes.empty();
-    if(has_forward_bytes) {
-        enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = !upgrade_record.has_value()});
-        observe_cover_bytes(direction, cover_bytes);
+    auto result = inbound_classified_pipeline(direction).process_inbound_record(
+        direction, record, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
+        [this](Direction record_direction, const TlsRecord& observed_record) {
+            auto observed = zero_rtt_controller_->observe_tls_record(record_direction, observed_record);
+            emit_zero_rtt_observe_result(record_direction, observed);
+        }
+    );
+    auto forward_tls = std::move(result.forward_tls_bytes);
+    const auto cover_bytes = forward_tls.size();
+    const auto confirmed = direction == zero_rtt_peer_direction() && result.decoded_fps_records > 0U;
+    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
+        emit_classified_process_result(direction, result);
+        stop_with(close_info_from_classified_result(direction, result));
+        return {};
     }
-    if(upgrade_record.has_value()) {
-        enqueue_write(direction, WriteItem{.bytes = *upgrade_record, .resume_read_after_write = false});
-        auto sent = zero_rtt_controller_->observe_tls(direction, *upgrade_record);
-        emit_zero_rtt_observe_result(direction, sent);
+    if(result.decoded_fps_records > 0U && !confirmed) {
+        emit_classified_process_result(direction, result);
+        stop_with(close_info(
+            TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record, "unexpected_confirmation_direction"
+        ));
+        return {};
     }
-    if(!has_forward_bytes && !upgrade_record.has_value()) {
-        pump(direction);
+    if(confirmed) {
+        zero_rtt_authenticated_ = true;
+        if(const auto& keys = zero_rtt_controller_->session_keys()) {
+            if(handlers_.on_zero_rtt_authenticated) {
+                handlers_.on_zero_rtt_authenticated(*keys, std::nullopt);
+            }
+        }
+        pump(config_.zero_rtt->controller_config.upgrade_direction);
     }
-    return true;
+
+    emit_classified_process_result(direction, result);
+    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+}
+
+auto TcpBridgeSession::process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+    if(!classified_pipelines_ || !zero_rtt_controller_) {
+        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+        return {};
+    }
+    auto result = inbound_classified_pipeline(direction).process_inbound_record(
+        direction, record, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
+        [this](Direction record_direction, const TlsRecord& observed_record) {
+            auto observed = zero_rtt_controller_->observe_tls_record(record_direction, observed_record);
+            emit_zero_rtt_observe_result(record_direction, observed);
+        }
+    );
+    auto forward_tls = std::move(result.forward_tls_bytes);
+    const auto cover_bytes = forward_tls.size();
+    emit_classified_process_result(direction, result);
+    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
+        stop_with(close_info_from_classified_result(direction, result));
+        return {};
+    }
+    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+}
+
+auto TcpBridgeSession::maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput {
+    if(!config_.zero_rtt.has_value() || !zero_rtt_controller_.has_value()) {
+        return {};
+    }
+    const auto role = config_.zero_rtt->controller_config.zero_rtt.role;
+    if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction || zero_rtt_client_upgrade_sent_ ||
+       zero_rtt_authenticated_ || !config_.zero_rtt->auto_start_client || tls_record_parser(direction).pending_bytes() != 0U ||
+       !zero_rtt_controller_->has_channel_binding()) {
+        return {};
+    }
+
+    auto built = zero_rtt_controller_->build_client_upgrade_record(config_.zero_rtt->client_upgrade_padding, config_.zero_rtt->client_ephemeral_key_pair);
+    if(built) {
+        auto upgrade_record = std::move(built).value();
+        zero_rtt_client_upgrade_sent_ = true;
+        if(const auto& keys = zero_rtt_controller_->session_keys()) {
+            activate_zero_rtt_classified_pipelines(*keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
+        }
+        auto parsed = parse_single_tls_record(upgrade_record);
+        if(!parsed.has_value()) {
+            stop_with(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "malformed_upgrade_record"));
+            return {};
+        }
+        auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
+        emit_zero_rtt_observe_result(direction, observed);
+        return RecordProcessOutput{.bytes = std::move(upgrade_record), .pause_read = true};
+    }
+
+    if(handlers_.on_zero_rtt_build_error) {
+        handlers_.on_zero_rtt_build_error(built.error());
+    }
+    return {};
 }
 
 auto TcpBridgeSession::zero_rtt_peer_direction() const noexcept -> Direction {
@@ -359,18 +405,18 @@ void TcpBridgeSession::activate_zero_rtt_classified_pipelines(const SessionKeys&
     const auto& zero_rtt = config_.zero_rtt->controller_config.zero_rtt;
     const auto& server_public = zero_rtt.role == ZeroRttUpgradeRole::server ? zero_rtt.local_static_public : *zero_rtt.peer_static_public;
     classified_pipelines_ = std::make_unique<ClassifiedRecordPipelines>(ClassifiedRecordPipelines{
-        .inbound_client_to_server = FpsClassifiedRecordPipeline{
-            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)}
-        },
-        .inbound_server_to_client = FpsClassifiedRecordPipeline{
-            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)}
-        },
-        .outbound_client_to_server = FpsClassifiedRecordPipeline{
-            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)}
-        },
-        .outbound_server_to_client = FpsClassifiedRecordPipeline{
-            FpsClassifiedRecordCodec{detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)}
-        },
+        .inbound_client_to_server = FpsClassifiedRecordPipeline{FpsClassifiedRecordCodec{
+            detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)
+        }},
+        .inbound_server_to_client = FpsClassifiedRecordPipeline{FpsClassifiedRecordCodec{
+            detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)
+        }},
+        .outbound_client_to_server = FpsClassifiedRecordPipeline{FpsClassifiedRecordCodec{
+            detail::classified_record_config(Direction::client_to_server, session_keys, client_public_key, server_public, *config_.zero_rtt)
+        }},
+        .outbound_server_to_client = FpsClassifiedRecordPipeline{FpsClassifiedRecordCodec{
+            detail::classified_record_config(Direction::server_to_client, session_keys, client_public_key, server_public, *config_.zero_rtt)
+        }},
     });
 }
 
@@ -384,7 +430,8 @@ auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_directio
     const auto confirmation_direction = opposite_direction(upgrade_direction);
     const auto binding = zero_rtt_controller_->current_transcript_snapshot(confirmation_direction);
     if(!binding.has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, confirmation_direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript"));
+        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, confirmation_direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript")
+        );
         return false;
     }
     auto encoded = outbound_classified_pipeline(confirmation_direction)
@@ -401,8 +448,15 @@ auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_directio
         return false;
     }
     const auto record = std::move(encoded).value();
+    auto parsed = parse_single_tls_record(record);
+    if(!parsed.has_value()) {
+        set_pending_close_info(
+            close_info(TcpBridgeCloseReason::tls_record_error, confirmation_direction, TcpBridgeCloseComponent::tls_record, "malformed_confirmation_record")
+        );
+        return false;
+    }
     enqueue_write(confirmation_direction, WriteItem{.bytes = record});
-    auto observed = zero_rtt_controller_->observe_tls(confirmation_direction, record);
+    auto observed = zero_rtt_controller_->observe_tls_record(confirmation_direction, *parsed);
     emit_zero_rtt_observe_result(confirmation_direction, observed);
     emit_classified_records_encoded(confirmation_direction, 1U);
     return true;
@@ -410,31 +464,6 @@ auto TcpBridgeSession::send_zero_rtt_key_confirmation(Direction upgrade_directio
 
 auto TcpBridgeSession::can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool {
     return bytes <= config_.max_write_queue_bytes && pending_write_bytes(direction) <= config_.max_write_queue_bytes - bytes;
-}
-
-auto TcpBridgeSession::process_authenticated_tls_bytes(Direction direction, std::span<const std::byte> bytes) -> bool {
-    if(!classified_pipelines_ || !zero_rtt_controller_) {
-        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
-        return true;
-    }
-    auto result = inbound_classified_pipeline(direction).process_inbound_tls(
-        direction, bytes, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-        [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
-    );
-    auto forward_tls = std::move(result.forward_tls_bytes);
-    emit_classified_process_result(direction, result);
-    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
-        stop_with(close_info_from_classified_result(direction, result));
-        return true;
-    }
-    if(forward_tls.empty()) {
-        pump(direction);
-        return true;
-    }
-    const auto cover_bytes = forward_tls.size();
-    enqueue_write(direction, WriteItem{.bytes = std::move(forward_tls), .resume_read_after_write = true});
-    observe_cover_bytes(direction, cover_bytes);
-    return true;
 }
 
 auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult {
@@ -458,12 +487,14 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
         std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
         owned_frames.reserve(frames.size());
         for(const auto& frame : frames) {
-            owned_frames.push_back(TcpBridgeOwnedCovertFrame{
-                .frame_type = frame.frame_type,
-                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
-                .padding_size = frame.padding_size,
-                .flags = frame.flags,
-            });
+            owned_frames.push_back(
+                TcpBridgeOwnedCovertFrame{
+                    .frame_type = frame.frame_type,
+                    .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
+                    .padding_size = frame.padding_size,
+                    .flags = frame.flags,
+                }
+            );
         }
         ByteVector budget_bytes(payload_size);
         shaper_->enqueue_covert_payload(
@@ -485,12 +516,14 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
         std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
         owned_frames.reserve(frames.size());
         for(const auto& frame : frames) {
-            owned_frames.push_back(TcpBridgeOwnedCovertFrame{
-                .frame_type = frame.frame_type,
-                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
-                .padding_size = frame.padding_size,
-                .flags = frame.flags,
-            });
+            owned_frames.push_back(
+                TcpBridgeOwnedCovertFrame{
+                    .frame_type = frame.frame_type,
+                    .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
+                    .padding_size = frame.padding_size,
+                    .flags = frame.flags,
+                }
+            );
         }
         auto write = encode_classified_write(direction, owned_frames);
         if(!write) {
@@ -525,12 +558,14 @@ auto TcpBridgeSession::encode_classified_write(Direction direction, std::span<co
     std::vector<FpsEnvelopeFrame> classified_frames;
     classified_frames.reserve(frames.size());
     for(const auto& frame : frames) {
-        classified_frames.push_back(FpsEnvelopeFrame{
-            .frame_type = frame.frame_type,
-            .flags = frame.flags,
-            .payload = frame.payload,
-            .padding_size = frame.padding_size,
-        });
+        classified_frames.push_back(
+            FpsEnvelopeFrame{
+                .frame_type = frame.frame_type,
+                .flags = frame.flags,
+                .payload = frame.payload,
+                .padding_size = frame.padding_size,
+            }
+        );
     }
     auto encoded = outbound_classified_pipeline(direction).encode_tls_record(
         FpsEnvelopeContent{
@@ -545,7 +580,13 @@ auto TcpBridgeSession::encode_classified_write(Direction direction, std::span<co
         return Result<WriteItem, TcpBridgeEnqueueError>::failure(tcp_bridge_error_from_classified_encode(encoded.error()));
     }
     auto record = std::move(encoded).value();
-    auto observed = zero_rtt_controller_->observe_tls(direction, record);
+    auto parsed = parse_single_tls_record(record);
+    if(!parsed.has_value()) {
+        set_pending_close_info(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "malformed_classified_record")
+        );
+        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::tls_record_error);
+    }
+    auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
     emit_zero_rtt_observe_result(direction, observed);
     emit_classified_records_encoded(direction, 1U);
     return Result<WriteItem, TcpBridgeEnqueueError>::success(WriteItem{.bytes = std::move(record)});

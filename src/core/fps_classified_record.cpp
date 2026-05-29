@@ -1,6 +1,7 @@
 #include "fps/core/fps_classified_record.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -12,8 +13,7 @@ namespace {
 
 constexpr std::size_t kHintSize = 8;
 constexpr std::size_t kHintsSize = 2U * kHintSize;
-constexpr std::size_t kPlainHeaderSize = sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) +
-                                          sizeof(std::uint32_t);
+constexpr std::size_t kPlainHeaderSize = sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 constexpr std::size_t kFrameHeaderSize = 1U + 1U + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kMinimumWireSize = kHintsSize + kPlainHeaderSize + kAeadTagSize;
 
@@ -59,8 +59,8 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
 }
 
 [[nodiscard]] auto context_info(
-    std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key,
-    const X25519PublicKey& server_public_key, std::uint64_t sequence, std::span<const std::byte> extra = {}
+    std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
+    std::uint64_t sequence, std::span<const std::byte> extra = {}
 ) -> ByteVector {
     ByteVector out;
     out.reserve(label.size() + (2U * kX25519KeySize) + extra.size() + 160U);
@@ -75,8 +75,8 @@ void append_array(ByteVector& out, const std::array<T, Size>& bytes) {
 }
 
 [[nodiscard]] auto make_hint(
-    std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key,
-    const X25519PublicKey& server_public_key, std::uint64_t sequence
+    std::string_view label, const ZeroRttChannelBinding& binding, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
+    std::uint64_t sequence
 ) -> CryptoResult<Hint> {
     auto digest = sha256(context_info(label, binding, client_public_key, server_public_key, sequence));
     if(!digest) {
@@ -167,8 +167,7 @@ auto FpsClassifiedRecordPipelineEncodeError::tls_record(TlsRecordLayerError erro
 FpsClassifiedRecordCodec::FpsClassifiedRecordCodec(FpsClassifiedRecordConfig config)
     : config_(std::move(config)), next_send_sequence_(config_.initial_send_sequence), next_receive_sequence_(config_.initial_receive_sequence) {}
 
-auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding)
-    -> FpsClassifiedRecordResult<ByteVector> {
+auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordResult<ByteVector> {
     if(!validate_config() || binding.profile_id != config_.profile_id || binding.direction != config_.send_direction) {
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::invalid_config);
     }
@@ -399,49 +398,63 @@ auto FpsClassifiedRecordPipeline::process_inbound_tls(
     result.pending_tls_bytes = parsed.pending_bytes;
 
     for(const auto& record : parsed.records) {
-        if(record.wire.size() != 5U + static_cast<std::size_t>(record.length)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            result.close_required = true;
-            continue;
-        }
-
-        const auto update_record = [&] {
-            if(record_observer) {
-                record_observer(direction, record);
-            }
-        };
-        const auto forward_record = [&] {
-            result.forward_tls_bytes.insert(result.forward_tls_bytes.end(), record.wire.begin(), record.wire.end());
-            update_record();
-        };
-
-        if(!record.is_application_data()) {
-            forward_record();
-            continue;
-        }
-
-        const auto binding = snapshot_provider ? snapshot_provider(direction) : std::nullopt;
-        if(!binding.has_value()) {
-            result.classified_errors.push_back(FpsClassifiedRecordError::invalid_config);
-            result.close_required = true;
-            continue;
-        }
-
-        auto decoded = codec_.decode(record.payload(), *binding);
-        if(decoded.classification == FpsClassifiedRecordClassification::carrier) {
-            forward_record();
-            continue;
-        }
-        if(decoded.classification == FpsClassifiedRecordClassification::invalid_fps_record) {
-            result.classified_errors.push_back(decoded.error);
-            result.close_required = true;
-            continue;
-        }
-
-        update_record();
-        append_content(result, std::move(decoded.content));
+        auto record_result = process_inbound_record(direction, record, snapshot_provider, record_observer);
+        result.forward_tls_bytes.insert(result.forward_tls_bytes.end(), record_result.forward_tls_bytes.begin(), record_result.forward_tls_bytes.end());
+        result.frames.insert(result.frames.end(), std::make_move_iterator(record_result.frames.begin()), std::make_move_iterator(record_result.frames.end()));
+        result.record_errors.insert(result.record_errors.end(), record_result.record_errors.begin(), record_result.record_errors.end());
+        result.classified_errors.insert(result.classified_errors.end(), record_result.classified_errors.begin(), record_result.classified_errors.end());
+        result.decoded_fps_records += record_result.decoded_fps_records;
+        result.close_required = result.close_required || record_result.close_required;
     }
 
+    return result;
+}
+
+auto FpsClassifiedRecordPipeline::process_inbound_record(
+    Direction direction, const TlsRecord& record, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer
+) -> FpsClassifiedRecordPipelineProcessResult {
+    FpsClassifiedRecordPipelineProcessResult result;
+    if(record.wire.size() != 5U + static_cast<std::size_t>(record.length)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        result.close_required = true;
+        return result;
+    }
+
+    const auto update_record = [&] {
+        if(record_observer) {
+            record_observer(direction, record);
+        }
+    };
+    const auto forward_record = [&] {
+        result.forward_tls_bytes.insert(result.forward_tls_bytes.end(), record.wire.begin(), record.wire.end());
+        update_record();
+    };
+
+    if(!record.is_application_data()) {
+        forward_record();
+        return result;
+    }
+
+    const auto binding = snapshot_provider ? snapshot_provider(direction) : std::nullopt;
+    if(!binding.has_value()) {
+        result.classified_errors.push_back(FpsClassifiedRecordError::invalid_config);
+        result.close_required = true;
+        return result;
+    }
+
+    auto decoded = codec_.decode(record.payload(), *binding);
+    if(decoded.classification == FpsClassifiedRecordClassification::carrier) {
+        forward_record();
+        return result;
+    }
+    if(decoded.classification == FpsClassifiedRecordClassification::invalid_fps_record) {
+        result.classified_errors.push_back(decoded.error);
+        result.close_required = true;
+        return result;
+    }
+
+    update_record();
+    append_content(result, std::move(decoded.content));
     return result;
 }
 

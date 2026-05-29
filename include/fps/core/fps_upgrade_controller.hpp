@@ -48,7 +48,6 @@ struct FpsUpgradeObserveResult {
 
 struct FpsUpgradeProcessResult {
     ByteVector forward_bytes;
-    ByteVector post_auth_bytes;
     std::vector<TlsParseError> parse_errors;
     std::vector<TlsRecordLayerError> record_errors;
     std::vector<ZeroRttUpgradeError> upgrade_errors;
@@ -62,12 +61,12 @@ class FpsUpgradeController {
 public:
     explicit FpsUpgradeController(FpsUpgradeControllerConfig config);
 
-    [[nodiscard]] auto observe_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeObserveResult;
+    [[nodiscard]] auto observe_tls_record(Direction direction, const TlsRecord& record) -> FpsUpgradeObserveResult;
 
     [[nodiscard]] auto build_client_upgrade_record(std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
         -> FpsUpgradeBuildResult;
 
-    [[nodiscard]] auto process_inbound_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeProcessResult;
+    [[nodiscard]] auto process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult;
 
     [[nodiscard]] auto state() const noexcept -> FpsUpgradeState;
     [[nodiscard]] auto session_keys() const noexcept -> const std::optional<SessionKeys>&;
@@ -75,7 +74,6 @@ public:
     [[nodiscard]] auto has_channel_binding() const noexcept -> bool;
     [[nodiscard]] auto current_transcript_binding(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
     [[nodiscard]] auto current_transcript_snapshot(Direction direction) const -> std::optional<ZeroRttChannelBinding>;
-    void observe_tls_record(Direction direction, const TlsRecord& record);
 
 private:
     struct TranscriptState {
@@ -91,7 +89,6 @@ private:
 
     FpsUpgradeControllerConfig config_;
     ZeroRttUpgradeEngine zero_rtt_;
-    std::array<TlsRecordParser, 2> parsers_;
     FpsUpgradeState state_{FpsUpgradeState::cover_passthrough};
     std::optional<SessionKeys> session_keys_;
     std::optional<X25519PublicKey> client_public_key_;

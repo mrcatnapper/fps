@@ -123,11 +123,13 @@ public:
     explicit FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec);
     FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec, TlsRecordParser parser, TlsRecordLayerOptions record_options = {});
 
-    [[nodiscard]] auto encode_tls_record(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding)
-        -> FpsClassifiedRecordPipelineEncodeResult;
-    [[nodiscard]] auto process_inbound_tls(
-        Direction direction, std::span<const std::byte> bytes, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer
-    ) -> FpsClassifiedRecordPipelineProcessResult;
+    [[nodiscard]] auto encode_tls_record(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordPipelineEncodeResult;
+    [[nodiscard]] auto
+    process_inbound_tls(Direction direction, std::span<const std::byte> bytes, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer)
+        -> FpsClassifiedRecordPipelineProcessResult;
+    [[nodiscard]] auto
+    process_inbound_record(Direction direction, const TlsRecord& record, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer)
+        -> FpsClassifiedRecordPipelineProcessResult;
     [[nodiscard]] auto pending_bytes() const noexcept -> std::size_t;
 
 private:

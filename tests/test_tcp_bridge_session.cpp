@@ -107,6 +107,25 @@ auto read_tls_record(tcp::socket& socket) -> fps::ByteVector {
     return wire;
 }
 
+auto parse_record(std::span<const std::byte> wire) -> fps::TlsRecord {
+    fps::TlsRecordParser parser;
+    auto parsed = parser.feed(wire);
+    BOOST_TEST(parsed.errors.empty());
+    BOOST_TEST(parsed.pending_bytes == 0U);
+    BOOST_REQUIRE_EQUAL(parsed.records.size(), 1U);
+    return std::move(parsed.records.front());
+}
+
+auto observe_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
+    const auto record = parse_record(wire);
+    return controller.observe_tls_record(direction, record);
+}
+
+auto process_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
+    const auto record = parse_record(wire);
+    return controller.process_inbound_record(direction, record);
+}
+
 auto zero_rtt_controller_config(fps::ZeroRttUpgradeRole role, const fps::X25519KeyPair& local, const fps::X25519PublicKey& peer_or_allowed)
     -> fps::FpsUpgradeControllerConfig {
     fps::ZeroRttUpgradeConfig upgrade{
@@ -274,7 +293,7 @@ auto authenticate_server_fixture(ZeroRttBridgeFixture& fixture, const fps::X2551
         }
     );
     boost::asio::write(fixture.client_pair.external, boost::asio::buffer(cover_record));
-    auto observed = client_controller.observe_tls(fps::Direction::client_to_server, cover_record);
+    auto observed = observe_record(client_controller, fps::Direction::client_to_server, cover_record);
     BOOST_TEST(observed.parse_errors.empty());
     run_until(fixture.io, [&] { return cover_done; });
     BOOST_REQUIRE(cover_done);
@@ -284,7 +303,7 @@ auto authenticate_server_fixture(ZeroRttBridgeFixture& fixture, const fps::X2551
     auto upgrade = client_controller.build_client_upgrade_record(bytes({0xa5}), key_pair(121));
     BOOST_REQUIRE(upgrade);
     boost::asio::write(fixture.client_pair.external, boost::asio::buffer(upgrade.value()));
-    auto sent_upgrade = client_controller.observe_tls(fps::Direction::client_to_server, upgrade.value());
+    auto sent_upgrade = observe_record(client_controller, fps::Direction::client_to_server, upgrade.value());
     BOOST_TEST(sent_upgrade.parse_errors.empty());
     run_until(fixture.io, [&] { return fixture.authenticated_keys.has_value(); });
 
@@ -294,13 +313,13 @@ auto authenticate_server_fixture(ZeroRttBridgeFixture& fixture, const fps::X2551
 
     run_until(fixture.io, [&] { return fixture.client_pair.external.available() > 0U; });
     auto confirmation_wire = read_tls_record(fixture.client_pair.external);
-    fps::FpsClassifiedRecordPipeline client_confirmation{
-        fps::FpsClassifiedRecordCodec{classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)}
-    };
+    fps::FpsClassifiedRecordPipeline client_confirmation{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)
+    }};
     auto confirmation = client_confirmation.process_inbound_tls(
         fps::Direction::server_to_client, confirmation_wire,
         [&](fps::Direction record_direction) { return client_controller.current_transcript_snapshot(record_direction); },
-        [&](fps::Direction record_direction, const fps::TlsRecord& record) { client_controller.observe_tls_record(record_direction, record); }
+        [&](fps::Direction record_direction, const fps::TlsRecord& record) { (void)client_controller.observe_tls_record(record_direction, record); }
     );
     BOOST_TEST(!confirmation.close_required);
     BOOST_TEST(confirmation.frames.empty());
@@ -444,7 +463,7 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
         }
     );
     boost::asio::write(fixture.client_pair.external, boost::asio::buffer(cover_record));
-    auto observed = client_controller.observe_tls(fps::Direction::client_to_server, cover_record);
+    auto observed = observe_record(client_controller, fps::Direction::client_to_server, cover_record);
     BOOST_TEST(observed.parse_errors.empty());
     run_until(fixture.io, [&] { return cover_done; });
     BOOST_REQUIRE(cover_done);
@@ -454,7 +473,7 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
     auto upgrade = client_controller.build_client_upgrade_record(bytes({0xa5}), key_pair(121));
     BOOST_REQUIRE(upgrade);
     boost::asio::write(fixture.client_pair.external, boost::asio::buffer(upgrade.value()));
-    auto sent_upgrade = client_controller.observe_tls(fps::Direction::client_to_server, upgrade.value());
+    auto sent_upgrade = observe_record(client_controller, fps::Direction::client_to_server, upgrade.value());
     BOOST_TEST(sent_upgrade.parse_errors.empty());
     run_until(fixture.io, [&] { return fixture.authenticated_keys.has_value(); });
 
@@ -464,22 +483,22 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
     BOOST_CHECK(fixture.authenticated_keys->client_to_server.key == client_controller.session_keys()->client_to_server.key);
     run_until(fixture.io, [&] { return fixture.client_pair.external.available() > 0U; });
     auto confirmation_wire = read_tls_record(fixture.client_pair.external);
-    fps::FpsClassifiedRecordPipeline client_confirmation{
-        fps::FpsClassifiedRecordCodec{classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)}
-    };
+    fps::FpsClassifiedRecordPipeline client_confirmation{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)
+    }};
     auto confirmation = client_confirmation.process_inbound_tls(
         fps::Direction::server_to_client, confirmation_wire,
         [&](fps::Direction record_direction) { return client_controller.current_transcript_snapshot(record_direction); },
-        [&](fps::Direction record_direction, const fps::TlsRecord& record) { client_controller.observe_tls_record(record_direction, record); }
+        [&](fps::Direction record_direction, const fps::TlsRecord& record) { (void)client_controller.observe_tls_record(record_direction, record); }
     );
     BOOST_TEST(!confirmation.close_required);
     BOOST_TEST(confirmation.frames.empty());
 
     const auto inner_tls = tls_app_record({0x44, 0x45, 0x46});
     const auto payload = bytes({0xde, 0xad, 0xbe, 0xef});
-    fps::FpsClassifiedRecordPipeline client_fps{
-        fps::FpsClassifiedRecordCodec{classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)}
-    };
+    fps::FpsClassifiedRecordPipeline client_fps{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)
+    }};
     auto classified = client_fps.encode_tls_record(
         fps::FpsEnvelopeContent{
             .inner_tls_bytes = {},
@@ -491,13 +510,13 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
                         .payload = payload,
                         .padding_size = 1,
                     },
-            },
+                },
             .padding_size = 2,
         },
         *client_controller.current_transcript_snapshot(fps::Direction::client_to_server)
     );
     BOOST_REQUIRE(classified);
-    auto sent_classified = client_controller.observe_tls(fps::Direction::client_to_server, classified.value());
+    auto sent_classified = observe_record(client_controller, fps::Direction::client_to_server, classified.value());
     BOOST_TEST(sent_classified.parse_errors.empty());
 
     fps::ByteVector forwarded_inner(inner_tls.size());
@@ -549,7 +568,7 @@ BOOST_AUTO_TEST_CASE(server_role_forwards_post_auth_tls_record_coalesced_with_up
         }
     );
     boost::asio::write(fixture.client_pair.external, boost::asio::buffer(cover_record));
-    auto observed = client_controller.observe_tls(fps::Direction::client_to_server, cover_record);
+    auto observed = observe_record(client_controller, fps::Direction::client_to_server, cover_record);
     BOOST_TEST(observed.parse_errors.empty());
     run_until(fixture.io, [&] { return cover_done; });
     BOOST_REQUIRE(cover_done);
@@ -559,8 +578,8 @@ BOOST_AUTO_TEST_CASE(server_role_forwards_post_auth_tls_record_coalesced_with_up
     auto upgrade = client_controller.build_client_upgrade_record(bytes({0xa6}), key_pair(123));
     BOOST_REQUIRE(upgrade);
     const auto following_carrier = tls_app_record({0x91, 0x92, 0x93, 0x94});
-    auto sent_upgrade = client_controller.observe_tls(fps::Direction::client_to_server, upgrade.value());
-    auto sent_following = client_controller.observe_tls(fps::Direction::client_to_server, following_carrier);
+    auto sent_upgrade = observe_record(client_controller, fps::Direction::client_to_server, upgrade.value());
+    auto sent_following = observe_record(client_controller, fps::Direction::client_to_server, following_carrier);
     BOOST_TEST(sent_upgrade.parse_errors.empty());
     BOOST_TEST(sent_following.parse_errors.empty());
 
@@ -590,15 +609,118 @@ BOOST_AUTO_TEST_CASE(server_role_forwards_post_auth_tls_record_coalesced_with_up
     BOOST_TEST(!fixture.closed_stats.has_value());
 }
 
+BOOST_AUTO_TEST_CASE(server_role_preserves_partial_post_auth_record_split_after_upgrade) {
+    const auto client_keys = key_pair(38);
+    const auto server_keys = key_pair(98);
+    ZeroRttBridgeFixture fixture{bridge_zero_rtt_options(fps::ZeroRttUpgradeRole::server, client_keys, server_keys), 4096U};
+    fps::FpsUpgradeController client_controller{zero_rtt_controller_config(fps::ZeroRttUpgradeRole::client, client_keys, server_keys.public_key)};
+    const auto cover_record = tls_app_record({0x82, 0x83, 0x84});
+
+    fps::ByteVector forwarded_cover(cover_record.size());
+    bool cover_done = false;
+    boost::system::error_code cover_error;
+    boost::asio::async_read(
+        fixture.origin_pair.external, boost::asio::buffer(forwarded_cover), boost::asio::transfer_exactly(forwarded_cover.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            cover_error = error;
+            cover_done = true;
+        }
+    );
+    boost::asio::write(fixture.client_pair.external, boost::asio::buffer(cover_record));
+    auto observed = observe_record(client_controller, fps::Direction::client_to_server, cover_record);
+    BOOST_TEST(observed.parse_errors.empty());
+    run_until(fixture.io, [&] { return cover_done; });
+    BOOST_REQUIRE(cover_done);
+    BOOST_REQUIRE(!cover_error);
+
+    auto upgrade = client_controller.build_client_upgrade_record(bytes({0xa7}), key_pair(124));
+    BOOST_REQUIRE(upgrade);
+    const auto following_carrier = tls_app_record({0x92, 0x93, 0x94, 0x95});
+    auto sent_upgrade = observe_record(client_controller, fps::Direction::client_to_server, upgrade.value());
+    auto sent_following = observe_record(client_controller, fps::Direction::client_to_server, following_carrier);
+    BOOST_TEST(sent_upgrade.parse_errors.empty());
+    BOOST_TEST(sent_following.parse_errors.empty());
+
+    constexpr std::size_t first_fragment_size = 3U;
+    fps::ByteVector first_write;
+    first_write.reserve(upgrade.value().size() + first_fragment_size);
+    first_write.insert(first_write.end(), upgrade.value().begin(), upgrade.value().end());
+    first_write.insert(first_write.end(), following_carrier.begin(), following_carrier.begin() + static_cast<std::ptrdiff_t>(first_fragment_size));
+
+    fps::ByteVector forwarded_following(following_carrier.size());
+    bool following_done = false;
+    boost::system::error_code following_error;
+    boost::asio::async_read(
+        fixture.origin_pair.external, boost::asio::buffer(forwarded_following), boost::asio::transfer_exactly(forwarded_following.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            following_error = error;
+            following_done = true;
+        }
+    );
+
+    boost::asio::write(fixture.client_pair.external, boost::asio::buffer(first_write));
+    run_until(fixture.io, [&] { return fixture.authenticated_keys.has_value() || fixture.closed_stats.has_value(); });
+    BOOST_REQUIRE(fixture.authenticated_keys.has_value());
+    BOOST_TEST(!fixture.closed_stats.has_value());
+    BOOST_TEST(!following_done);
+
+    boost::asio::write(
+        fixture.client_pair.external, boost::asio::buffer(following_carrier.data() + first_fragment_size, following_carrier.size() - first_fragment_size)
+    );
+    run_until(fixture.io, [&] { return following_done || fixture.closed_stats.has_value(); });
+
+    BOOST_REQUIRE(following_done);
+    BOOST_REQUIRE(!following_error);
+    BOOST_CHECK(forwarded_following == following_carrier);
+    BOOST_TEST(fixture.classified_errors.empty());
+    BOOST_TEST(!fixture.closed_stats.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(server_role_preserves_partial_peer_record_across_auth_transition) {
+    const auto client_keys = key_pair(39);
+    const auto server_keys = key_pair(99);
+    ZeroRttBridgeFixture fixture{bridge_zero_rtt_options(fps::ZeroRttUpgradeRole::server, client_keys, server_keys), 4096U};
+    const auto raced_origin_record = tls_app_record({0xa1, 0xa2, 0xa3, 0xa4});
+    constexpr std::size_t first_fragment_size = 4U;
+
+    boost::asio::write(fixture.origin_pair.external, boost::asio::buffer(raced_origin_record.data(), first_fragment_size));
+    fixture.io.run_for(std::chrono::milliseconds{25});
+    fixture.io.restart();
+    BOOST_TEST(fixture.client_pair.external.available() == 0U);
+
+    (void)authenticate_server_fixture(fixture, client_keys, server_keys);
+
+    fps::ByteVector forwarded_record(raced_origin_record.size());
+    bool forwarded_done = false;
+    boost::system::error_code forwarded_error;
+    boost::asio::async_read(
+        fixture.client_pair.external, boost::asio::buffer(forwarded_record), boost::asio::transfer_exactly(forwarded_record.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            forwarded_error = error;
+            forwarded_done = true;
+        }
+    );
+    boost::asio::write(
+        fixture.origin_pair.external, boost::asio::buffer(raced_origin_record.data() + first_fragment_size, raced_origin_record.size() - first_fragment_size)
+    );
+    run_until(fixture.io, [&] { return forwarded_done || fixture.closed_stats.has_value(); });
+
+    BOOST_REQUIRE(forwarded_done);
+    BOOST_REQUIRE(!forwarded_error);
+    BOOST_CHECK(forwarded_record == raced_origin_record);
+    BOOST_TEST(fixture.classified_errors.empty());
+    BOOST_TEST(!fixture.closed_stats.has_value());
+}
+
 BOOST_AUTO_TEST_CASE(authenticated_invalid_classified_record_reports_decode_close_reason) {
     const auto client_keys = key_pair(35);
     const auto server_keys = key_pair(95);
     ZeroRttBridgeFixture fixture{bridge_zero_rtt_options(fps::ZeroRttUpgradeRole::server, client_keys, server_keys)};
     auto client_controller = authenticate_server_fixture(fixture, client_keys, server_keys);
 
-    fps::FpsClassifiedRecordPipeline client_fps{
-        fps::FpsClassifiedRecordCodec{classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)}
-    };
+    fps::FpsClassifiedRecordPipeline client_fps{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)
+    }};
     auto classified = client_fps.encode_tls_record(
         fps::FpsEnvelopeContent{.inner_tls_bytes = {}, .frames = {}, .padding_size = 0},
         *client_controller.current_transcript_snapshot(fps::Direction::client_to_server)
@@ -715,13 +837,13 @@ BOOST_AUTO_TEST_CASE(client_role_injects_late_zero_rtt_upgrade_and_forwards_foll
     BOOST_REQUIRE(cover_done);
     BOOST_REQUIRE(!cover_error);
     BOOST_CHECK(forwarded_cover == cover_record);
-    auto server_cover = server_controller.process_inbound_tls(fps::Direction::client_to_server, cover_record);
+    auto server_cover = process_record(server_controller, fps::Direction::client_to_server, cover_record);
     BOOST_CHECK(server_cover.session_keys == std::nullopt);
     BOOST_CHECK(server_cover.forward_bytes == cover_record);
 
     run_until(fixture.io, [&] { return fixture.origin_pair.external.available() > 0U; });
     auto upgrade_wire = read_tls_record(fixture.origin_pair.external);
-    auto verified = server_controller.process_inbound_tls(fps::Direction::client_to_server, upgrade_wire);
+    auto verified = process_record(server_controller, fps::Direction::client_to_server, upgrade_wire);
     BOOST_REQUIRE(verified.session_keys.has_value());
     BOOST_CHECK(verified.forward_bytes.empty());
     BOOST_TEST(!fixture.authenticated_keys.has_value());
@@ -738,16 +860,16 @@ BOOST_AUTO_TEST_CASE(client_role_injects_late_zero_rtt_upgrade_and_forwards_foll
         }
     );
     boost::asio::write(fixture.origin_pair.external, boost::asio::buffer(raced_origin_record));
-    auto observed_raced = server_controller.observe_tls(fps::Direction::server_to_client, raced_origin_record);
+    auto observed_raced = observe_record(server_controller, fps::Direction::server_to_client, raced_origin_record);
     BOOST_TEST(observed_raced.parse_errors.empty());
     run_until(fixture.io, [&] { return raced_done; });
     BOOST_REQUIRE(raced_done);
     BOOST_REQUIRE(!raced_error);
     BOOST_CHECK(forwarded_raced_record == raced_origin_record);
     BOOST_TEST(!fixture.authenticated_keys.has_value());
-    fps::FpsClassifiedRecordPipeline server_confirmation{
-        fps::FpsClassifiedRecordCodec{classified_config(fps::Direction::server_to_client, *verified.session_keys, client_keys.public_key, server_keys.public_key)}
-    };
+    fps::FpsClassifiedRecordPipeline server_confirmation{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::server_to_client, *verified.session_keys, client_keys.public_key, server_keys.public_key)
+    }};
     const auto confirmation_payload = bytes({0xaa, 0xbb});
     auto confirmation = server_confirmation.encode_tls_record(
         fps::FpsEnvelopeContent{

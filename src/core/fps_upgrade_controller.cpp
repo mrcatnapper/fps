@@ -57,26 +57,17 @@ transcript_seed(const ZeroRttUpgradeConfig& config, std::string_view profile_id,
 
 } // namespace
 
-FpsUpgradeController::FpsUpgradeController(FpsUpgradeControllerConfig config)
-    : config_(normalize_config(std::move(config)))
-    , zero_rtt_(config_.zero_rtt)
-    , parsers_{TlsRecordParser{config_.parser_options}, TlsRecordParser{config_.parser_options}} {
+FpsUpgradeController::FpsUpgradeController(FpsUpgradeControllerConfig config) : config_(normalize_config(std::move(config))), zero_rtt_(config_.zero_rtt) {
     initialize_transcripts();
 }
 
-auto FpsUpgradeController::observe_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeObserveResult {
+auto FpsUpgradeController::observe_tls_record(Direction direction, const TlsRecord& record) -> FpsUpgradeObserveResult {
     FpsUpgradeObserveResult result;
-    auto parsed = parsers_[direction_index(direction)].feed(bytes);
-    result.parse_errors = std::move(parsed.errors);
-    result.pending_tls_bytes = parsed.pending_bytes;
-
-    for(const auto& record : parsed.records) {
-        if(is_malformed(record)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            continue;
-        }
-        update_transcript(direction, record);
+    if(is_malformed(record)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        return result;
     }
+    update_transcript(direction, record);
     return result;
 }
 
@@ -104,40 +95,33 @@ auto FpsUpgradeController::build_client_upgrade_record(std::span<const std::byte
     return FpsUpgradeBuildResult::success(std::move(record).value());
 }
 
-auto FpsUpgradeController::process_inbound_tls(Direction direction, std::span<const std::byte> bytes) -> FpsUpgradeProcessResult {
+auto FpsUpgradeController::process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult {
     FpsUpgradeProcessResult result;
-    auto parsed = parsers_[direction_index(direction)].feed(bytes);
-    result.parse_errors = std::move(parsed.errors);
-    result.pending_tls_bytes = parsed.pending_bytes;
+    if(is_malformed(record)) {
+        result.record_errors.push_back(TlsRecordLayerError::malformed_record);
+        result.state = state_;
+        return result;
+    }
 
-    for(const auto& record : parsed.records) {
-        if(is_malformed(record)) {
-            result.record_errors.push_back(TlsRecordLayerError::malformed_record);
-            continue;
+    const auto binding = current_transcript_binding(direction);
+    const auto can_try_upgrade = state_ == FpsUpgradeState::cover_passthrough && config_.zero_rtt.role == ZeroRttUpgradeRole::server &&
+                                 direction == config_.upgrade_direction && record.is_application_data() && binding.has_value();
+    if(can_try_upgrade) {
+        auto verified = zero_rtt_.verify_client_upgrade(record.payload(), *binding);
+        if(verified) {
+            session_keys_ = verified.value().session_keys;
+            client_public_key_ = verified.value().client_public_key;
+            result.session_keys = session_keys_;
+            result.client_public_key = client_public_key_;
+            state_ = FpsUpgradeState::authenticated;
+            update_transcript(direction, record);
+            result.state = state_;
+            return result;
         }
+        result.upgrade_errors.push_back(verified.error());
+    }
 
-        const auto binding = current_transcript_binding(direction);
-        const auto can_try_upgrade = state_ == FpsUpgradeState::cover_passthrough && config_.zero_rtt.role == ZeroRttUpgradeRole::server &&
-                                     direction == config_.upgrade_direction && record.is_application_data() && binding.has_value();
-        if(can_try_upgrade) {
-            auto verified = zero_rtt_.verify_client_upgrade(record.payload(), *binding);
-            if(verified) {
-                session_keys_ = verified.value().session_keys;
-                client_public_key_ = verified.value().client_public_key;
-                result.session_keys = session_keys_;
-                result.client_public_key = client_public_key_;
-                state_ = FpsUpgradeState::authenticated;
-                update_transcript(direction, record);
-                continue;
-            }
-            result.upgrade_errors.push_back(verified.error());
-        }
-
-        if(state_ == FpsUpgradeState::authenticated) {
-            append_forward(result.post_auth_bytes, record);
-            continue;
-        }
-
+    if(state_ != FpsUpgradeState::authenticated) {
         append_forward(result.forward_bytes, record);
         update_transcript(direction, record);
     }
@@ -184,8 +168,6 @@ auto FpsUpgradeController::current_transcript_snapshot(Direction direction) cons
         .profile_id = config_.profile_id,
     };
 }
-
-void FpsUpgradeController::observe_tls_record(Direction direction, const TlsRecord& record) { update_transcript(direction, record); }
 
 void FpsUpgradeController::initialize_transcripts() {
     std::optional<X25519PublicKey> server_public;

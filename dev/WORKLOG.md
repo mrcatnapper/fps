@@ -4,6 +4,53 @@
 
 ## 2026-05-29
 
+### Make TCP bridge TLS framing session-owned
+
+Goal:
+
+- Fix the remaining PR #4 framing risk: TCP `read_some` boundaries must not be
+  treated as TLS record boundaries before, during or after Zero-RTT upgrade.
+- Add failing regressions first, then refactor the bridge path so upgrade,
+  cover and classified processing all consume complete TLS records.
+
+Finding:
+
+- The previous coalesced-record fix handled a complete post-auth TLS record in
+  the same read as the upgrade, but it still relied on separate parsers in
+  upgrade/classified/cover layers. A malicious or unlucky TCP segmentation could
+  split the next TLS record across the auth transition and lose parser state.
+
+Done:
+
+- Added bridge regressions for:
+  - a post-auth client-to-server carrier TLS record split immediately after the
+    upgrade record;
+  - a server-to-client origin TLS record split across the client auth
+    confirmation transition.
+- Moved stream slicing ownership into `TcpBridgeSession`: each direction now has
+  one `TlsRecordParser`, and the bridge dispatches complete `TlsRecord`s to
+  cover, Zero-RTT and classified-record processors.
+- Reduced `FpsUpgradeController` to record-level observation/verification and
+  removed the temporary `post_auth_bytes` handoff.
+- Added record-level entry points to cover/classified pipelines for bridge use
+  while keeping their byte-stream helpers for unit tests and lower-level users.
+- Updated unit tests to match the record-level upgrade-controller contract.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=fps_upgrade_controller,tcp_bridge_session`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+- `git diff --check`
+
+Commit:
+
+- This commit: `Make TCP bridge TLS framing session-owned`
+
 ### Final v4 PR self-review fix
 
 Goal:

@@ -47,6 +47,7 @@ public:
         -> CoverSessionBytesResult;
 
     [[nodiscard]] auto process_inbound_tls(std::span<const std::byte> bytes) -> CoverSessionProcessResult;
+    [[nodiscard]] auto process_inbound_record(const TlsRecord& record) -> CoverSessionProcessResult;
 
     [[nodiscard]] auto pending_tls_bytes() const noexcept -> std::size_t;
 

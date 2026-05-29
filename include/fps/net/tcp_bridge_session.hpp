@@ -109,9 +109,7 @@ enum class TcpBridgeCloseComponent {
     shaper,
     session,
 };
-BOOST_DESCRIBE_ENUM(
-    TcpBridgeCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session
-)
+BOOST_DESCRIBE_ENUM(TcpBridgeCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session)
 
 enum class TcpBridgeCloseStage {
     tls_record,
@@ -228,20 +226,31 @@ private:
         FpsClassifiedRecordPipeline outbound_server_to_client;
     };
 
+    struct RecordProcessOutput {
+        ByteVector bytes;
+        std::size_t cover_bytes = 0;
+        bool pause_read = false;
+    };
+
     void stop_with(TcpBridgeCloseInfo close_info);
     void set_pending_close_info(TcpBridgeCloseInfo close_info);
     [[nodiscard]] auto pending_or_default_close(TcpBridgeCloseInfo fallback) const -> TcpBridgeCloseInfo;
 
     void pump(Direction direction);
     void handle_read(Direction direction, const boost::system::error_code& error, std::size_t bytes_read);
-    [[nodiscard]] auto process_zero_rtt_if_needed(Direction direction, std::span<const std::byte> bytes) -> bool;
+    [[nodiscard]] auto process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput;
+    [[nodiscard]] auto process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput;
+    [[nodiscard]] auto process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput;
+    [[nodiscard]] auto process_preconfirmed_client_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput;
+    [[nodiscard]] auto process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput;
+    [[nodiscard]] auto maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput;
     [[nodiscard]] auto zero_rtt_peer_direction() const noexcept -> Direction;
     void activate_zero_rtt_classified_pipelines(const SessionKeys& session_keys, const X25519PublicKey& client_public_key);
     [[nodiscard]] auto send_zero_rtt_key_confirmation(Direction upgrade_direction) -> bool;
     [[nodiscard]] auto can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool;
-    [[nodiscard]] auto process_authenticated_tls_bytes(Direction direction, std::span<const std::byte> bytes) -> bool;
     [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult;
-    [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames) -> Result<WriteItem, TcpBridgeEnqueueError>;
+    [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames)
+        -> Result<WriteItem, TcpBridgeEnqueueError>;
     [[nodiscard]] auto shaper_enabled() const noexcept -> bool;
     void observe_cover_bytes(Direction direction, std::size_t bytes);
     void enqueue_counted_write(Direction direction, WriteItem item);
@@ -260,6 +269,7 @@ private:
     [[nodiscard]] auto outbound_pipeline(Direction direction) -> CoverSessionPipeline&;
     [[nodiscard]] auto inbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline&;
     [[nodiscard]] auto outbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline&;
+    [[nodiscard]] auto tls_record_parser(Direction direction) -> TlsRecordParser&;
     [[nodiscard]] auto read_buffer(Direction direction) -> std::vector<std::byte>&;
     [[nodiscard]] auto write_queue(Direction direction) -> std::deque<WriteItem>&;
     [[nodiscard]] auto shaped_write_queue(Direction direction) -> std::deque<ShapedWriteItem>&;
@@ -292,6 +302,8 @@ private:
     std::optional<Shaper> shaper_;
     TcpBridgeSessionHandlers handlers_;
     TcpBridgeSessionConfig config_;
+    TlsRecordParser client_to_server_tls_parser_;
+    TlsRecordParser server_to_client_tls_parser_;
     std::vector<std::byte> client_to_server_buffer_;
     std::vector<std::byte> server_to_client_buffer_;
     std::deque<WriteItem> client_to_server_writes_;

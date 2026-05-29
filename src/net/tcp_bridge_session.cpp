@@ -23,6 +23,18 @@ using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
 using detail::is_tun_frame;
 using detail::normalize_config;
+
+namespace {
+
+[[nodiscard]] auto session_parser_options(const TcpBridgeSessionConfig& config) -> TlsRecordParserOptions {
+    if(config.zero_rtt.has_value()) {
+        return config.zero_rtt->controller_config.parser_options;
+    }
+    return {};
+}
+
+} // namespace
+
 auto TcpBridgeSession::create(
     TcpSocket client_socket, TcpSocket origin_socket, CoverSessionPipeline client_to_server_pipeline, CoverSessionPipeline server_to_client_pipeline,
     TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
@@ -54,6 +66,8 @@ TcpBridgeSession::TcpBridgeSession(
     , pipelines_(std::move(pipelines))
     , handlers_(std::move(handlers))
     , config_(normalize_config(config))
+    , client_to_server_tls_parser_(session_parser_options(config_))
+    , server_to_client_tls_parser_(session_parser_options(config_))
     , client_to_server_buffer_(config_.read_buffer_size)
     , server_to_client_buffer_(config_.read_buffer_size) {
     if(config_.zero_rtt.has_value()) {
@@ -152,6 +166,10 @@ auto TcpBridgeSession::inbound_classified_pipeline(Direction direction) -> FpsCl
 
 auto TcpBridgeSession::outbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
     return direction == Direction::client_to_server ? classified_pipelines_->outbound_client_to_server : classified_pipelines_->outbound_server_to_client;
+}
+
+auto TcpBridgeSession::tls_record_parser(Direction direction) -> TlsRecordParser& {
+    return direction == Direction::client_to_server ? client_to_server_tls_parser_ : server_to_client_tls_parser_;
 }
 
 auto TcpBridgeSession::read_buffer(Direction direction) -> std::vector<std::byte>& {

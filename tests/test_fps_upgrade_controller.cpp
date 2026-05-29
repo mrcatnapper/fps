@@ -4,6 +4,8 @@
 
 #include <cstddef>
 #include <optional>
+#include <span>
+#include <utility>
 
 namespace {
 
@@ -78,6 +80,25 @@ auto app_record(std::initializer_list<unsigned int> values) -> fps::ByteVector {
     return record.value();
 }
 
+auto parse_record(std::span<const std::byte> wire) -> fps::TlsRecord {
+    fps::TlsRecordParser parser;
+    auto parsed = parser.feed(wire);
+    BOOST_TEST(parsed.errors.empty());
+    BOOST_TEST(parsed.pending_bytes == 0U);
+    BOOST_REQUIRE_EQUAL(parsed.records.size(), 1U);
+    return std::move(parsed.records.front());
+}
+
+auto observe_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
+    const auto record = parse_record(wire);
+    return controller.observe_tls_record(direction, record);
+}
+
+auto process_record(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) {
+    const auto record = parse_record(wire);
+    return controller.process_inbound_record(direction, record);
+}
+
 } // namespace
 
 BOOST_AUTO_TEST_SUITE(fps_upgrade_controller)
@@ -89,8 +110,8 @@ BOOST_AUTO_TEST_CASE(valid_late_upgrade_strips_candidate_and_derives_keys) {
     fps::FpsUpgradeController server_controller{controller_config(server_zero_rtt(server, client))};
     const auto cover = app_record({0x16, 0x03, 0x03, 0x01});
 
-    auto client_observed = client_controller.observe_tls(fps::Direction::client_to_server, cover);
-    auto server_cover = server_controller.process_inbound_tls(fps::Direction::client_to_server, cover);
+    auto client_observed = observe_record(client_controller, fps::Direction::client_to_server, cover);
+    auto server_cover = process_record(server_controller, fps::Direction::client_to_server, cover);
     BOOST_TEST(client_observed.parse_errors.empty());
     BOOST_TEST(server_cover.parse_errors.empty());
     BOOST_CHECK(server_cover.forward_bytes == cover);
@@ -99,46 +120,13 @@ BOOST_AUTO_TEST_CASE(valid_late_upgrade_strips_candidate_and_derives_keys) {
 
     auto upgrade_record = client_controller.build_client_upgrade_record(bytes({0xaa}), key_pair(131));
     BOOST_REQUIRE(upgrade_record);
-    auto server_upgrade = server_controller.process_inbound_tls(fps::Direction::client_to_server, upgrade_record.value());
+    auto server_upgrade = process_record(server_controller, fps::Direction::client_to_server, upgrade_record.value());
     BOOST_REQUIRE(server_upgrade.session_keys.has_value());
     BOOST_TEST(server_upgrade.forward_bytes.empty());
     BOOST_CHECK(server_controller.state() == fps::FpsUpgradeState::authenticated);
     BOOST_CHECK(client_controller.session_keys()->client_to_server.key == server_upgrade.session_keys->client_to_server.key);
     BOOST_CHECK(client_controller.session_keys()->server_to_client.key == server_upgrade.session_keys->server_to_client.key);
     BOOST_TEST(client_controller.next_record_index() == 1U);
-    BOOST_TEST(server_controller.next_record_index() == 2U);
-}
-
-BOOST_AUTO_TEST_CASE(coalesced_post_auth_record_is_returned_for_classification) {
-    const auto client = key_pair(25);
-    const auto server = key_pair(95);
-    fps::FpsUpgradeController client_controller{controller_config(client_zero_rtt(client, server))};
-    fps::FpsUpgradeController server_controller{controller_config(server_zero_rtt(server, client))};
-    const auto cover = app_record({0x21, 0x22, 0x23});
-    const auto following_carrier = app_record({0x61, 0x62, 0x63});
-
-    auto client_observed = client_controller.observe_tls(fps::Direction::client_to_server, cover);
-    auto server_cover = server_controller.process_inbound_tls(fps::Direction::client_to_server, cover);
-    BOOST_TEST(client_observed.parse_errors.empty());
-    BOOST_CHECK(server_cover.forward_bytes == cover);
-
-    auto upgrade_record = client_controller.build_client_upgrade_record(bytes({0xbb}), key_pair(135));
-    BOOST_REQUIRE(upgrade_record);
-    auto sent_upgrade = client_controller.observe_tls(fps::Direction::client_to_server, upgrade_record.value());
-    auto sent_following = client_controller.observe_tls(fps::Direction::client_to_server, following_carrier);
-    BOOST_TEST(sent_upgrade.parse_errors.empty());
-    BOOST_TEST(sent_following.parse_errors.empty());
-
-    fps::ByteVector coalesced;
-    coalesced.insert(coalesced.end(), upgrade_record.value().begin(), upgrade_record.value().end());
-    coalesced.insert(coalesced.end(), following_carrier.begin(), following_carrier.end());
-
-    auto result = server_controller.process_inbound_tls(fps::Direction::client_to_server, coalesced);
-
-    BOOST_REQUIRE(result.session_keys.has_value());
-    BOOST_TEST(result.forward_bytes.empty());
-    BOOST_CHECK(result.post_auth_bytes == following_carrier);
-    BOOST_CHECK(server_controller.state() == fps::FpsUpgradeState::authenticated);
     BOOST_TEST(server_controller.next_record_index() == 2U);
 }
 
@@ -149,8 +137,8 @@ BOOST_AUTO_TEST_CASE(non_upgrade_application_record_falls_back_byte_for_byte) {
     const auto cover = app_record({0x01, 0x02, 0x03});
     const auto ordinary = app_record({0x99, 0x88, 0x77});
 
-    auto first = server_controller.process_inbound_tls(fps::Direction::client_to_server, cover);
-    auto second = server_controller.process_inbound_tls(fps::Direction::client_to_server, ordinary);
+    auto first = process_record(server_controller, fps::Direction::client_to_server, cover);
+    auto second = process_record(server_controller, fps::Direction::client_to_server, ordinary);
 
     BOOST_CHECK(first.forward_bytes == cover);
     BOOST_CHECK(second.forward_bytes == ordinary);
@@ -167,37 +155,20 @@ BOOST_AUTO_TEST_CASE(wrong_channel_binding_keeps_candidate_as_cover_bytes) {
     const auto server_cover = app_record({0x10, 0x20, 0x30});
     const auto client_cover = app_record({0x10, 0x20, 0x31});
 
-    auto server_first = server_controller.process_inbound_tls(fps::Direction::client_to_server, server_cover);
-    auto client_first = client_controller.observe_tls(fps::Direction::client_to_server, client_cover);
+    auto server_first = process_record(server_controller, fps::Direction::client_to_server, server_cover);
+    auto client_first = observe_record(client_controller, fps::Direction::client_to_server, client_cover);
     BOOST_TEST(server_first.parse_errors.empty());
     BOOST_TEST(client_first.parse_errors.empty());
 
     auto upgrade_record = client_controller.build_client_upgrade_record({}, key_pair(132));
     BOOST_REQUIRE(upgrade_record);
-    auto server_upgrade = server_controller.process_inbound_tls(fps::Direction::client_to_server, upgrade_record.value());
+    auto server_upgrade = process_record(server_controller, fps::Direction::client_to_server, upgrade_record.value());
 
     BOOST_CHECK(server_upgrade.forward_bytes == upgrade_record.value());
     BOOST_CHECK(!server_upgrade.session_keys.has_value());
     BOOST_CHECK(server_upgrade.state == fps::FpsUpgradeState::cover_passthrough);
     BOOST_REQUIRE_EQUAL(server_upgrade.upgrade_errors.size(), 1U);
     BOOST_CHECK(server_upgrade.upgrade_errors[0] == fps::ZeroRttUpgradeError::precheck_failed);
-}
-
-BOOST_AUTO_TEST_CASE(fragmented_tls_record_waits_for_boundary_before_trial) {
-    const auto client = key_pair(24);
-    const auto server = key_pair(94);
-    fps::FpsUpgradeController server_controller{controller_config(server_zero_rtt(server, client))};
-    const auto cover = app_record({0x31, 0x32, 0x33, 0x34});
-
-    const auto first_half = std::span<const std::byte>{cover}.first(3);
-    const auto second_half = std::span<const std::byte>{cover}.subspan(3);
-    auto first = server_controller.process_inbound_tls(fps::Direction::client_to_server, first_half);
-    auto second = server_controller.process_inbound_tls(fps::Direction::client_to_server, second_half);
-
-    BOOST_TEST(first.forward_bytes.empty());
-    BOOST_TEST(first.pending_tls_bytes == 3U);
-    BOOST_CHECK(second.forward_bytes == cover);
-    BOOST_TEST(server_controller.has_channel_binding());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
