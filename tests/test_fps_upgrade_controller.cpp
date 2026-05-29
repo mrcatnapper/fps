@@ -109,6 +109,39 @@ BOOST_AUTO_TEST_CASE(valid_late_upgrade_strips_candidate_and_derives_keys) {
     BOOST_TEST(server_controller.next_record_index() == 2U);
 }
 
+BOOST_AUTO_TEST_CASE(coalesced_post_auth_record_is_returned_for_classification) {
+    const auto client = key_pair(25);
+    const auto server = key_pair(95);
+    fps::FpsUpgradeController client_controller{controller_config(client_zero_rtt(client, server))};
+    fps::FpsUpgradeController server_controller{controller_config(server_zero_rtt(server, client))};
+    const auto cover = app_record({0x21, 0x22, 0x23});
+    const auto following_carrier = app_record({0x61, 0x62, 0x63});
+
+    auto client_observed = client_controller.observe_tls(fps::Direction::client_to_server, cover);
+    auto server_cover = server_controller.process_inbound_tls(fps::Direction::client_to_server, cover);
+    BOOST_TEST(client_observed.parse_errors.empty());
+    BOOST_CHECK(server_cover.forward_bytes == cover);
+
+    auto upgrade_record = client_controller.build_client_upgrade_record(bytes({0xbb}), key_pair(135));
+    BOOST_REQUIRE(upgrade_record);
+    auto sent_upgrade = client_controller.observe_tls(fps::Direction::client_to_server, upgrade_record.value());
+    auto sent_following = client_controller.observe_tls(fps::Direction::client_to_server, following_carrier);
+    BOOST_TEST(sent_upgrade.parse_errors.empty());
+    BOOST_TEST(sent_following.parse_errors.empty());
+
+    fps::ByteVector coalesced;
+    coalesced.insert(coalesced.end(), upgrade_record.value().begin(), upgrade_record.value().end());
+    coalesced.insert(coalesced.end(), following_carrier.begin(), following_carrier.end());
+
+    auto result = server_controller.process_inbound_tls(fps::Direction::client_to_server, coalesced);
+
+    BOOST_REQUIRE(result.session_keys.has_value());
+    BOOST_TEST(result.forward_bytes.empty());
+    BOOST_CHECK(result.post_auth_bytes == following_carrier);
+    BOOST_CHECK(server_controller.state() == fps::FpsUpgradeState::authenticated);
+    BOOST_TEST(server_controller.next_record_index() == 2U);
+}
+
 BOOST_AUTO_TEST_CASE(non_upgrade_application_record_falls_back_byte_for_byte) {
     const auto client = key_pair(22);
     const auto server = key_pair(92);

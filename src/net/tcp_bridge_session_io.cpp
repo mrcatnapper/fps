@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -245,6 +246,7 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
 
         auto result = zero_rtt_controller_->process_inbound_tls(direction, bytes);
         auto forward_bytes = std::move(result.forward_bytes);
+        auto post_auth_bytes = std::move(result.post_auth_bytes);
         const auto authenticated = result.session_keys.has_value();
         if(authenticated && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
@@ -265,13 +267,37 @@ auto TcpBridgeSession::process_zero_rtt_if_needed(Direction direction, std::span
         }
         emit_zero_rtt_process_result(direction, result);
 
-        if(forward_bytes.empty()) {
+        std::optional<FpsClassifiedRecordPipelineProcessResult> post_auth_result;
+        ByteVector post_auth_forward;
+        if(!post_auth_bytes.empty()) {
+            post_auth_result = inbound_classified_pipeline(direction).process_inbound_tls(
+                direction, post_auth_bytes,
+                [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
+                [this](Direction record_direction, const TlsRecord& record) { zero_rtt_controller_->observe_tls_record(record_direction, record); }
+            );
+            post_auth_forward = std::move(post_auth_result->forward_tls_bytes);
+            emit_classified_process_result(direction, *post_auth_result);
+            if(post_auth_result->close_required || !post_auth_result->parse_errors.empty() || !post_auth_result->record_errors.empty() ||
+               !post_auth_result->classified_errors.empty()) {
+                stop_with(close_info_from_classified_result(direction, *post_auth_result));
+                return true;
+            }
+        }
+
+        if(forward_bytes.empty() && post_auth_forward.empty()) {
             pump(direction);
             return true;
         }
-        const auto cover_bytes = forward_bytes.size();
-        enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = true});
-        observe_cover_bytes(direction, cover_bytes);
+        if(!forward_bytes.empty()) {
+            const auto cover_bytes = forward_bytes.size();
+            enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = post_auth_forward.empty()});
+            observe_cover_bytes(direction, cover_bytes);
+        }
+        if(!post_auth_forward.empty()) {
+            const auto cover_bytes = post_auth_forward.size();
+            enqueue_write(direction, WriteItem{.bytes = std::move(post_auth_forward), .resume_read_after_write = true});
+            observe_cover_bytes(direction, cover_bytes);
+        }
         return true;
     }
 

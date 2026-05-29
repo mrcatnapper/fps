@@ -134,7 +134,7 @@ auto FpsUpgradeController::process_inbound_tls(Direction direction, std::span<co
         }
 
         if(state_ == FpsUpgradeState::authenticated) {
-            update_transcript(direction, record);
+            append_forward(result.post_auth_bytes, record);
             continue;
         }
 

@@ -48,6 +48,7 @@ struct FpsUpgradeObserveResult {
 
 struct FpsUpgradeProcessResult {
     ByteVector forward_bytes;
+    ByteVector post_auth_bytes;
     std::vector<TlsParseError> parse_errors;
     std::vector<TlsRecordLayerError> record_errors;
     std::vector<ZeroRttUpgradeError> upgrade_errors;

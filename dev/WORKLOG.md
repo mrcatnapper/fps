@@ -2,6 +2,55 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-29
+
+### Final v4 PR self-review fix
+
+Goal:
+
+- Re-review PR #4 before merge and verify that the v4 classified-record
+  transition handles coalesced TCP reads safely.
+- Check public docs/articles for stale v3/envelope-mode wording after the v4
+  protocol refactor.
+
+Finding:
+
+- Self-review found one blocker in the server pre-auth path: if one TCP read
+  contained the successful Zero-RTT upgrade TLS record plus a later carrier TLS
+  record, `FpsUpgradeController::process_inbound_tls()` authenticated on the
+  upgrade and then silently consumed the post-auth record instead of handing it
+  to classified-record processing.
+
+Done:
+
+- Added `FpsUpgradeProcessResult::post_auth_bytes`.
+- Changed `FpsUpgradeController` to return TLS records observed after the
+  auth record in the same parse batch for post-auth classification instead of
+  updating the transcript and dropping them.
+- Updated `TcpBridgeSession` server auth transition to process those
+  `post_auth_bytes` through the classified-record pipeline and forward ordinary
+  carrier bytes in order.
+- Added controller-level and bridge-level regressions for upgrade-plus-following
+  TLS record coalescing.
+- Refreshed the HackerNoon/Habr article text where it still described the old
+  envelope-mode runtime and visible Zero-RTT prefix as current behavior.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --catch_system_errors=no --run_test=fps_upgrade_controller,tcp_bridge_session`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `git diff --check`
+
+Commit:
+
+- This commit: `Fix coalesced post-auth TLS handoff`
+
 ## 2026-05-28
 
 ### Implement Zero-RTT v4 classified FPS records
