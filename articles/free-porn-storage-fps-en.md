@@ -1,6 +1,6 @@
 # Free Porn Storage: Steganography In The Most Ordinary TLS Traffic
 
-Status: draft for HackerNoon
+Status: article draft in English
 
 Suggested tags: networking, censorship-resistance, tls, steganography, vpn,
 privacy, cpp, ai
