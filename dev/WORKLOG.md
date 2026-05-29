@@ -4,6 +4,38 @@
 
 ## 2026-05-29
 
+### Remove empty native packaging directories
+
+Goal:
+
+- Check whether `./packaging` still has tactical or strategic value now that
+  Docker is the primary deployment path.
+
+Findings:
+
+- `./packaging` contained only empty untracked directories:
+  `systemd/`, `sysusers.d/` and `tmpfiles.d/`.
+- No tracked files referenced `packaging`, systemd units, native packages,
+  `.deb`/RPM packaging or a native deployment path outside the historical
+  `WORKLOG`.
+- Current roadmap and operator docs are Docker-first; proxy overlays live under
+  `examples/docker/`, and release packaging is GHCR image publication.
+
+Changes:
+
+- Removed the empty local `./packaging` directory tree.
+
+Verification:
+
+- `git ls-files packaging`
+- `rg -n "packaging|systemd|native distro|native package|\\.deb|rpm|/usr/lib/systemd|fps-client\\.service|fps-server\\.service" . --glob '!dev/WORKLOG.md' --glob '!build/**' --glob '!cmake-build-*/**'`
+- `find packaging -maxdepth 4 -print`
+
+Notes:
+
+- No commit is needed for the directory removal itself because the directories
+  were not tracked. This worklog entry records the decision.
+
 ### Refresh docs and dev artifacts as current snapshots
 
 Goal:
