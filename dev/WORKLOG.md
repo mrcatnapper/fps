@@ -43,7 +43,7 @@ Verification:
 
 Commit:
 
-- `aa5d306` (`Split covert datagram core from TUN adapter`)
+- `df97547` (`Split covert datagram core from TUN adapter`)
 
 ### Add article UPDATE sections for classified records and pcap experiment
 
