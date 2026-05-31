@@ -4,6 +4,60 @@
 
 ## 2026-05-31
 
+### Review datagram/TUN split and run full non-soak validation
+
+Goal:
+
+- Self-review whether the latest architecture refactor actually separates the
+  reusable FPS covert datagram core from the Linux TUN tunnel adapter.
+- Run the full validation set available locally, excluding long/remote soak.
+
+Review:
+
+- `CovertDatagramTransport` is now the generic carrier-pool/datagram layer:
+  it owns authenticated carrier registration, round-robin and targeted writes,
+  opaque datagram fragmentation/reassembly, queue preflight and generic
+  datagram delivery with optional source carrier metadata.
+- `TunTunnelAdapter` is the Linux VPN-specific adapter over that transport:
+  it owns IPv4 lease routing, strict server-side source-IP checks, duplicate
+  client instance replacement and TUN-specific error/event mapping.
+- `TunPacketPump` depends on `TunTunnelAdapter`, not on the generic datagram
+  transport directly, which keeps Linux fd/TUN behavior outside the reusable
+  transport contract.
+- Relay/status/log counters use generic `datagram_*` names where the transport
+  is being counted and TUN-specific `tun_tunnel_*` names where adapter policy is
+  being counted.
+
+Risks:
+
+- The relay runtime still composes the TUN adapter directly because TUN is the
+  only product adapter today. A future non-TUN consumer will still need a small
+  app-level adapter around `CovertDatagramTransport`.
+- `TunTunnelAdapter` intentionally mirrors carrier metadata beside the generic
+  transport to keep lease policy out of the core. Tests cover replacement,
+  targeted routing and source enforcement; future refactors should preserve
+  that invariant.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 tools/docker_tun_iperf_sim.py --image fps:local --duration 10 --bandwidth 5M --length 1200`
+- `FPS_DOCKER_SUDO=1 tools/docker_multi_client_sim.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 tools/docker_duplicate_uuid_sim.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 tools/docker_socks_smoke.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 tools/docker_tun_iperf_sim.py --image fps:alpine --duration 10 --bandwidth 5M --length 1200`
+- `git diff --check`
+
 ### Split covert datagram core from TUN adapter
 
 Goal:
