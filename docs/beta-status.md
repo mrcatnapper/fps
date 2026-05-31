@@ -96,9 +96,10 @@ deliberately deferred until the private release policy is settled.
 - Queue saturation has deterministic unit coverage for bounded write queues and
   lease-aware routing. Docker-level strict `write_queue_full` observation stays
   diagnostic because it depends on host timing and container throughput.
-- Local adversarial Zero-RTT coverage now checks no-upgrade passthrough, unknown
-  clients, transcript-prefix mismatch and post-auth carrier tamper against live
-  FPS daemons with status-counter assertions.
+- Local adversarial Zero-RTT coverage now checks no-upgrade passthrough,
+  unknown-client storms, transcript-prefix mismatch bursts, recovery after
+  failed auth and post-auth carrier tamper against live FPS daemons with
+  status-counter assertions and secret-leak checks.
 - Timestamp and replay-cache fields are not active Zero-RTT v5 config or wire
   features. Replay resistance relies on the bidirectional carrier transcript
   prefix plus the server accept leg; durable replay state remains a possible
@@ -150,9 +151,9 @@ Those remain release-hardening concerns.
   but this remains an operator procedure rather than a hot-reload management
   API.
 - The transcript-bound precheck removes the visible public-key-shaped handshake
-  prefix, but it is not a full CPU DoS defense. Plausible server hints still
-  force client-hint allowlist checks and a small AEAD attempt for a likely
-  client.
+  prefix and has storm regression coverage, but it is not a full CPU DoS
+  defense. Plausible server hints still force client-hint allowlist checks and
+  a small AEAD attempt for a likely client.
 - Operational status is still minimal: it is a local JSON snapshot with bounded
   recent close metadata and auth/classified-record counters, not a metrics
   endpoint, management API or historical time series.

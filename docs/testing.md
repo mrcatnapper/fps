@@ -354,8 +354,9 @@ Local integration tests cover:
 - HTTPS Zero-RTT chain, hint precheck with decoy allowlist entries, and two
   simultaneous keep-alive TLS sessions without response mixing.
 - Zero-RTT adversarial local probe: direct passthrough without valid upgrade,
-  unknown client UUID, transcript-prefix mismatch and post-auth tampered carrier
-  record against live `fps_client -> fps_server -> HTTPS origin`.
+  unknown-client storms, transcript-prefix mismatch bursts, recovery after
+  failed auth and post-auth tampered carrier records against live
+  `fps_client -> fps_server -> HTTPS origin`.
 - WSS passthrough, WSS Zero-RTT using reusable `fps_carrier`, and a Zero-RTT
   HTTPS browser-style request through `fps_client -> fps_server -> fps_carrier`.
 - Optional pcap TLS shape check when `-DFPS_ENABLE_PCAP_TESTS=ON`.

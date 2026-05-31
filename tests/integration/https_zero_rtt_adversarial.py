@@ -15,6 +15,7 @@ from pathlib import Path
 from fps_https_harness import (
     ZERO_RTT_DECOY_CLIENT_UUIDS,
     assert_roundtrip_bodies,
+    assert_process_alive,
     free_port,
     generate_cert,
     https_get_roundtrips,
@@ -28,6 +29,8 @@ from fps_https_harness import (
     wait_for_tcp,
     write_zero_rtt_relay_config,
 )
+
+UNKNOWN_CLIENT_STORM_ATTEMPTS = 4
 
 
 def run_command(args):
@@ -242,6 +245,10 @@ def wait_for_status_counter(binary, config_path, socket_path, section, name, min
     return status
 
 
+def status_counter(status, section, name):
+    return int(status.get(section, {}).get(name, 0))
+
+
 def assert_no_status_secrets(status):
     text = json.dumps(status)
     forbidden = [
@@ -272,12 +279,13 @@ def direct_passthrough_probe(fps_server, tmpdir, origin_port):
     server = start_zero_rtt_server(fps_server, server_config)
     try:
         wait_for_tcp("127.0.0.1", server_port, server)
-        bodies = https_get_roundtrips(server_port)
-        assert_roundtrip_bodies(bodies)
+        paths = [f"/direct/{index}" for index in range(8)]
+        bodies = https_get_roundtrips(server_port, paths=paths)
+        assert_roundtrip_bodies(bodies, paths=paths)
         status = wait_for_status_counter(
-            fps_server, server_config, status_socket, "auth", "candidates"
+            fps_server, server_config, status_socket, "auth", "candidates", minimum=4
         )
-        if int(status.get("auth", {}).get("authenticated", 0)) != 0:
+        if status_counter(status, "auth", "authenticated") != 0:
             raise RuntimeError(f"direct passthrough unexpectedly authenticated: {status!r}")
         assert_no_status_secrets(status)
     finally:
@@ -287,9 +295,11 @@ def direct_passthrough_probe(fps_server, tmpdir, origin_port):
 def unknown_client_probe(fps_client, fps_server, tmpdir, origin_port):
     server_port = free_port()
     client_port = free_port()
+    valid_client_port = free_port()
     server_status_socket = tmpdir / "unknown-server.status"
     server_config = tmpdir / "unknown-server.json"
     client_config = tmpdir / "unknown-client.json"
+    valid_client_config = tmpdir / "unknown-valid-client.json"
     write_zero_rtt_relay_config(
         server_config,
         server_port,
@@ -306,22 +316,52 @@ def unknown_client_probe(fps_client, fps_server, tmpdir, origin_port):
         "client",
         client_uuid=ZERO_RTT_DECOY_CLIENT_UUIDS[0],
     )
+    write_zero_rtt_relay_config(
+        valid_client_config,
+        valid_client_port,
+        "server",
+        server_port,
+        "client",
+    )
     server = start_zero_rtt_server(fps_server, server_config)
     client = None
+    valid_client = None
     try:
         wait_for_tcp("127.0.0.1", server_port, server)
-        client = start_zero_rtt_client(fps_client, client_config)
-        wait_for_tcp("127.0.0.1", client_port, client)
-        try:
-            https_get_roundtrips(client_port, paths=["/unknown-client"])
-        except (OSError, ssl.SSLError, RuntimeError):
-            pass
+        for attempt in range(UNKNOWN_CLIENT_STORM_ATTEMPTS):
+            client = start_zero_rtt_client(fps_client, client_config)
+            wait_for_tcp("127.0.0.1", client_port, client)
+            try:
+                https_get_roundtrips(client_port, paths=[f"/unknown-client/{attempt}"])
+            except (OSError, ssl.SSLError, RuntimeError):
+                pass
+            stop_and_read(client)
+            client = None
+            assert_process_alive(server, "zero-rtt server after unknown-client attempt")
+
         status = wait_for_status_counter(
-            fps_server, server_config, server_status_socket, "auth", "unknown_client"
+            fps_server,
+            server_config,
+            server_status_socket,
+            "auth",
+            "unknown_client",
+            minimum=UNKNOWN_CLIENT_STORM_ATTEMPTS,
+        )
+        if status_counter(status, "auth", "authenticated") != 0:
+            raise RuntimeError(f"unknown-client storm unexpectedly authenticated: {status!r}")
+        assert_no_status_secrets(status)
+
+        valid_client = start_zero_rtt_client(fps_client, valid_client_config)
+        wait_for_tcp("127.0.0.1", valid_client_port, valid_client)
+        bodies = https_get_roundtrips(valid_client_port, paths=["/unknown-recovery"])
+        assert_roundtrip_bodies(bodies, paths=["/unknown-recovery"])
+        status = wait_for_status_counter(
+            fps_server, server_config, server_status_socket, "auth", "authenticated"
         )
         assert_no_status_secrets(status)
     finally:
         stop_and_read(client)
+        stop_and_read(valid_client)
         stop_and_read(server)
 
 
@@ -458,7 +498,7 @@ def tampered_envelope_probe(fps_client, fps_server, tmpdir, origin_port):
         if not proxy.tampered.wait(timeout=5.0):
             raise RuntimeError("proxy did not tamper with a post-auth server-to-client record")
         status = query_status(fps_client, client_config, client_status_socket)
-        if int(status.get("auth", {}).get("authenticated", 0)) < 1:
+        if status_counter(status, "auth", "authenticated") < 1:
             raise RuntimeError(f"client did not authenticate before tamper: {status!r}")
         assert_no_status_secrets(status)
     finally:

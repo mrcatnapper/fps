@@ -140,6 +140,36 @@ BOOST_AUTO_TEST_CASE(non_upgrade_application_record_falls_back_byte_for_byte) {
     BOOST_CHECK(second.upgrade_errors[0] == fps::ZeroRttUpgradeError::invalid_size);
 }
 
+BOOST_AUTO_TEST_CASE(candidate_miss_storm_stays_passthrough_and_authenticates_later) {
+    const auto client = key_pair(25);
+    const auto server = key_pair(95);
+    fps::FpsUpgradeController client_controller{controller_config(client_zero_rtt(client, server))};
+    fps::FpsUpgradeController server_controller{controller_config(server_zero_rtt(server, client))};
+    const auto cover_c2s = app_record({0x31, 0x32, 0x33});
+    const auto cover_s2c = app_record({0x41, 0x42, 0x43});
+
+    observe_bidirectional_appdata(client_controller, server_controller, cover_c2s, cover_s2c);
+
+    for(unsigned int i = 0; i < 12U; ++i) {
+        const auto ordinary = app_record({0x80U + i, 0x81U + i, 0x82U + i});
+        auto client_observed = observe_record(client_controller, fps::Direction::client_to_server, ordinary);
+        BOOST_TEST(client_observed.parse_errors.empty());
+        auto miss = process_record(server_controller, fps::Direction::client_to_server, ordinary);
+        BOOST_CHECK(miss.forward_bytes == ordinary);
+        BOOST_CHECK(miss.state == fps::FpsUpgradeState::cover_passthrough);
+        BOOST_REQUIRE_EQUAL(miss.upgrade_errors.size(), 1U);
+        BOOST_CHECK(miss.upgrade_errors[0] == fps::ZeroRttUpgradeError::invalid_size);
+        BOOST_CHECK(!miss.session_keys.has_value());
+    }
+
+    auto upgrade_record = client_controller.build_client_upgrade_record(bytes({0x55}), key_pair(135));
+    BOOST_REQUIRE(upgrade_record);
+    auto server_upgrade = process_record(server_controller, fps::Direction::client_to_server, upgrade_record.value());
+    BOOST_REQUIRE(server_upgrade.client_auth_accepted);
+    BOOST_CHECK(server_upgrade.forward_bytes.empty());
+    BOOST_CHECK(server_upgrade.state == fps::FpsUpgradeState::server_accept_ready);
+}
+
 BOOST_AUTO_TEST_CASE(wrong_channel_binding_keeps_candidate_as_cover_bytes) {
     const auto client = key_pair(23);
     const auto server = key_pair(93);
@@ -167,6 +197,33 @@ BOOST_AUTO_TEST_CASE(wrong_channel_binding_keeps_candidate_as_cover_bytes) {
     BOOST_CHECK(server_upgrade.state == fps::FpsUpgradeState::cover_passthrough);
     BOOST_REQUIRE_EQUAL(server_upgrade.upgrade_errors.size(), 1U);
     BOOST_CHECK(server_upgrade.upgrade_errors[0] == fps::ZeroRttUpgradeError::precheck_failed);
+}
+
+BOOST_AUTO_TEST_CASE(client_waiting_for_server_accept_forwards_non_accept_records) {
+    const auto client = key_pair(26);
+    const auto server = key_pair(96);
+    fps::FpsUpgradeController client_controller{controller_config(client_zero_rtt(client, server))};
+    const auto cover_c2s = app_record({0x51, 0x52, 0x53});
+    const auto cover_s2c = app_record({0x61, 0x62, 0x63});
+
+    auto client_c2s = observe_record(client_controller, fps::Direction::client_to_server, cover_c2s);
+    auto client_s2c = observe_record(client_controller, fps::Direction::server_to_client, cover_s2c);
+    BOOST_TEST(client_c2s.parse_errors.empty());
+    BOOST_TEST(client_s2c.parse_errors.empty());
+    auto upgrade_record = client_controller.build_client_upgrade_record(bytes({0xaa}), key_pair(136));
+    BOOST_REQUIRE(upgrade_record);
+    auto client_auth_observed = observe_record(client_controller, fps::Direction::client_to_server, upgrade_record.value());
+    BOOST_TEST(client_auth_observed.parse_errors.empty());
+
+    for(unsigned int i = 0; i < 4U; ++i) {
+        const auto racing_cover = app_record({0x70U + i, 0x71U + i, 0x72U + i});
+        auto result = process_record(client_controller, fps::Direction::server_to_client, racing_cover);
+        BOOST_CHECK(result.forward_bytes == racing_cover);
+        BOOST_CHECK(result.state == fps::FpsUpgradeState::client_auth_sent_wait_accept);
+        BOOST_REQUIRE_EQUAL(result.upgrade_errors.size(), 1U);
+        BOOST_CHECK(result.upgrade_errors[0] == fps::ZeroRttUpgradeError::invalid_size);
+        BOOST_CHECK(!result.session_keys.has_value());
+    }
 }
 
 BOOST_AUTO_TEST_CASE(channel_binding_requires_application_data_in_both_directions) {
