@@ -1,6 +1,6 @@
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 
-#include "tcp_bridge_session_helpers.hpp"
+#include "tls_tcp_carrier_session_helpers.hpp"
 
 #include <boost/asio/write.hpp>
 
@@ -25,7 +25,7 @@ using detail::close_info_from_enqueue_error;
 using detail::covert_tls_record_size;
 using detail::frame_payload_size_sum;
 using detail::is_datagram_frame;
-using detail::tcp_bridge_error_from_classified_encode;
+using detail::tls_tcp_carrier_error_from_classified_encode;
 
 namespace {
 
@@ -40,24 +40,24 @@ namespace {
 
 } // namespace
 
-auto TcpBridgeSession::enqueue_covert_frame(
+auto TlsTcpCarrierSession::enqueue_covert_frame(
     Direction direction, FrameType frame_type, std::span<const std::byte> payload, std::size_t padding_size, std::uint8_t flags
-) -> TcpBridgeEnqueueResult {
-    const TcpBridgeCovertFrame frame{
+) -> TlsTcpCarrierEnqueueResult {
+    const TlsTcpCarrierCovertFrame frame{
         .frame_type = frame_type,
         .payload = payload,
         .padding_size = padding_size,
         .flags = flags,
     };
-    return enqueue_covert_frames(direction, std::span<const TcpBridgeCovertFrame>{&frame, 1});
+    return enqueue_covert_frames(direction, std::span<const TlsTcpCarrierCovertFrame>{&frame, 1});
 }
 
-auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult {
+auto TlsTcpCarrierSession::enqueue_covert_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames) -> TlsTcpCarrierEnqueueResult {
     if(stopped_ || done_flag(direction)) {
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::session_closed);
+        return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::session_closed);
     }
     if(frames.empty()) {
-        return TcpBridgeEnqueueResult::success(0U);
+        return TlsTcpCarrierEnqueueResult::success(0U);
     }
     if(zero_rtt_authenticated_) {
         return enqueue_zero_rtt_classified_frames(direction, frames);
@@ -67,16 +67,16 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
     for(const auto& frame : frames) {
         const auto encoded_size = covert_tls_record_size(frame.payload.size(), frame.padding_size);
         if(!encoded_size) {
-            return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+            return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
         }
         const auto next_total = checked_add(total_encoded_size, *encoded_size);
         if(!next_total) {
-            return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+            return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
         }
         total_encoded_size = *next_total;
     }
     if(!can_enqueue_write(direction, total_encoded_size)) {
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+        return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
     }
 
     std::vector<WriteItem> writes;
@@ -91,15 +91,15 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
     for(const auto& frame : frames) {
         auto encoded = outbound_pipeline(direction).encode_covert_frame(frame.frame_type, frame.payload, frame.padding_size, frame.flags);
         if(!encoded) {
-            return TcpBridgeEnqueueResult::failure(
-                encoded.error() == CoverSessionEncodeError::codec_error ? TcpBridgeEnqueueError::codec_error : TcpBridgeEnqueueError::tls_record_error
+            return TlsTcpCarrierEnqueueResult::failure(
+                encoded.error() == CoverSessionEncodeError::codec_error ? TlsTcpCarrierEnqueueError::codec_error : TlsTcpCarrierEnqueueError::tls_record_error
             );
         }
 
         auto bytes = std::move(encoded).value();
         const auto next_queued = checked_add(queued_size, bytes.size());
         if(!next_queued) {
-            return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+            return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
         }
         queued_size = *next_queued;
         if(shaper_enabled()) {
@@ -140,10 +140,10 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
             add_stat(stats.datagram_frame_bytes_out, frame.payload.size());
         }
     }
-    return TcpBridgeEnqueueResult::success(queued_size);
+    return TlsTcpCarrierEnqueueResult::success(queued_size);
 }
 
-void TcpBridgeSession::pump(Direction direction) {
+void TlsTcpCarrierSession::pump(Direction direction) {
     if(stopped_ || done_flag(direction)) {
         return;
     }
@@ -156,7 +156,7 @@ void TcpBridgeSession::pump(Direction direction) {
     });
 }
 
-void TcpBridgeSession::handle_read(Direction direction, const boost::system::error_code& error, std::size_t bytes_read) {
+void TlsTcpCarrierSession::handle_read(Direction direction, const boost::system::error_code& error, std::size_t bytes_read) {
     if(stopped_) {
         return;
     }
@@ -166,7 +166,7 @@ void TcpBridgeSession::handle_read(Direction direction, const boost::system::err
             handle_eof(direction);
             return;
         }
-        stop_with(close_info(TcpBridgeCloseReason::tcp_error, direction, TcpBridgeCloseComponent::tcp, "read_error"));
+        stop_with(close_info(TlsTcpCarrierCloseReason::tcp_error, direction, TlsTcpCarrierCloseComponent::tcp, "read_error"));
         return;
     }
 
@@ -223,14 +223,14 @@ void TcpBridgeSession::handle_read(Direction direction, const boost::system::err
     observe_cover_bytes(direction, cover_bytes);
 }
 
-auto TcpBridgeSession::process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     if(!config_.zero_rtt.has_value() || !zero_rtt_controller_.has_value()) {
         return process_cover_record(direction, record);
     }
     return process_zero_rtt_record(direction, record);
 }
 
-auto TcpBridgeSession::process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     auto result = inbound_pipeline(direction).process_inbound_record(record);
     auto forward_bytes = std::move(result.forward_bytes);
     const auto cover_bytes = forward_bytes.size();
@@ -238,7 +238,7 @@ auto TcpBridgeSession::process_cover_record(Direction direction, const TlsRecord
     return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
 }
 
-auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     const auto role = config_.zero_rtt->controller_config.zero_rtt.role;
     if(zero_rtt_authenticated_) {
         return process_authenticated_record(direction, record);
@@ -260,7 +260,7 @@ auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRec
         const auto cover_bytes = forward_bytes.size();
         if(result.client_auth_accepted && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
-                stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_client_public_key"));
+                stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_client_public_key"));
                 return {};
             }
             std::optional<ByteVector> accept_payload = ByteVector{};
@@ -268,12 +268,13 @@ auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRec
                 accept_payload = handlers_.on_zero_rtt_server_accept_payload(*result.client_public_key, result.client_auth_payload);
             }
             if(!accept_payload.has_value()) {
-                stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "server_accept_payload_failed"));
+                stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "server_accept_payload_failed")
+                );
                 return {};
             }
             if(!send_zero_rtt_server_accept(direction, *result.client_public_key, *accept_payload)) {
                 stop_with(pending_or_default_close(
-                    close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "server_accept_failed")
+                    close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "server_accept_failed")
                 ));
                 return {};
             }
@@ -297,9 +298,9 @@ auto TcpBridgeSession::process_zero_rtt_record(Direction direction, const TlsRec
     return process_cover_record(direction, record);
 }
 
-auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::process_preconfirmed_client_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     if(!zero_rtt_controller_) {
-        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_zero_rtt_controller"));
+        stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_zero_rtt_controller"));
         return {};
     }
 
@@ -309,12 +310,12 @@ auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, c
 
     if(!result.record_errors.empty()) {
         emit_zero_rtt_process_result(direction, result);
-        stop_with(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "server_accept_record_error"));
+        stop_with(close_info(TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record, "server_accept_record_error"));
         return {};
     }
     if(result.server_accept_accepted) {
         if(!result.session_keys.has_value()) {
-            stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_server_accept_keys"));
+            stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_server_accept_keys"));
             return {};
         }
         activate_zero_rtt_classified_pipelines(*result.session_keys, config_.zero_rtt->controller_config.zero_rtt.local_static_public);
@@ -339,9 +340,9 @@ auto TcpBridgeSession::process_preconfirmed_client_record(Direction direction, c
     return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
 }
 
-auto TcpBridgeSession::process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     if(!classified_pipelines_ || !zero_rtt_controller_) {
-        stop_with(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
+        stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline"));
         return {};
     }
     auto result = inbound_classified_pipeline(direction).process_inbound_record(
@@ -361,7 +362,7 @@ auto TcpBridgeSession::process_authenticated_record(Direction direction, const T
     return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
 }
 
-auto TcpBridgeSession::maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput {
+auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput {
     if(!config_.zero_rtt.has_value() || !zero_rtt_controller_.has_value()) {
         return {};
     }
@@ -381,7 +382,7 @@ auto TcpBridgeSession::maybe_build_client_upgrade_after_batch(Direction directio
         }
         auto parsed = parse_single_tls_record(upgrade_record);
         if(!parsed.has_value()) {
-            stop_with(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "malformed_upgrade_record"));
+            stop_with(close_info(TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record, "malformed_upgrade_record"));
             return {};
         }
         auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
@@ -395,14 +396,14 @@ auto TcpBridgeSession::maybe_build_client_upgrade_after_batch(Direction directio
     return {};
 }
 
-auto TcpBridgeSession::zero_rtt_peer_direction() const noexcept -> Direction {
+auto TlsTcpCarrierSession::zero_rtt_peer_direction() const noexcept -> Direction {
     if(!config_.zero_rtt.has_value() || config_.zero_rtt->controller_config.zero_rtt.role == ZeroRttUpgradeRole::server) {
         return Direction::client_to_server;
     }
     return Direction::server_to_client;
 }
 
-void TcpBridgeSession::activate_zero_rtt_classified_pipelines(const SessionKeys& session_keys, const X25519PublicKey& client_public_key) {
+void TlsTcpCarrierSession::activate_zero_rtt_classified_pipelines(const SessionKeys& session_keys, const X25519PublicKey& client_public_key) {
     if(!config_.zero_rtt.has_value()) {
         return;
     }
@@ -425,11 +426,12 @@ void TcpBridgeSession::activate_zero_rtt_classified_pipelines(const SessionKeys&
     });
 }
 
-auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload)
-    -> bool {
+auto TlsTcpCarrierSession::send_zero_rtt_server_accept(
+    Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload
+) -> bool {
     if(!zero_rtt_controller_) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::internal_error, upgrade_direction, TcpBridgeCloseComponent::zero_rtt, "missing_zero_rtt_controller")
+            close_info(TlsTcpCarrierCloseReason::internal_error, upgrade_direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_zero_rtt_controller")
         );
         return false;
     }
@@ -443,7 +445,8 @@ auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, 
     }
     const auto encoded_size = built.value().size();
     if(!can_enqueue_write(accept_direction, encoded_size)) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, accept_direction, TcpBridgeCloseComponent::queue, "server_accept_queue_full")
+        set_pending_close_info(
+            close_info(TlsTcpCarrierCloseReason::write_queue_full, accept_direction, TlsTcpCarrierCloseComponent::queue, "server_accept_queue_full")
         );
         return false;
     }
@@ -451,12 +454,14 @@ auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, 
     auto parsed = parse_single_tls_record(record);
     if(!parsed.has_value()) {
         set_pending_close_info(
-            close_info(TcpBridgeCloseReason::tls_record_error, accept_direction, TcpBridgeCloseComponent::tls_record, "malformed_server_accept_record")
+            close_info(TlsTcpCarrierCloseReason::tls_record_error, accept_direction, TlsTcpCarrierCloseComponent::tls_record, "malformed_server_accept_record")
         );
         return false;
     }
     if(!zero_rtt_controller_->session_keys().has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, accept_direction, TcpBridgeCloseComponent::zero_rtt, "missing_final_keys"));
+        set_pending_close_info(
+            close_info(TlsTcpCarrierCloseReason::internal_error, accept_direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_final_keys")
+        );
         return false;
     }
     activate_zero_rtt_classified_pipelines(*zero_rtt_controller_->session_keys(), client_public_key);
@@ -467,33 +472,36 @@ auto TcpBridgeSession::send_zero_rtt_server_accept(Direction upgrade_direction, 
     return true;
 }
 
-auto TcpBridgeSession::can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool {
+auto TlsTcpCarrierSession::can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool {
     return bytes <= config_.max_write_queue_bytes && pending_write_bytes(direction) <= config_.max_write_queue_bytes - bytes;
 }
 
-auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult {
+auto TlsTcpCarrierSession::enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames)
+    -> TlsTcpCarrierEnqueueResult {
     if(!classified_pipelines_) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::session_closed);
+        set_pending_close_info(
+            close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline")
+        );
+        return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::session_closed);
     }
     const auto estimated_size = classified_tls_record_size(frames);
     if(!estimated_size) {
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+        return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
     }
     if(!can_enqueue_write(direction, *estimated_size)) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::write_queue_full, direction, TcpBridgeCloseComponent::queue, "write_queue_full"));
-        return TcpBridgeEnqueueResult::failure(TcpBridgeEnqueueError::write_queue_full);
+        set_pending_close_info(close_info(TlsTcpCarrierCloseReason::write_queue_full, direction, TlsTcpCarrierCloseComponent::queue, "write_queue_full"));
+        return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
     }
 
     const auto control_only =
-        std::all_of(frames.begin(), frames.end(), [](const TcpBridgeCovertFrame& frame) { return frame.frame_type == FrameType::control; });
+        std::all_of(frames.begin(), frames.end(), [](const TlsTcpCarrierCovertFrame& frame) { return frame.frame_type == FrameType::control; });
     if(shaper_enabled() && !control_only) {
         const auto payload_size = frame_payload_size_sum(frames);
-        std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
+        std::vector<TlsTcpCarrierOwnedCovertFrame> owned_frames;
         owned_frames.reserve(frames.size());
         for(const auto& frame : frames) {
             owned_frames.push_back(
-                TcpBridgeOwnedCovertFrame{
+                TlsTcpCarrierOwnedCovertFrame{
                     .frame_type = frame.frame_type,
                     .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
                     .padding_size = frame.padding_size,
@@ -518,11 +526,11 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
             }
         );
     } else {
-        std::vector<TcpBridgeOwnedCovertFrame> owned_frames;
+        std::vector<TlsTcpCarrierOwnedCovertFrame> owned_frames;
         owned_frames.reserve(frames.size());
         for(const auto& frame : frames) {
             owned_frames.push_back(
-                TcpBridgeOwnedCovertFrame{
+                TlsTcpCarrierOwnedCovertFrame{
                     .frame_type = frame.frame_type,
                     .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
                     .padding_size = frame.padding_size,
@@ -532,7 +540,7 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
         }
         auto write = encode_classified_write(direction, owned_frames);
         if(!write) {
-            return TcpBridgeEnqueueResult::failure(write.error());
+            return TlsTcpCarrierEnqueueResult::failure(write.error());
         }
         enqueue_write(direction, std::move(write).value());
     }
@@ -545,19 +553,21 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
             add_stat(stats.datagram_frame_bytes_out, frame.payload.size());
         }
     }
-    return TcpBridgeEnqueueResult::success(*estimated_size);
+    return TlsTcpCarrierEnqueueResult::success(*estimated_size);
 }
 
-auto TcpBridgeSession::encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames)
-    -> Result<WriteItem, TcpBridgeEnqueueError> {
+auto TlsTcpCarrierSession::encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames)
+    -> Result<WriteItem, TlsTcpCarrierEnqueueError> {
     if(!classified_pipelines_ || !zero_rtt_controller_) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_classified_pipeline"));
-        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::session_closed);
+        set_pending_close_info(
+            close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline")
+        );
+        return Result<WriteItem, TlsTcpCarrierEnqueueError>::failure(TlsTcpCarrierEnqueueError::session_closed);
     }
     const auto binding = zero_rtt_controller_->current_transcript_snapshot(direction);
     if(!binding.has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::zero_rtt, "missing_transcript"));
-        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::session_closed);
+        set_pending_close_info(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_transcript"));
+        return Result<WriteItem, TlsTcpCarrierEnqueueError>::failure(TlsTcpCarrierEnqueueError::session_closed);
     }
 
     std::vector<FpsEnvelopeFrame> classified_frames;
@@ -582,24 +592,25 @@ auto TcpBridgeSession::encode_classified_write(Direction direction, std::span<co
     );
     if(!encoded) {
         emit_classified_encode_error(direction, encoded.error());
-        return Result<WriteItem, TcpBridgeEnqueueError>::failure(tcp_bridge_error_from_classified_encode(encoded.error()));
+        return Result<WriteItem, TlsTcpCarrierEnqueueError>::failure(tls_tcp_carrier_error_from_classified_encode(encoded.error()));
     }
     auto record = std::move(encoded).value();
     auto parsed = parse_single_tls_record(record);
     if(!parsed.has_value()) {
-        set_pending_close_info(close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, "malformed_classified_record")
+        set_pending_close_info(
+            close_info(TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record, "malformed_classified_record")
         );
-        return Result<WriteItem, TcpBridgeEnqueueError>::failure(TcpBridgeEnqueueError::tls_record_error);
+        return Result<WriteItem, TlsTcpCarrierEnqueueError>::failure(TlsTcpCarrierEnqueueError::tls_record_error);
     }
     auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
     emit_zero_rtt_observe_result(direction, observed);
     emit_classified_records_encoded(direction, 1U);
-    return Result<WriteItem, TcpBridgeEnqueueError>::success(WriteItem{.bytes = std::move(record)});
+    return Result<WriteItem, TlsTcpCarrierEnqueueError>::success(WriteItem{.bytes = std::move(record)});
 }
 
-auto TcpBridgeSession::shaper_enabled() const noexcept -> bool { return shaper_.has_value(); }
+auto TlsTcpCarrierSession::shaper_enabled() const noexcept -> bool { return shaper_.has_value(); }
 
-void TcpBridgeSession::observe_cover_bytes(Direction direction, std::size_t bytes) {
+void TlsTcpCarrierSession::observe_cover_bytes(Direction direction, std::size_t bytes) {
     if(!shaper_enabled() || bytes == 0U) {
         return;
     }
@@ -614,7 +625,7 @@ void TcpBridgeSession::observe_cover_bytes(Direction direction, std::size_t byte
     maybe_schedule_shaped_write(direction);
 }
 
-void TcpBridgeSession::enqueue_write(Direction direction, WriteItem item) {
+void TlsTcpCarrierSession::enqueue_write(Direction direction, WriteItem item) {
     if(stopped_) {
         return;
     }
@@ -623,7 +634,7 @@ void TcpBridgeSession::enqueue_write(Direction direction, WriteItem item) {
     enqueue_counted_write(direction, std::move(item));
 }
 
-void TcpBridgeSession::enqueue_counted_write(Direction direction, WriteItem item) {
+void TlsTcpCarrierSession::enqueue_counted_write(Direction direction, WriteItem item) {
     if(stopped_) {
         return;
     }
@@ -632,7 +643,7 @@ void TcpBridgeSession::enqueue_counted_write(Direction direction, WriteItem item
     drain_writes(direction);
 }
 
-void TcpBridgeSession::enqueue_shaped_write(Direction direction, ShapedWriteItem item) {
+void TlsTcpCarrierSession::enqueue_shaped_write(Direction direction, ShapedWriteItem item) {
     if(stopped_) {
         return;
     }
@@ -641,9 +652,9 @@ void TcpBridgeSession::enqueue_shaped_write(Direction direction, ShapedWriteItem
     pending_write_bytes(direction) += bytes;
     shaped_write_queue(direction).push_back(std::move(item));
     emit_shaper_event(
-        TcpBridgeShaperEvent{
+        TlsTcpCarrierShaperEvent{
             .direction = direction,
-            .decision = TcpBridgeShaperDecision::queued,
+            .decision = TlsTcpCarrierShaperDecision::queued,
             .payload_size = shaped_write_queue(direction).back().payload_size,
             .queue_bytes = shaped_queue_bytes(direction),
         }
@@ -651,7 +662,7 @@ void TcpBridgeSession::enqueue_shaped_write(Direction direction, ShapedWriteItem
     maybe_schedule_shaped_write(direction);
 }
 
-void TcpBridgeSession::maybe_schedule_shaped_write(Direction direction) {
+void TlsTcpCarrierSession::maybe_schedule_shaped_write(Direction direction) {
     if(stopped_ || !shaper_ || shaper_timer_active(direction) || shaped_write_queue(direction).empty()) {
         return;
     }
@@ -660,9 +671,9 @@ void TcpBridgeSession::maybe_schedule_shaped_write(Direction direction) {
     const auto plan = shaper_->next_send_plan(direction, item.payload_size);
     if(!plan.allow_injected_record || plan.covert_payload_budget < item.payload_size) {
         emit_shaper_event(
-            TcpBridgeShaperEvent{
+            TlsTcpCarrierShaperEvent{
                 .direction = direction,
-                .decision = TcpBridgeShaperDecision::blocked,
+                .decision = TlsTcpCarrierShaperDecision::blocked,
                 .payload_size = item.payload_size,
                 .queue_bytes = shaped_queue_bytes(direction),
                 .delay = plan.delay,
@@ -674,9 +685,9 @@ void TcpBridgeSession::maybe_schedule_shaped_write(Direction direction) {
     }
 
     emit_shaper_event(
-        TcpBridgeShaperEvent{
+        TlsTcpCarrierShaperEvent{
             .direction = direction,
-            .decision = TcpBridgeShaperDecision::scheduled,
+            .decision = TlsTcpCarrierShaperDecision::scheduled,
             .payload_size = item.payload_size,
             .queue_bytes = shaped_queue_bytes(direction),
             .delay = plan.delay,
@@ -692,13 +703,13 @@ void TcpBridgeSession::maybe_schedule_shaped_write(Direction direction) {
     timer.async_wait([self, direction](const boost::system::error_code& error) { self->handle_shaper_timer(direction, error); });
 }
 
-void TcpBridgeSession::handle_shaper_timer(Direction direction, const boost::system::error_code& error) {
+void TlsTcpCarrierSession::handle_shaper_timer(Direction direction, const boost::system::error_code& error) {
     shaper_timer_active(direction) = false;
     if(stopped_ || error == boost::asio::error::operation_aborted) {
         return;
     }
     if(error) {
-        stop_with(close_info(TcpBridgeCloseReason::shaper_error, direction, TcpBridgeCloseComponent::shaper, "timer_error"));
+        stop_with(close_info(TlsTcpCarrierCloseReason::shaper_error, direction, TlsTcpCarrierCloseComponent::shaper, "timer_error"));
         return;
     }
     if(shaped_write_queue(direction).empty()) {
@@ -720,7 +731,7 @@ void TcpBridgeSession::handle_shaper_timer(Direction direction, const boost::sys
     maybe_schedule_shaped_write(direction);
 }
 
-void TcpBridgeSession::drain_writes(Direction direction) {
+void TlsTcpCarrierSession::drain_writes(Direction direction) {
     if(stopped_ || write_in_progress(direction) || write_queue(direction).empty()) {
         return;
     }
@@ -738,7 +749,7 @@ void TcpBridgeSession::drain_writes(Direction direction) {
             add_stat(self->stats_for(direction).tcp_written_bytes, bytes_written);
             self->write_in_progress(direction) = false;
             if(error) {
-                self->stop_with(close_info(TcpBridgeCloseReason::tcp_error, direction, TcpBridgeCloseComponent::tcp, "write_error"));
+                self->stop_with(close_info(TlsTcpCarrierCloseReason::tcp_error, direction, TlsTcpCarrierCloseComponent::tcp, "write_error"));
                 return;
             }
             if(item->resume_read_after_write) {

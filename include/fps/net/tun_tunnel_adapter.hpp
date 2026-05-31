@@ -11,7 +11,7 @@
 #include "fps/core/protocol_constants.hpp"
 #include "fps/core/types.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_lease.hpp"
 
 namespace fps::net {
@@ -39,7 +39,7 @@ using TunTunnelResult = Result<std::size_t, TunTunnelError>;
 
 struct TunTunnelCarrierRegistration {
     bool added = false;
-    std::vector<std::shared_ptr<TcpBridgeSession>> replaced_sessions;
+    std::vector<std::shared_ptr<TlsTcpCarrierSession>> replaced_sessions;
 };
 
 struct TunTunnelHandlers {
@@ -51,19 +51,20 @@ class TunTunnelAdapter {
 public:
     explicit TunTunnelAdapter(TunTunnelConfig config, TunTunnelHandlers handlers = {});
 
-    [[nodiscard]] auto add_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) -> bool;
-    [[nodiscard]] auto add_carrier_session(const std::shared_ptr<TcpBridgeSession>& session, std::optional<std::uint32_t> assigned_client_ipv4) -> bool;
+    [[nodiscard]] auto add_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session) -> bool;
+    [[nodiscard]] auto add_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session, std::optional<std::uint32_t> assigned_client_ipv4) -> bool;
     [[nodiscard]] auto add_carrier_session_with_metadata(
-        const std::shared_ptr<TcpBridgeSession>& session, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id
+        const std::shared_ptr<TlsTcpCarrierSession>& session, std::optional<std::uint32_t> assigned_client_ipv4,
+        std::optional<ClientInstanceId> client_instance_id
     ) -> TunTunnelCarrierRegistration;
-    [[nodiscard]] auto is_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) const noexcept -> bool;
-    [[nodiscard]] auto remove_carrier_session_if(const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool;
+    [[nodiscard]] auto is_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session) const noexcept -> bool;
+    [[nodiscard]] auto remove_carrier_session_if(const std::shared_ptr<TlsTcpCarrierSession>& session) noexcept -> bool;
     void clear_carrier_sessions() noexcept;
     [[nodiscard]] auto carrier_count() const noexcept -> std::size_t;
 
     [[nodiscard]] auto handle_tun_packet(std::span<const std::byte> packet) -> TunTunnelResult;
     void handle_covert_frame(Direction direction, const DecodedFrame& frame);
-    void handle_covert_frame(const std::shared_ptr<TcpBridgeSession>& session, Direction direction, const DecodedFrame& frame);
+    void handle_covert_frame(const std::shared_ptr<TlsTcpCarrierSession>& session, Direction direction, const DecodedFrame& frame);
 
     [[nodiscard]] auto outbound_tun_direction() const noexcept -> Direction;
     [[nodiscard]] auto inbound_tun_direction() const noexcept -> Direction;
@@ -71,7 +72,8 @@ public:
 
 private:
     struct CarrierEntry {
-        std::weak_ptr<TcpBridgeSession> session;
+        CarrierId id{kNoCarrierId};
+        std::weak_ptr<TlsTcpCarrierSession> session;
         std::optional<std::uint32_t> assigned_client_ipv4;
         std::optional<ClientInstanceId> client_instance_id;
     };
@@ -86,10 +88,13 @@ private:
     [[nodiscard]] auto handle_tun_packet_round_robin(std::span<const std::byte> packet) -> TunTunnelResult;
     [[nodiscard]] auto handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> TunTunnelResult;
     void prune_expired_carriers();
-    [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TcpBridgeSession>& session) -> CarrierEntry*;
-    [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TcpBridgeSession>& session) const -> const CarrierEntry*;
-    [[nodiscard]] auto should_accept_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> packet) const -> bool;
-    void deliver_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, ByteVector packet);
+    [[nodiscard]] auto allocate_carrier_id() -> CarrierId;
+    [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TlsTcpCarrierSession>& session) -> CarrierEntry*;
+    [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TlsTcpCarrierSession>& session) const -> const CarrierEntry*;
+    [[nodiscard]] auto find_carrier_entry(CarrierId carrier_id) -> CarrierEntry*;
+    [[nodiscard]] auto find_carrier_entry(CarrierId carrier_id) const -> const CarrierEntry*;
+    [[nodiscard]] auto should_accept_inbound_packet(CarrierId carrier_id, std::span<const std::byte> packet) const -> bool;
+    void deliver_inbound_packet(CarrierId carrier_id, ByteVector packet);
     [[nodiscard]] static auto map_transport_error(CovertDatagramError error) -> TunTunnelError;
     [[nodiscard]] static auto map_transport_event(CovertDatagramEvent event) -> TunTunnelEvent;
     void emit_event(TunTunnelEvent event) const;
@@ -99,6 +104,7 @@ private:
     CovertDatagramTransport transport_;
     std::vector<CarrierEntry> carrier_sessions_;
     std::size_t next_carrier_index_ = 0;
+    CarrierId next_carrier_id_ = 1;
 };
 
 } // namespace fps::net

@@ -25,7 +25,7 @@ namespace fps::net {
 
 using TcpSocket = boost::asio::ip::tcp::socket;
 
-struct TcpBridgeZeroRttOptions {
+struct TlsTcpCarrierZeroRttOptions {
     FpsUpgradeControllerConfig controller_config;
     ByteVector client_upgrade_padding;
     std::optional<X25519KeyPair> client_ephemeral_key_pair;
@@ -37,27 +37,27 @@ struct TcpBridgeZeroRttOptions {
     std::size_t max_envelope_frames = kDefaultEnvelopeFrameLimit;
 };
 
-struct TcpBridgeSessionConfig {
+struct TlsTcpCarrierSessionConfig {
     std::size_t read_buffer_size = 64U * 1024U;
     std::size_t max_write_queue_bytes = 1024U * 1024U;
     std::optional<ShaperProfile> shaper_profile;
-    std::optional<TcpBridgeZeroRttOptions> zero_rtt;
+    std::optional<TlsTcpCarrierZeroRttOptions> zero_rtt;
 };
 
-BOOST_DEFINE_ENUM_CLASS(TcpBridgeShaperDecision, queued, scheduled, blocked)
+BOOST_DEFINE_ENUM_CLASS(TlsTcpCarrierShaperDecision, queued, scheduled, blocked)
 
-struct TcpBridgeShaperEvent {
+struct TlsTcpCarrierShaperEvent {
     Direction direction{};
-    TcpBridgeShaperDecision decision{};
+    TlsTcpCarrierShaperDecision decision{};
     std::size_t payload_size{};
     std::size_t queue_bytes{};
     std::chrono::milliseconds delay{0};
     std::size_t tls_record_size{};
     std::size_t covert_payload_budget{};
 };
-BOOST_DESCRIBE_STRUCT(TcpBridgeShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay, tls_record_size, covert_payload_budget))
+BOOST_DESCRIBE_STRUCT(TlsTcpCarrierShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay, tls_record_size, covert_payload_budget))
 
-struct TcpBridgeDirectionStats {
+struct TlsTcpCarrierDirectionStats {
     std::uint64_t tcp_read_bytes = 0;
     std::uint64_t tcp_written_bytes = 0;
     std::uint64_t covert_frames_in = 0;
@@ -70,38 +70,40 @@ struct TcpBridgeDirectionStats {
     std::uint64_t datagram_frame_bytes_out = 0;
 };
 BOOST_DESCRIBE_STRUCT(
-    TcpBridgeDirectionStats, (),
+    TlsTcpCarrierDirectionStats, (),
     (tcp_read_bytes, tcp_written_bytes, covert_frames_in, covert_frame_bytes_in, covert_frames_out, covert_frame_bytes_out, datagram_frames_in,
      datagram_frame_bytes_in, datagram_frames_out, datagram_frame_bytes_out)
 )
 
 BOOST_DEFINE_ENUM_CLASS(
-    TcpBridgeCloseReason, normal_stop, peer_eof, tcp_error, codec_error, tls_parse_error, tls_record_error, classified_record_error,
+    TlsTcpCarrierCloseReason, normal_stop, peer_eof, tcp_error, codec_error, tls_parse_error, tls_record_error, classified_record_error,
     classified_record_encode_error, write_queue_full, internal_error, shaper_error
 )
 
-BOOST_DEFINE_ENUM_CLASS(TcpBridgeCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session)
+BOOST_DEFINE_ENUM_CLASS(
+    TlsTcpCarrierCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session
+)
 
-BOOST_DEFINE_ENUM_CLASS(TcpBridgeCloseStage, tls_record, classified_record)
+BOOST_DEFINE_ENUM_CLASS(TlsTcpCarrierCloseStage, tls_record, classified_record)
 
-struct TcpBridgeCloseInfo {
-    TcpBridgeCloseReason reason{TcpBridgeCloseReason::normal_stop};
+struct TlsTcpCarrierCloseInfo {
+    TlsTcpCarrierCloseReason reason{TlsTcpCarrierCloseReason::normal_stop};
     std::optional<Direction> direction;
-    std::optional<TcpBridgeCloseComponent> component;
-    std::optional<TcpBridgeCloseStage> stage;
+    std::optional<TlsTcpCarrierCloseComponent> component;
+    std::optional<TlsTcpCarrierCloseStage> stage;
     std::string error;
 };
-BOOST_DESCRIBE_STRUCT(TcpBridgeCloseInfo, (), (reason, direction, component, stage, error))
+BOOST_DESCRIBE_STRUCT(TlsTcpCarrierCloseInfo, (), (reason, direction, component, stage, error))
 
-struct TcpBridgeSessionStats {
-    TcpBridgeDirectionStats client_to_server;
-    TcpBridgeDirectionStats server_to_client;
+struct TlsTcpCarrierSessionStats {
+    TlsTcpCarrierDirectionStats client_to_server;
+    TlsTcpCarrierDirectionStats server_to_client;
     bool zero_rtt_authenticated = false;
-    TcpBridgeCloseInfo close;
+    TlsTcpCarrierCloseInfo close;
 };
-BOOST_DESCRIBE_STRUCT(TcpBridgeSessionStats, (), (client_to_server, server_to_client, zero_rtt_authenticated, close))
+BOOST_DESCRIBE_STRUCT(TlsTcpCarrierSessionStats, (), (client_to_server, server_to_client, zero_rtt_authenticated, close))
 
-struct TcpBridgeSessionHandlers {
+struct TlsTcpCarrierSessionHandlers {
     std::function<void(Direction, const DecodedFrame&)> on_covert_frame;
     std::function<void(Direction, CodecError)> on_codec_error;
     std::function<void(Direction, TlsParseError)> on_parse_error;
@@ -114,59 +116,60 @@ struct TcpBridgeSessionHandlers {
     std::function<void(Direction, std::size_t)> on_classified_records_encoded;
     std::function<void(const SessionKeys&, const std::optional<X25519PublicKey>&)> on_zero_rtt_authenticated;
     std::function<std::optional<ByteVector>(const X25519PublicKey&, std::span<const std::byte>)> on_zero_rtt_server_accept_payload;
-    std::function<void(const TcpBridgeShaperEvent&)> on_shaper_event;
-    std::function<void(const TcpBridgeSessionStats&)> on_closed;
+    std::function<void(const TlsTcpCarrierShaperEvent&)> on_shaper_event;
+    std::function<void(const TlsTcpCarrierSessionStats&)> on_closed;
 };
 
-struct TcpBridgeSessionPipelines {
+struct TlsTcpCarrierSessionPipelines {
     CoverSessionPipeline inbound_client_to_server;
     CoverSessionPipeline inbound_server_to_client;
     CoverSessionPipeline outbound_client_to_server;
     CoverSessionPipeline outbound_server_to_client;
 };
 
-struct TcpBridgeCovertFrame {
+struct TlsTcpCarrierCovertFrame {
     FrameType frame_type{};
     std::span<const std::byte> payload;
     std::size_t padding_size = 0;
     std::uint8_t flags = 0;
 };
 
-struct TcpBridgeOwnedCovertFrame {
+struct TlsTcpCarrierOwnedCovertFrame {
     FrameType frame_type{};
     ByteVector payload;
     std::size_t padding_size = 0;
     std::uint8_t flags = 0;
 };
 
-BOOST_DEFINE_ENUM_CLASS(TcpBridgeEnqueueError, session_closed, codec_error, tls_record_error, write_queue_full)
+BOOST_DEFINE_ENUM_CLASS(TlsTcpCarrierEnqueueError, session_closed, codec_error, tls_record_error, write_queue_full)
 
-using TcpBridgeEnqueueResult = Result<std::size_t, TcpBridgeEnqueueError>;
+using TlsTcpCarrierEnqueueResult = Result<std::size_t, TlsTcpCarrierEnqueueError>;
 
-class TcpBridgeSession : public std::enable_shared_from_this<TcpBridgeSession> {
+class TlsTcpCarrierSession : public std::enable_shared_from_this<TlsTcpCarrierSession> {
 public:
     [[nodiscard]] static auto create(
         TcpSocket client_socket, TcpSocket origin_socket, CoverSessionPipeline client_to_server_pipeline, CoverSessionPipeline server_to_client_pipeline,
-        TcpBridgeSessionHandlers handlers = {}, TcpBridgeSessionConfig config = {}
-    ) -> std::shared_ptr<TcpBridgeSession>;
+        TlsTcpCarrierSessionHandlers handlers = {}, TlsTcpCarrierSessionConfig config = {}
+    ) -> std::shared_ptr<TlsTcpCarrierSession>;
     [[nodiscard]] static auto create(
-        TcpSocket client_socket, TcpSocket origin_socket, TcpBridgeSessionPipelines pipelines, TcpBridgeSessionHandlers handlers = {},
-        TcpBridgeSessionConfig config = {}
-    ) -> std::shared_ptr<TcpBridgeSession>;
+        TcpSocket client_socket, TcpSocket origin_socket, TlsTcpCarrierSessionPipelines pipelines, TlsTcpCarrierSessionHandlers handlers = {},
+        TlsTcpCarrierSessionConfig config = {}
+    ) -> std::shared_ptr<TlsTcpCarrierSession>;
 
-    TcpBridgeSession(const TcpBridgeSession&) = delete;
-    auto operator=(const TcpBridgeSession&) -> TcpBridgeSession& = delete;
+    TlsTcpCarrierSession(const TlsTcpCarrierSession&) = delete;
+    auto operator=(const TlsTcpCarrierSession&) -> TlsTcpCarrierSession& = delete;
 
     void start();
     void stop();
     [[nodiscard]] auto
     enqueue_covert_frame(Direction direction, FrameType frame_type, std::span<const std::byte> payload, std::size_t padding_size = 0, std::uint8_t flags = 0)
-        -> TcpBridgeEnqueueResult;
-    [[nodiscard]] auto enqueue_covert_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult;
+        -> TlsTcpCarrierEnqueueResult;
+    [[nodiscard]] auto enqueue_covert_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames) -> TlsTcpCarrierEnqueueResult;
 
 private:
-    TcpBridgeSession(
-        TcpSocket client_socket, TcpSocket origin_socket, TcpBridgeSessionPipelines pipelines, TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
+    TlsTcpCarrierSession(
+        TcpSocket client_socket, TcpSocket origin_socket, TlsTcpCarrierSessionPipelines pipelines, TlsTcpCarrierSessionHandlers handlers,
+        TlsTcpCarrierSessionConfig config
     );
 
     struct WriteItem {
@@ -178,7 +181,7 @@ private:
     struct ShapedWriteItem {
         WriteItem write;
         std::size_t payload_size = 0;
-        std::vector<TcpBridgeOwnedCovertFrame> classified_frames;
+        std::vector<TlsTcpCarrierOwnedCovertFrame> classified_frames;
     };
 
     struct ClassifiedRecordPipelines {
@@ -194,9 +197,9 @@ private:
         bool pause_read = false;
     };
 
-    void stop_with(TcpBridgeCloseInfo close_info);
-    void set_pending_close_info(TcpBridgeCloseInfo close_info);
-    [[nodiscard]] auto pending_or_default_close(TcpBridgeCloseInfo fallback) const -> TcpBridgeCloseInfo;
+    void stop_with(TlsTcpCarrierCloseInfo close_info);
+    void set_pending_close_info(TlsTcpCarrierCloseInfo close_info);
+    [[nodiscard]] auto pending_or_default_close(TlsTcpCarrierCloseInfo fallback) const -> TlsTcpCarrierCloseInfo;
 
     void pump(Direction direction);
     void handle_read(Direction direction, const boost::system::error_code& error, std::size_t bytes_read);
@@ -211,9 +214,9 @@ private:
     [[nodiscard]] auto send_zero_rtt_server_accept(Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload)
         -> bool;
     [[nodiscard]] auto can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool;
-    [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TcpBridgeCovertFrame> frames) -> TcpBridgeEnqueueResult;
-    [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TcpBridgeOwnedCovertFrame> frames)
-        -> Result<WriteItem, TcpBridgeEnqueueError>;
+    [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames) -> TlsTcpCarrierEnqueueResult;
+    [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames)
+        -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
     [[nodiscard]] auto shaper_enabled() const noexcept -> bool;
     void observe_cover_bytes(Direction direction, std::size_t bytes);
     void enqueue_counted_write(Direction direction, WriteItem item);
@@ -244,10 +247,10 @@ private:
     [[nodiscard]] auto shaped_queue_bytes(Direction direction) const noexcept -> std::size_t;
     [[nodiscard]] auto done_flag(Direction direction) -> bool&;
     [[nodiscard]] auto shutdown_done_flag(Direction direction) -> bool&;
-    [[nodiscard]] auto stats_for(Direction direction) noexcept -> TcpBridgeDirectionStats&;
-    [[nodiscard]] auto stats_for(Direction direction) const noexcept -> const TcpBridgeDirectionStats&;
+    [[nodiscard]] auto stats_for(Direction direction) noexcept -> TlsTcpCarrierDirectionStats&;
+    [[nodiscard]] auto stats_for(Direction direction) const noexcept -> const TlsTcpCarrierDirectionStats&;
 
-    void emit_shaper_event(const TcpBridgeShaperEvent& event) const;
+    void emit_shaper_event(const TlsTcpCarrierShaperEvent& event) const;
     void emit_process_result(Direction direction, const CoverSessionProcessResult& result);
     void emit_zero_rtt_observe_result(Direction direction, const FpsUpgradeObserveResult& result);
     void emit_zero_rtt_process_result(Direction direction, const FpsUpgradeProcessResult& result);
@@ -259,12 +262,12 @@ private:
     TcpSocket origin_socket_;
     boost::asio::steady_timer client_to_server_shaper_timer_;
     boost::asio::steady_timer server_to_client_shaper_timer_;
-    TcpBridgeSessionPipelines pipelines_;
+    TlsTcpCarrierSessionPipelines pipelines_;
     std::optional<FpsUpgradeController> zero_rtt_controller_;
     std::unique_ptr<ClassifiedRecordPipelines> classified_pipelines_;
     std::optional<Shaper> shaper_;
-    TcpBridgeSessionHandlers handlers_;
-    TcpBridgeSessionConfig config_;
+    TlsTcpCarrierSessionHandlers handlers_;
+    TlsTcpCarrierSessionConfig config_;
     TlsRecordParser client_to_server_tls_parser_;
     TlsRecordParser server_to_client_tls_parser_;
     std::vector<std::byte> client_to_server_buffer_;
@@ -286,8 +289,8 @@ private:
     bool server_to_client_shutdown_done_ = false;
     bool zero_rtt_authenticated_ = false;
     bool zero_rtt_client_upgrade_sent_ = false;
-    std::optional<TcpBridgeCloseInfo> pending_close_info_;
-    TcpBridgeSessionStats stats_;
+    std::optional<TlsTcpCarrierCloseInfo> pending_close_info_;
+    TlsTcpCarrierSessionStats stats_;
 };
 
 } // namespace fps::net

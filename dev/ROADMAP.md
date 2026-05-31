@@ -19,6 +19,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Split the covert datagram carrier core from the Linux TUN adapter so
   Android or future non-TUN adapters can reuse authenticated carriers and
   opaque datagram framing without inheriting IPv4 lease enforcement.
+- [x] Split build targets into protocol core, carrier/datagram core, TUN adapter
+  and Linux runtime so future platform work can link narrower components.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -130,9 +132,9 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Document minimal kernel capabilities and deployment topology.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
-- Continue target isolation before Android implementation work: keep
-  `CovertDatagramTransport` reusable, then move more TCP relay and Linux TUN
-  runtime code behind platform interfaces.
+- Continue target isolation before Android implementation work by moving more
+  relay orchestration behind platform interfaces only when a second adapter
+  needs it.
 
 ## Phase 7: Fuzzing And Soak
 

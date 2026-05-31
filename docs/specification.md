@@ -23,8 +23,10 @@ unprepared users or classifiers less useful. The protocol and implementation
 documents should still use the short name, FPS, for technical clarity.
 
 Linux is the active target platform for both client and server. Android remains
-future work through `VpnService`; the current code separates reusable protocol
-core from Linux TUN and `ip` runtime boundaries.
+future work through `VpnService`; the current build separates protocol core,
+carrier/datagram core, TUN adapter and Linux runtime targets so future adapters
+can reuse authenticated carriers without inheriting Linux TUN or `ip`
+orchestration.
 
 ## 2. Architecture Baseline
 
@@ -53,6 +55,26 @@ Key v5 properties:
   maps IP packets to those datagrams; any authenticated Zero-RTT TLS session can
   carry them.
 - There is no primary-session ownership model in the target architecture.
+
+Implementation boundary:
+
+- `fps_protocol_core` owns protocol primitives: TLS record parsing/wrapping,
+  transcript-bound Zero-RTT, classified FPS records, envelope/frame codecs and
+  shaping decisions. It does not open sockets or TUN devices.
+- `fps_carrier_core` owns the generic unreliable datagram transport contract:
+  `CovertDatagramTransport` schedules opaque datagram frames across abstract
+  `CovertCarrier` handles identified by `CarrierId`. This layer does not assume
+  that the carrier is TLS, TCP, SSH, WebRTC or any other concrete protocol.
+- `TlsTcpCarrierSession` is the current concrete carrier implementation. It is
+  deliberately named TLS/TCP because it owns TCP socket reads/writes, TLS record
+  slicing, carrier transcript tracking, Zero-RTT state transitions and
+  insertion/removal of classified FPS TLS Application Data records.
+- `TunTunnelAdapter` is the first product adapter above the datagram transport:
+  it maps leased IPv4 TUN packets to opaque datagrams and enforces server-side
+  lease/source/destination routing. Future adapters can target the same
+  datagram contract without inheriting TUN semantics.
+- `fps_linux_runtime` composes the production Linux relay, config/CLI, status
+  socket, Linux TUN runtime and operator-facing daemon behavior.
 
 Carrier origin resolution is an operator concern. For browser-created carrier
 sessions in beta deployments, the recommended client-side mechanism is a

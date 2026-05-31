@@ -1,15 +1,12 @@
 #include "fps/net/covert_datagram_transport.hpp"
 
-#include <boost/asio.hpp>
 #include <boost/test/unit_test.hpp>
 
 #include "fps/core/wire.hpp"
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -17,76 +14,86 @@
 
 namespace {
 
-using fps::test::ConnectedPair;
 using fps::test::bytes;
-using fps::test::connect_pair;
 using fps::test::payload_of_size;
-using fps::test::read_queued_bytes;
 
-auto codec_config(fps::Direction send_direction) -> fps::CovertCodecConfig {
-    return fps::CovertCodecConfig{
-        .send_direction = send_direction,
-        .session_keys = fps::test::session_keys(),
-        .max_payload_size = 1024,
-        .max_padding_size = 64,
-    };
-}
+struct StoredCarrierFrame {
+    fps::FrameType frame_type{};
+    fps::ByteVector payload;
+};
 
-auto pipeline(fps::Direction send_direction) -> fps::CoverSessionPipeline { return fps::CoverSessionPipeline{fps::CovertCodec{codec_config(send_direction)}}; }
+struct FakeCarrier {
+    fps::net::CarrierId id{};
+    bool alive = true;
+    std::size_t max_queued_payload_bytes = 1024U * 1024U;
+    std::vector<std::vector<StoredCarrierFrame>> writes;
 
-auto codec_pipelines() -> fps::net::TcpBridgeSessionPipelines {
-    return fps::net::TcpBridgeSessionPipelines{
-        .inbound_client_to_server = pipeline(fps::Direction::server_to_client),
-        .inbound_server_to_client = pipeline(fps::Direction::client_to_server),
-        .outbound_client_to_server = pipeline(fps::Direction::client_to_server),
-        .outbound_server_to_client = pipeline(fps::Direction::server_to_client),
-    };
-}
+    explicit FakeCarrier(fps::net::CarrierId carrier_id, std::size_t max_payload_bytes = 1024U * 1024U)
+        : id(carrier_id), max_queued_payload_bytes(max_payload_bytes) {}
 
-auto decode_frames(fps::Direction wire_direction, const fps::ByteVector& received) -> std::vector<fps::DecodedFrame> {
-    auto receiver = pipeline(fps::opposite_direction(wire_direction));
-    const auto result = receiver.process_inbound_tls(received);
+    [[nodiscard]] auto as_carrier() -> fps::net::CovertCarrier {
+        return fps::net::CovertCarrier{
+            .id = id,
+            .enqueue_frames = [this](fps::Direction, std::span<const fps::net::CovertCarrierFrame> frames) -> fps::net::CovertDatagramResult {
+                std::size_t bytes = 0;
+                for(const auto& frame : frames) {
+                    bytes += frame.payload.size();
+                }
+                if(bytes > max_queued_payload_bytes) {
+                    return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::write_queue_full);
+                }
 
-    BOOST_TEST(result.forward_bytes.empty());
-    BOOST_TEST(result.parse_errors.empty());
-    BOOST_TEST(result.codec_errors.empty());
-    BOOST_TEST(result.record_errors.empty());
-    return result.covert_frames;
-}
-
-struct CodecSessionFixture {
-    boost::asio::io_context io;
-    ConnectedPair client_pair;
-    ConnectedPair origin_pair;
-    std::shared_ptr<fps::net::TcpBridgeSession> session;
-
-    explicit CodecSessionFixture(std::size_t max_write_queue_bytes = 1024U * 1024U) : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
-        session = fps::net::TcpBridgeSession::create(
-            std::move(client_pair.bridge), std::move(origin_pair.bridge), codec_pipelines(), {},
-            {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper_profile = std::nullopt, .zero_rtt = std::nullopt}
-        );
-        session->start();
-    }
-
-    ~CodecSessionFixture() {
-        if(session) {
-            session->stop();
-        }
-        io.run_for(std::chrono::milliseconds{5});
-        io.restart();
+                std::vector<StoredCarrierFrame> stored;
+                stored.reserve(frames.size());
+                for(const auto& frame : frames) {
+                    stored.push_back(
+                        StoredCarrierFrame{
+                            .frame_type = frame.frame_type,
+                            .payload = fps::ByteVector{frame.payload.begin(), frame.payload.end()},
+                        }
+                    );
+                }
+                writes.push_back(std::move(stored));
+                return fps::net::CovertDatagramResult::success(bytes);
+            },
+            .is_alive = [this] { return alive; },
+        };
     }
 };
+
+auto frame_from_stored(const StoredCarrierFrame& stored) -> fps::DecodedFrame {
+    return fps::DecodedFrame{
+        .sequence = 0,
+        .frame_type = stored.frame_type,
+        .flags = 0,
+        .payload = stored.payload,
+        .padding_size = 0,
+    };
+}
+
+auto fragment_payload(
+    std::uint32_t packet_id, std::uint16_t fragment_index, std::uint16_t fragment_count, std::uint32_t total_size, const fps::ByteVector& chunk
+) -> fps::ByteVector {
+    fps::ByteVector out;
+    out.reserve(12U + chunk.size());
+    fps::append_be(out, packet_id);
+    fps::append_be(out, fragment_index);
+    fps::append_be(out, fragment_count);
+    fps::append_be(out, total_size);
+    out.insert(out.end(), chunk.begin(), chunk.end());
+    return out;
+}
 
 } // namespace
 
 BOOST_AUTO_TEST_SUITE(covert_datagram_transport)
 
 BOOST_AUTO_TEST_CASE(round_robins_generic_datagrams_across_carriers) {
-    CodecSessionFixture first;
-    CodecSessionFixture second;
+    FakeCarrier first{1};
+    FakeCarrier second{2};
     fps::net::CovertDatagramTransport transport{fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::client, .max_datagram_size = 64}};
-    BOOST_CHECK(transport.add_carrier_session(first.session));
-    BOOST_CHECK(transport.add_carrier_session(second.session));
+    BOOST_CHECK(transport.add_carrier(first.as_carrier()));
+    BOOST_CHECK(transport.add_carrier(second.as_carrier()));
 
     const auto first_datagram = bytes({0x01, 0x02, 0x03});
     const auto second_datagram = bytes({0x04, 0x05, 0x06});
@@ -95,95 +102,87 @@ BOOST_AUTO_TEST_CASE(round_robins_generic_datagrams_across_carriers) {
 
     BOOST_REQUIRE(first_queued);
     BOOST_REQUIRE(second_queued);
-    auto first_received = read_queued_bytes(first.io, first.origin_pair.external, first_queued.value());
-    auto second_received = read_queued_bytes(second.io, second.origin_pair.external, second_queued.value());
-    auto first_frames = decode_frames(fps::Direction::client_to_server, first_received);
-    auto second_frames = decode_frames(fps::Direction::client_to_server, second_received);
-    BOOST_REQUIRE_EQUAL(first_frames.size(), 1U);
-    BOOST_REQUIRE_EQUAL(second_frames.size(), 1U);
-    BOOST_CHECK(first_frames[0].frame_type == fps::FrameType::opaque_datagram);
-    BOOST_CHECK(first_frames[0].payload == first_datagram);
-    BOOST_CHECK(second_frames[0].frame_type == fps::FrameType::opaque_datagram);
-    BOOST_CHECK(second_frames[0].payload == second_datagram);
+    BOOST_REQUIRE_EQUAL(first.writes.size(), 1U);
+    BOOST_REQUIRE_EQUAL(second.writes.size(), 1U);
+    BOOST_REQUIRE_EQUAL(first.writes[0].size(), 1U);
+    BOOST_REQUIRE_EQUAL(second.writes[0].size(), 1U);
+    BOOST_CHECK(first.writes[0][0].frame_type == fps::FrameType::opaque_datagram);
+    BOOST_CHECK(first.writes[0][0].payload == first_datagram);
+    BOOST_CHECK(second.writes[0][0].frame_type == fps::FrameType::opaque_datagram);
+    BOOST_CHECK(second.writes[0][0].payload == second_datagram);
 }
 
 BOOST_AUTO_TEST_CASE(targeted_write_uses_requested_carrier_only) {
-    CodecSessionFixture first;
-    CodecSessionFixture second;
+    FakeCarrier first{1};
+    FakeCarrier second{2};
     fps::net::CovertDatagramTransport transport{fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::server, .max_datagram_size = 64}};
-    BOOST_CHECK(transport.add_carrier_session(first.session));
-    BOOST_CHECK(transport.add_carrier_session(second.session));
+    BOOST_CHECK(transport.add_carrier(first.as_carrier()));
+    BOOST_CHECK(transport.add_carrier(second.as_carrier()));
 
     const auto datagram = bytes({0x09, 0x08, 0x07});
-    auto queued = transport.try_write_to(second.session, datagram);
+    auto queued = transport.try_write_to(second.id, datagram);
 
     BOOST_REQUIRE(queued);
-    auto received = read_queued_bytes(second.io, second.client_pair.external, queued.value());
-    auto frames = decode_frames(fps::Direction::server_to_client, received);
-    BOOST_REQUIRE_EQUAL(frames.size(), 1U);
-    BOOST_CHECK(frames[0].frame_type == fps::FrameType::opaque_datagram);
-    BOOST_CHECK(frames[0].payload == datagram);
-    first.io.run_for(std::chrono::milliseconds{20});
-    first.io.restart();
-    BOOST_TEST(first.client_pair.external.available() == 0U);
+    BOOST_TEST(first.writes.empty());
+    BOOST_REQUIRE_EQUAL(second.writes.size(), 1U);
+    BOOST_REQUIRE_EQUAL(second.writes[0].size(), 1U);
+    BOOST_CHECK(second.writes[0][0].frame_type == fps::FrameType::opaque_datagram);
+    BOOST_CHECK(second.writes[0][0].payload == datagram);
 }
 
 BOOST_AUTO_TEST_CASE(fragmented_datagram_reassembles_with_source_carrier) {
-    CodecSessionFixture carrier;
+    FakeCarrier carrier{1};
     fps::net::CovertDatagramTransport transport{
         fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::client, .max_datagram_size = 64, .max_frame_payload_size = 20}
     };
-    BOOST_CHECK(transport.add_carrier_session(carrier.session));
+    BOOST_CHECK(transport.add_carrier(carrier.as_carrier()));
     const auto datagram = payload_of_size(41);
 
     auto queued = transport.try_write(datagram);
 
     BOOST_REQUIRE(queued);
-    auto received = read_queued_bytes(carrier.io, carrier.origin_pair.external, queued.value());
-    auto frames = decode_frames(fps::Direction::client_to_server, received);
-    BOOST_REQUIRE_GT(frames.size(), 1U);
-    for(const auto& frame : frames) {
+    BOOST_REQUIRE_EQUAL(carrier.writes.size(), 1U);
+    BOOST_REQUIRE_GT(carrier.writes[0].size(), 1U);
+    for(const auto& frame : carrier.writes[0]) {
         BOOST_CHECK(frame.frame_type == fps::FrameType::opaque_datagram_fragment);
     }
 
     std::vector<fps::ByteVector> reassembled;
-    std::vector<std::shared_ptr<fps::net::TcpBridgeSession>> sources;
+    std::vector<fps::net::CarrierId> sources;
     fps::net::CovertDatagramTransport peer{
         fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::server, .max_datagram_size = 64, .max_frame_payload_size = 20},
         fps::net::CovertDatagramHandlers{
             .on_datagram =
-                [&](const std::shared_ptr<fps::net::TcpBridgeSession>& session, fps::ByteVector packet) {
-                    sources.push_back(session);
+                [&](fps::net::CarrierId source, fps::ByteVector packet) {
+                    sources.push_back(source);
                     reassembled.push_back(std::move(packet));
                 },
             .on_event = {},
         }
     };
-    BOOST_CHECK(peer.add_carrier_session(carrier.session));
-    for(const auto& frame : frames) {
-        peer.handle_covert_frame(carrier.session, fps::Direction::client_to_server, frame);
+    BOOST_CHECK(peer.add_carrier(carrier.as_carrier()));
+    for(const auto& frame : carrier.writes[0]) {
+        peer.handle_covert_frame(carrier.id, fps::Direction::client_to_server, frame_from_stored(frame));
     }
 
     BOOST_REQUIRE_EQUAL(reassembled.size(), 1U);
     BOOST_CHECK(reassembled[0] == datagram);
     BOOST_REQUIRE_EQUAL(sources.size(), 1U);
-    BOOST_CHECK(sources[0] == carrier.session);
+    BOOST_CHECK(sources[0] == carrier.id);
 }
 
 BOOST_AUTO_TEST_CASE(fragment_batch_preflight_prevents_partial_writes) {
-    CodecSessionFixture carrier{60};
+    FakeCarrier carrier{1, 60};
     fps::net::CovertDatagramTransport transport{
         fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::client, .max_datagram_size = 64, .max_frame_payload_size = 16}
     };
-    BOOST_CHECK(transport.add_carrier_session(carrier.session));
+    BOOST_CHECK(transport.add_carrier(carrier.as_carrier()));
 
     auto result = transport.try_write(payload_of_size(20));
 
     BOOST_REQUIRE(!result);
     BOOST_CHECK(result.error() == fps::net::CovertDatagramError::write_queue_full);
-    carrier.io.run_for(std::chrono::milliseconds{20});
-    carrier.io.restart();
-    BOOST_TEST(carrier.origin_pair.external.available() == 0U);
+    BOOST_TEST(carrier.writes.empty());
 }
 
 BOOST_AUTO_TEST_CASE(non_datagram_frame_is_reported_and_ignored) {
@@ -192,7 +191,7 @@ BOOST_AUTO_TEST_CASE(non_datagram_frame_is_reported_and_ignored) {
     fps::net::CovertDatagramTransport transport{
         fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::server},
         fps::net::CovertDatagramHandlers{
-            .on_datagram = [&](const std::shared_ptr<fps::net::TcpBridgeSession>&, fps::ByteVector datagram) { datagrams.push_back(std::move(datagram)); },
+            .on_datagram = [&](fps::net::CarrierId, fps::ByteVector datagram) { datagrams.push_back(std::move(datagram)); },
             .on_event = [&](fps::net::CovertDatagramEvent event) { events.push_back(event); },
         }
     };
@@ -208,24 +207,92 @@ BOOST_AUTO_TEST_CASE(non_datagram_frame_is_reported_and_ignored) {
 }
 
 BOOST_AUTO_TEST_CASE(unregistered_source_carrier_is_ignored) {
-    CodecSessionFixture registered;
-    CodecSessionFixture unregistered;
+    FakeCarrier registered{1};
     std::vector<fps::ByteVector> datagrams;
     fps::net::CovertDatagramTransport transport{
         fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::server},
         fps::net::CovertDatagramHandlers{
-            .on_datagram = [&](const std::shared_ptr<fps::net::TcpBridgeSession>&, fps::ByteVector datagram) { datagrams.push_back(std::move(datagram)); },
+            .on_datagram = [&](fps::net::CarrierId, fps::ByteVector datagram) { datagrams.push_back(std::move(datagram)); },
             .on_event = {},
         }
     };
-    BOOST_CHECK(transport.add_carrier_session(registered.session));
+    BOOST_CHECK(transport.add_carrier(registered.as_carrier()));
 
     fps::DecodedFrame frame;
     frame.frame_type = fps::FrameType::opaque_datagram;
     frame.payload = bytes({0x01});
-    transport.handle_covert_frame(unregistered.session, fps::Direction::client_to_server, frame);
+    transport.handle_covert_frame(2, fps::Direction::client_to_server, frame);
 
     BOOST_TEST(datagrams.empty());
+}
+
+BOOST_AUTO_TEST_CASE(closed_carrier_is_pruned_before_round_robin_write) {
+    FakeCarrier closed{1};
+    FakeCarrier live{2};
+    closed.alive = false;
+    fps::net::CovertDatagramTransport transport{fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::client, .max_datagram_size = 64}};
+    BOOST_CHECK(transport.add_carrier(closed.as_carrier()));
+    BOOST_CHECK(transport.add_carrier(live.as_carrier()));
+
+    auto queued = transport.try_write(bytes({0x44, 0x55}));
+
+    BOOST_REQUIRE(queued);
+    BOOST_TEST(closed.writes.empty());
+    BOOST_REQUIRE_EQUAL(live.writes.size(), 1U);
+    BOOST_CHECK(!transport.is_carrier(closed.id));
+    BOOST_CHECK(transport.is_carrier(live.id));
+    BOOST_TEST(transport.carrier_count() == 1U);
+}
+
+BOOST_AUTO_TEST_CASE(interleaved_fragments_from_different_carrier_ids_reassemble_independently) {
+    const auto first_packet = payload_of_size(24);
+    const auto second_packet = bytes({0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d});
+    std::vector<fps::ByteVector> datagrams;
+    std::vector<fps::net::CarrierId> sources;
+    fps::net::CovertDatagramTransport transport{
+        fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::server, .max_datagram_size = 64, .max_frame_payload_size = 20},
+        fps::net::CovertDatagramHandlers{
+            .on_datagram =
+                [&](fps::net::CarrierId source, fps::ByteVector datagram) {
+                    sources.push_back(source);
+                    datagrams.push_back(std::move(datagram));
+                },
+            .on_event = {},
+        }
+    };
+    FakeCarrier first{1};
+    FakeCarrier second{2};
+    BOOST_CHECK(transport.add_carrier(first.as_carrier()));
+    BOOST_CHECK(transport.add_carrier(second.as_carrier()));
+
+    fps::DecodedFrame first_a;
+    first_a.frame_type = fps::FrameType::opaque_datagram_fragment;
+    first_a.payload =
+        fragment_payload(100, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 12});
+    fps::DecodedFrame second_a;
+    second_a.frame_type = fps::FrameType::opaque_datagram_fragment;
+    second_a.payload =
+        fragment_payload(100, 0, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin(), second_packet.begin() + 6});
+    fps::DecodedFrame first_b;
+    first_b.frame_type = fps::FrameType::opaque_datagram_fragment;
+    first_b.payload =
+        fragment_payload(100, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 12, first_packet.end()});
+    fps::DecodedFrame second_b;
+    second_b.frame_type = fps::FrameType::opaque_datagram_fragment;
+    second_b.payload =
+        fragment_payload(100, 1, 2, static_cast<std::uint32_t>(second_packet.size()), fps::ByteVector{second_packet.begin() + 6, second_packet.end()});
+
+    transport.handle_covert_frame(first.id, fps::Direction::client_to_server, first_a);
+    transport.handle_covert_frame(second.id, fps::Direction::client_to_server, second_a);
+    transport.handle_covert_frame(first.id, fps::Direction::client_to_server, first_b);
+    transport.handle_covert_frame(second.id, fps::Direction::client_to_server, second_b);
+
+    BOOST_REQUIRE_EQUAL(datagrams.size(), 2U);
+    BOOST_CHECK(datagrams[0] == first_packet);
+    BOOST_CHECK(datagrams[1] == second_packet);
+    BOOST_REQUIRE_EQUAL(sources.size(), 2U);
+    BOOST_CHECK(sources[0] == first.id);
+    BOOST_CHECK(sources[1] == second.id);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

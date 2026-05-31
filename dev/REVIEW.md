@@ -94,6 +94,15 @@ Date: 2026-05-29
     architecture, TUN support, capabilities and port binding before it can be
     marketed as supported.
 
+14. **Carrier/datagram core is now less TCP-shaped.** `CovertDatagramTransport`
+    accepts abstract carrier ids plus enqueue callbacks, and its direct unit
+    tests use fake carriers without TCP sockets. The current concrete carrier is
+    now explicitly named `TlsTcpCarrierSession`: it owns TLS record slicing,
+    transcript tracking and classified-record insertion for TLS-over-TCP cover
+    sessions. `make_tls_tcp_carrier_adapter(...)` is the thin boundary to the
+    generic carrier pool, while `TunTunnelAdapter` keeps lease/source
+    enforcement keyed by carrier metadata.
+
 ## Decisions Captured
 
 - `security.zero_rtt` remains the only carrier authentication mechanism.
@@ -134,14 +143,14 @@ Date: 2026-05-29
   pass confirms which checks and file layout operators actually need.
 - Treat router/LAN-gateway mode as a documented experimental pattern until it
   passes a real hardware or close VM validation run.
-- Continue the protocol-core split started by `CovertDatagramTransport` and
-  `TunTunnelAdapter`: the reusable carrier/datagram layer is now separate from
-  IPv4 lease/source enforcement, while TCP bridge and Linux TUN pump still need
-  further target-level isolation before Android work.
+- Continue the target split only where it reduces coupling: protocol,
+  carrier/datagram, TUN adapter and Linux runtime now have separate CMake
+  targets, but relay orchestration still composes the production TUN service
+  directly because TUN is the only product adapter.
 - Continue splitting relay runtime helpers by responsibility, starting with
   status service, TUN service, carrier registration/lease logic and
   CLI/profile/status/lease command helpers if `tcp_relay_app.cpp` grows again.
-- Keep `TcpBridgeSession` refactors focused on explicit state-machine helpers:
+- Keep `TlsTcpCarrierSession` refactors focused on explicit state-machine helpers:
   socket IO, Zero-RTT transition, classified-record processing, shaper queues
   and half-close handling should not grow more tightly coupled.
 - Plan UUID/key rotation and revocation workflow beyond basic lease

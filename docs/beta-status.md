@@ -28,10 +28,13 @@ deliberately deferred until the private release policy is settled.
 - Server-owned IPv4 leases are implemented. The server routes packets to the
   carrier that owns the destination lease and drops client packets whose IPv4
   source does not match the assigned lease.
-- The carrier/data path is split into a reusable `CovertDatagramTransport` and
-  the current `TunTunnelAdapter`. TUN is the first and most important product
-  adapter for VPN service, but the core no longer assumes that every covert
-  payload is an IP packet.
+- The carrier/data path is split into reusable `CovertDatagramTransport`,
+  explicit TLS-over-TCP carrier sessions (`TlsTcpCarrierSession`) and the
+  current `TunTunnelAdapter`. TUN is the first and most important product
+  adapter for VPN service, but the datagram transport no longer assumes that
+  every covert payload is an IP packet. Build targets now reflect that split:
+  protocol core, carrier/datagram core, TUN adapter and Linux runtime can be
+  linked separately.
 - Docker is the primary Linux runtime path. The base image contains FPS binaries,
   `fps_carrier`, route/debug tooling and the operator entrypoint, but no embedded
   SOCKS/HTTP proxy daemon.

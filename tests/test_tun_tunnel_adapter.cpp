@@ -63,8 +63,8 @@ auto codec_config(fps::Direction send_direction) -> fps::CovertCodecConfig {
 
 auto pipeline(fps::Direction send_direction) -> fps::CoverSessionPipeline { return fps::CoverSessionPipeline{fps::CovertCodec{codec_config(send_direction)}}; }
 
-auto codec_pipelines() -> fps::net::TcpBridgeSessionPipelines {
-    return fps::net::TcpBridgeSessionPipelines{
+auto codec_pipelines() -> fps::net::TlsTcpCarrierSessionPipelines {
+    return fps::net::TlsTcpCarrierSessionPipelines{
         .inbound_client_to_server = pipeline(fps::Direction::server_to_client),
         .inbound_server_to_client = pipeline(fps::Direction::client_to_server),
         .outbound_client_to_server = pipeline(fps::Direction::client_to_server),
@@ -113,10 +113,10 @@ struct CodecSessionFixture {
     boost::asio::io_context io;
     ConnectedPair client_pair;
     ConnectedPair origin_pair;
-    std::shared_ptr<fps::net::TcpBridgeSession> session;
+    std::shared_ptr<fps::net::TlsTcpCarrierSession> session;
 
     explicit CodecSessionFixture(std::size_t max_write_queue_bytes = 1024U * 1024U) : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
-        session = fps::net::TcpBridgeSession::create(
+        session = fps::net::TlsTcpCarrierSession::create(
             std::move(client_pair.bridge), std::move(origin_pair.bridge), codec_pipelines(), {},
             {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper_profile = std::nullopt, .zero_rtt = std::nullopt}
         );

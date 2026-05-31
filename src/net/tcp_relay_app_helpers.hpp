@@ -25,8 +25,8 @@ namespace fps::net::detail {
 
 [[nodiscard]] inline auto tun_lease_error_message(TunLeaseError error) -> std::string_view { return enum_name_or(error, "unknown_tun_lease_error"); }
 
-[[nodiscard]] inline auto tcp_bridge_enqueue_error_message(TcpBridgeEnqueueError error) -> std::string_view {
-    return enum_name_or(error, "unknown_tcp_bridge_enqueue_error");
+[[nodiscard]] inline auto tls_tcp_carrier_enqueue_error_message(TlsTcpCarrierEnqueueError error) -> std::string_view {
+    return enum_name_or(error, "unknown_tls_tcp_carrier_enqueue_error");
 }
 
 [[nodiscard]] inline auto codec_error_message(CodecError error) -> std::string_view { return enum_name_or(error, "unknown_codec_error"); }

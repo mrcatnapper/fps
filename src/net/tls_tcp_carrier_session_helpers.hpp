@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 
 #include "fps/core/enum.hpp"
 
@@ -37,7 +37,7 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
     return checked_add(kCovertTlsRecordOverhead, *body_size);
 }
 
-[[nodiscard]] inline auto classified_tls_record_size(std::span<const TcpBridgeCovertFrame> frames, std::size_t record_padding_size = 0) noexcept
+[[nodiscard]] inline auto classified_tls_record_size(std::span<const TlsTcpCarrierCovertFrame> frames, std::size_t record_padding_size = 0) noexcept
     -> std::optional<std::size_t> {
     auto plain_size = checked_add(kClassifiedRecordPlainHeaderSize, record_padding_size);
     if(!plain_size) {
@@ -57,7 +57,7 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
     return payload_size ? checked_add(kTlsRecordHeaderSize, *payload_size) : std::nullopt;
 }
 
-[[nodiscard]] inline auto classified_tls_record_size(std::span<const TcpBridgeOwnedCovertFrame> frames, std::size_t record_padding_size = 0) noexcept
+[[nodiscard]] inline auto classified_tls_record_size(std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t record_padding_size = 0) noexcept
     -> std::optional<std::size_t> {
     auto plain_size = checked_add(kClassifiedRecordPlainHeaderSize, record_padding_size);
     if(!plain_size) {
@@ -77,7 +77,7 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
     return payload_size ? checked_add(kTlsRecordHeaderSize, *payload_size) : std::nullopt;
 }
 
-[[nodiscard]] inline auto normalize_config(TcpBridgeSessionConfig config) noexcept -> TcpBridgeSessionConfig {
+[[nodiscard]] inline auto normalize_config(TlsTcpCarrierSessionConfig config) noexcept -> TlsTcpCarrierSessionConfig {
     if(config.read_buffer_size == 0U) {
         config.read_buffer_size = 1U;
     }
@@ -89,7 +89,7 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
 
 [[nodiscard]] inline auto classified_record_config(
     Direction send_direction, const SessionKeys& session_keys, const X25519PublicKey& client_public_key, const X25519PublicKey& server_public_key,
-    const TcpBridgeZeroRttOptions& options
+    const TlsTcpCarrierZeroRttOptions& options
 ) -> FpsClassifiedRecordConfig {
     return FpsClassifiedRecordConfig{
         .send_direction = send_direction,
@@ -105,7 +105,7 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
     };
 }
 
-[[nodiscard]] inline auto frame_payload_size_sum(std::span<const TcpBridgeCovertFrame> frames) -> std::size_t {
+[[nodiscard]] inline auto frame_payload_size_sum(std::span<const TlsTcpCarrierCovertFrame> frames) -> std::size_t {
     std::size_t total = 0;
     for(const auto& frame : frames) {
         const auto size = frame.payload.size();
@@ -120,10 +120,10 @@ inline void add_stat(std::uint64_t& value, std::size_t delta) noexcept {
 }
 
 [[nodiscard]] inline auto close_info(
-    TcpBridgeCloseReason reason, std::optional<Direction> direction, std::optional<TcpBridgeCloseComponent> component, std::string error = {},
-    std::optional<TcpBridgeCloseStage> stage = std::nullopt
-) -> TcpBridgeCloseInfo {
-    return TcpBridgeCloseInfo{
+    TlsTcpCarrierCloseReason reason, std::optional<Direction> direction, std::optional<TlsTcpCarrierCloseComponent> component, std::string error = {},
+    std::optional<TlsTcpCarrierCloseStage> stage = std::nullopt
+) -> TlsTcpCarrierCloseInfo {
+    return TlsTcpCarrierCloseInfo{
         .reason = reason,
         .direction = direction,
         .component = component,
@@ -132,59 +132,64 @@ inline void add_stat(std::uint64_t& value, std::size_t delta) noexcept {
     };
 }
 
-[[nodiscard]] inline auto close_info_from_classified_encode(Direction direction, const FpsClassifiedRecordPipelineEncodeError& error) -> TcpBridgeCloseInfo {
+[[nodiscard]] inline auto close_info_from_classified_encode(Direction direction, const FpsClassifiedRecordPipelineEncodeError& error)
+    -> TlsTcpCarrierCloseInfo {
     if(error.stage == FpsClassifiedRecordPipelineEncodeStage::tls_record) {
         return close_info(
-            TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, std::string{enum_name_or(error.tls_record_error)},
-            TcpBridgeCloseStage::tls_record
+            TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record, std::string{enum_name_or(error.tls_record_error)},
+            TlsTcpCarrierCloseStage::tls_record
         );
     }
     return close_info(
-        TcpBridgeCloseReason::classified_record_encode_error, direction, TcpBridgeCloseComponent::classified_record_encode,
-        std::string{enum_name_or(error.classified_error)}, TcpBridgeCloseStage::classified_record
+        TlsTcpCarrierCloseReason::classified_record_encode_error, direction, TlsTcpCarrierCloseComponent::classified_record_encode,
+        std::string{enum_name_or(error.classified_error)}, TlsTcpCarrierCloseStage::classified_record
     );
 }
 
-[[nodiscard]] inline auto close_info_from_classified_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result) -> TcpBridgeCloseInfo {
+[[nodiscard]] inline auto close_info_from_classified_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result)
+    -> TlsTcpCarrierCloseInfo {
     if(!result.parse_errors.empty()) {
         return close_info(
-            TcpBridgeCloseReason::tls_parse_error, direction, TcpBridgeCloseComponent::tls_parser, std::string{enum_name_or(result.parse_errors.back())}
+            TlsTcpCarrierCloseReason::tls_parse_error, direction, TlsTcpCarrierCloseComponent::tls_parser, std::string{enum_name_or(result.parse_errors.back())}
         );
     }
     if(!result.record_errors.empty()) {
         return close_info(
-            TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, std::string{enum_name_or(result.record_errors.back())}
+            TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record,
+            std::string{enum_name_or(result.record_errors.back())}
         );
     }
     if(!result.classified_errors.empty()) {
         return close_info(
-            TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record,
+            TlsTcpCarrierCloseReason::classified_record_error, direction, TlsTcpCarrierCloseComponent::classified_record,
             std::string{enum_name_or(result.classified_errors.back())}
         );
     }
-    return close_info(TcpBridgeCloseReason::classified_record_error, direction, TcpBridgeCloseComponent::classified_record, "close_required");
+    return close_info(TlsTcpCarrierCloseReason::classified_record_error, direction, TlsTcpCarrierCloseComponent::classified_record, "close_required");
 }
 
-[[nodiscard]] inline auto close_info_from_enqueue_error(Direction direction, TcpBridgeEnqueueError error) -> TcpBridgeCloseInfo {
+[[nodiscard]] inline auto close_info_from_enqueue_error(Direction direction, TlsTcpCarrierEnqueueError error) -> TlsTcpCarrierCloseInfo {
     switch(error) {
-    case TcpBridgeEnqueueError::write_queue_full:
-        return close_info(TcpBridgeCloseReason::write_queue_full, direction, TcpBridgeCloseComponent::queue, std::string{enum_name_or(error)});
-    case TcpBridgeEnqueueError::codec_error:
-        return close_info(TcpBridgeCloseReason::codec_error, direction, TcpBridgeCloseComponent::codec, std::string{enum_name_or(error)});
-    case TcpBridgeEnqueueError::tls_record_error:
-        return close_info(TcpBridgeCloseReason::tls_record_error, direction, TcpBridgeCloseComponent::tls_record, std::string{enum_name_or(error)});
-    case TcpBridgeEnqueueError::session_closed:
-        return close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::session, std::string{enum_name_or(error)});
+    case TlsTcpCarrierEnqueueError::write_queue_full:
+        return close_info(TlsTcpCarrierCloseReason::write_queue_full, direction, TlsTcpCarrierCloseComponent::queue, std::string{enum_name_or(error)});
+    case TlsTcpCarrierEnqueueError::codec_error:
+        return close_info(TlsTcpCarrierCloseReason::codec_error, direction, TlsTcpCarrierCloseComponent::codec, std::string{enum_name_or(error)});
+    case TlsTcpCarrierEnqueueError::tls_record_error:
+        return close_info(TlsTcpCarrierCloseReason::tls_record_error, direction, TlsTcpCarrierCloseComponent::tls_record, std::string{enum_name_or(error)});
+    case TlsTcpCarrierEnqueueError::session_closed:
+        return close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::session, std::string{enum_name_or(error)});
     }
-    return close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::session, "unknown_enqueue_error");
+    return close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::session, "unknown_enqueue_error");
 }
 
 [[nodiscard]] inline auto is_datagram_frame(FrameType frame_type) noexcept -> bool {
     return frame_type == FrameType::opaque_datagram || frame_type == FrameType::opaque_datagram_fragment;
 }
 
-[[nodiscard]] inline auto tcp_bridge_error_from_classified_encode(const FpsClassifiedRecordPipelineEncodeError& error) noexcept -> TcpBridgeEnqueueError {
-    return error.stage == FpsClassifiedRecordPipelineEncodeStage::tls_record ? TcpBridgeEnqueueError::tls_record_error : TcpBridgeEnqueueError::codec_error;
+[[nodiscard]] inline auto tls_tcp_carrier_error_from_classified_encode(const FpsClassifiedRecordPipelineEncodeError& error) noexcept
+    -> TlsTcpCarrierEnqueueError {
+    return error.stage == FpsClassifiedRecordPipelineEncodeStage::tls_record ? TlsTcpCarrierEnqueueError::tls_record_error
+                                                                             : TlsTcpCarrierEnqueueError::codec_error;
 }
 
 } // namespace fps::net::detail

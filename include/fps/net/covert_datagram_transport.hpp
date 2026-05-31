@@ -3,15 +3,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <span>
 #include <vector>
 
+#include "fps/core/covert_codec.hpp"
 #include "fps/core/protocol_constants.hpp"
 #include "fps/core/types.hpp"
-#include "fps/net/tcp_bridge_session.hpp"
 
 namespace fps::net {
+
+using CarrierId = std::uint64_t;
+inline constexpr CarrierId kNoCarrierId = 0;
 
 struct CovertDatagramTransportConfig {
     RelayRole role{RelayRole::client};
@@ -32,8 +34,21 @@ BOOST_DEFINE_ENUM_CLASS(
 
 using CovertDatagramResult = Result<std::size_t, CovertDatagramError>;
 
+struct CovertCarrierFrame {
+    FrameType frame_type{};
+    std::span<const std::byte> payload;
+    std::size_t padding_size = 0;
+    std::uint8_t flags = 0;
+};
+
+struct CovertCarrier {
+    CarrierId id{kNoCarrierId};
+    std::function<CovertDatagramResult(Direction, std::span<const CovertCarrierFrame>)> enqueue_frames;
+    std::function<bool()> is_alive;
+};
+
 struct CovertDatagramHandlers {
-    std::function<void(const std::shared_ptr<TcpBridgeSession>&, ByteVector)> on_datagram;
+    std::function<void(CarrierId, ByteVector)> on_datagram;
     std::function<void(CovertDatagramEvent)> on_event;
 };
 
@@ -41,16 +56,16 @@ class CovertDatagramTransport {
 public:
     explicit CovertDatagramTransport(CovertDatagramTransportConfig config, CovertDatagramHandlers handlers = {});
 
-    [[nodiscard]] auto add_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) -> bool;
-    [[nodiscard]] auto is_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) const noexcept -> bool;
-    [[nodiscard]] auto remove_carrier_session_if(const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool;
+    [[nodiscard]] auto add_carrier(CovertCarrier carrier) -> bool;
+    [[nodiscard]] auto is_carrier(CarrierId carrier_id) const noexcept -> bool;
+    [[nodiscard]] auto remove_carrier_if(CarrierId carrier_id) noexcept -> bool;
     void clear_carrier_sessions() noexcept;
     [[nodiscard]] auto carrier_count() const noexcept -> std::size_t;
 
     [[nodiscard]] auto try_write(std::span<const std::byte> datagram) -> CovertDatagramResult;
-    [[nodiscard]] auto try_write_to(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram) -> CovertDatagramResult;
+    [[nodiscard]] auto try_write_to(CarrierId carrier_id, std::span<const std::byte> datagram) -> CovertDatagramResult;
     void handle_covert_frame(Direction direction, const DecodedFrame& frame);
-    void handle_covert_frame(const std::shared_ptr<TcpBridgeSession>& session, Direction direction, const DecodedFrame& frame);
+    void handle_covert_frame(CarrierId carrier_id, Direction direction, const DecodedFrame& frame);
 
     [[nodiscard]] auto outbound_direction() const noexcept -> Direction;
     [[nodiscard]] auto inbound_direction() const noexcept -> Direction;
@@ -63,13 +78,12 @@ private:
         std::uint16_t fragment_count{};
         std::uint32_t total_size{};
         ByteVector packet;
-        bool has_source_session = false;
-        std::weak_ptr<TcpBridgeSession> source_session;
+        CarrierId source_carrier_id{kNoCarrierId};
     };
     using FragmentReassemblyIterator = std::vector<FragmentReassemblyState>::iterator;
 
     struct CarrierEntry {
-        std::weak_ptr<TcpBridgeSession> session;
+        CovertCarrier carrier;
     };
 
     struct CarrierEnqueueAttempt {
@@ -77,22 +91,16 @@ private:
         bool saw_write_queue_full = false;
     };
 
-    [[nodiscard]] auto enqueue_datagram_on_session(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram)
-        -> CovertDatagramResult;
-    [[nodiscard]] auto enqueue_fragmented_datagram(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram)
-        -> CovertDatagramResult;
+    [[nodiscard]] auto enqueue_datagram_on_carrier(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult;
+    [[nodiscard]] auto enqueue_fragmented_datagram(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult;
     [[nodiscard]] auto try_enqueue_on_carriers(std::span<const std::byte> datagram) -> CarrierEnqueueAttempt;
     void prune_expired_carriers();
-    void deliver_inbound_datagram(const std::shared_ptr<TcpBridgeSession>& session, ByteVector datagram);
-    void handle_datagram_fragment(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> payload);
-    [[nodiscard]] static auto same_fragment_source(const FragmentReassemblyState& state, const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool;
-    [[nodiscard]] static auto fragment_source_expired(const FragmentReassemblyState& state) noexcept -> bool;
-    [[nodiscard]] auto find_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id) -> FragmentReassemblyIterator;
-    void reset_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id);
-    void remove_fragment_reassemblies_for_session(const std::shared_ptr<TcpBridgeSession>& session);
-    void prune_expired_fragment_reassemblies();
+    void deliver_inbound_datagram(CarrierId carrier_id, ByteVector datagram);
+    void handle_datagram_fragment(CarrierId carrier_id, std::span<const std::byte> payload);
+    [[nodiscard]] auto find_fragment_reassembly(CarrierId carrier_id, std::uint32_t packet_id) -> FragmentReassemblyIterator;
+    void reset_fragment_reassembly(CarrierId carrier_id, std::uint32_t packet_id);
+    void remove_fragment_reassemblies_for_carrier(CarrierId carrier_id);
 
-    [[nodiscard]] static auto map_enqueue_error(TcpBridgeEnqueueError error) -> CovertDatagramError;
     void emit_event(CovertDatagramEvent event) const;
 
     CovertDatagramTransportConfig config_;
