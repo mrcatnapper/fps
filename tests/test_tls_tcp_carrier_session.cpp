@@ -109,6 +109,22 @@ auto bridge_zero_rtt_options(
     };
 }
 
+auto fixed_record_shaper_profile(std::size_t record_size) -> fps::ShaperProfile {
+    const fps::DirectionProfile direction_profile{
+        .record_size_cdf = {{record_size, 1.0}},
+        .inter_record_delay_ms_cdf = {{1, 1.0}},
+    };
+    return fps::ShaperProfile{
+        .profile_id = "bridge-shaper-profile",
+        .client_to_server = direction_profile,
+        .server_to_client = direction_profile,
+        .covert_ratio_max = 1.0,
+        .burst_records_max = 8,
+        .jitter = {std::chrono::milliseconds{0}, std::chrono::milliseconds{0}},
+        .deterministic_seed = 17,
+    };
+}
+
 struct BridgeFixture {
     boost::asio::io_context io;
     ConnectedPair client_pair;
@@ -151,12 +167,14 @@ struct ZeroRttBridgeFixture {
     std::vector<bool> frame_seen_after_auth;
     std::vector<fps::FpsClassifiedRecordError> classified_errors;
     std::vector<fps::FpsClassifiedRecordPipelineEncodeError> classified_encode_errors;
+    std::vector<fps::net::TlsTcpCarrierShaperEvent> shaper_events;
     std::optional<fps::SessionKeys> authenticated_keys;
     std::optional<fps::net::TlsTcpCarrierSessionStats> closed_stats;
     std::shared_ptr<fps::net::TlsTcpCarrierSession> session;
 
     explicit ZeroRttBridgeFixture(
-        fps::net::TlsTcpCarrierZeroRttOptions zero_rtt_options, std::size_t read_buffer_size = 7U, std::size_t max_write_queue_bytes = 1024U * 1024U
+        fps::net::TlsTcpCarrierZeroRttOptions zero_rtt_options, std::size_t read_buffer_size = 7U, std::size_t max_write_queue_bytes = 1024U * 1024U,
+        std::optional<fps::ShaperProfile> shaper = std::nullopt
     )
         : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
         fps::net::TlsTcpCarrierSessionHandlers handlers;
@@ -168,6 +186,7 @@ struct ZeroRttBridgeFixture {
         handlers.on_classified_record_encode_error = [&](fps::Direction, fps::FpsClassifiedRecordPipelineEncodeError error) {
             classified_encode_errors.push_back(error);
         };
+        handlers.on_shaper_event = [&](const fps::net::TlsTcpCarrierShaperEvent& event) { shaper_events.push_back(event); };
         handlers.on_zero_rtt_authenticated = [&](const fps::SessionKeys& keys, const std::optional<fps::X25519PublicKey>&) { authenticated_keys = keys; };
         handlers.on_closed = [&](const fps::net::TlsTcpCarrierSessionStats& stats) { closed_stats = stats; };
 
@@ -175,7 +194,7 @@ struct ZeroRttBridgeFixture {
             std::move(client_pair.bridge), std::move(origin_pair.bridge), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = read_buffer_size,
              .max_write_queue_bytes = max_write_queue_bytes,
-             .shaper_profile = std::nullopt,
+             .shaper_profile = std::move(shaper),
              .zero_rtt = std::move(zero_rtt_options)}
         );
         session->start();
@@ -779,6 +798,117 @@ BOOST_AUTO_TEST_CASE(authenticated_classified_encode_failure_reports_error) {
     BOOST_CHECK(queued.error() == fps::net::TlsTcpCarrierEnqueueError::codec_error);
     BOOST_REQUIRE_EQUAL(fixture.classified_encode_errors.size(), 1U);
     BOOST_CHECK(fixture.classified_encode_errors[0].classified_error == fps::FpsClassifiedRecordError::oversized_payload);
+}
+
+BOOST_AUTO_TEST_CASE(shaped_authenticated_classified_frame_uses_target_tls_record_size) {
+    constexpr std::size_t target_record_size = 120U;
+    const auto client_keys = key_pair(40);
+    const auto server_keys = key_pair(100);
+    auto options = bridge_zero_rtt_options(fps::ZeroRttUpgradeRole::server, client_keys, server_keys);
+    options.max_envelope_padding_size = 256U;
+    ZeroRttBridgeFixture fixture{options, 4096U, 1024U * 1024U, fixed_record_shaper_profile(target_record_size)};
+    auto client_controller = authenticate_server_fixture(fixture, client_keys, server_keys);
+    BOOST_REQUIRE(client_controller.session_keys().has_value());
+
+    const auto cover_record = tls_app_record(patterned_bytes(512U, 0x21));
+    fps::ByteVector forwarded_cover(cover_record.size());
+    bool cover_done = false;
+    boost::system::error_code cover_error;
+    boost::asio::async_read(
+        fixture.client_pair.external, boost::asio::buffer(forwarded_cover), boost::asio::transfer_exactly(forwarded_cover.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            cover_error = error;
+            cover_done = true;
+        }
+    );
+    boost::asio::write(fixture.origin_pair.external, boost::asio::buffer(cover_record));
+    auto observed_cover = observe_record(client_controller, fps::Direction::server_to_client, cover_record);
+    BOOST_TEST(observed_cover.parse_errors.empty());
+    run_until(fixture.io, [&] { return cover_done; });
+    BOOST_REQUIRE(cover_done);
+    BOOST_REQUIRE(!cover_error);
+    BOOST_CHECK(forwarded_cover == cover_record);
+
+    const auto payload = bytes({0x55, 0x56, 0x57});
+    auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::ping, payload);
+    BOOST_REQUIRE(queued);
+    run_until(fixture.io, [&] { return fixture.client_pair.external.available() > 0U || fixture.closed_stats.has_value(); }, 200);
+    BOOST_TEST(!fixture.closed_stats.has_value());
+    auto shaped_record = read_tls_record(fixture.client_pair.external);
+
+    BOOST_TEST(shaped_record.size() == target_record_size);
+    fps::FpsClassifiedRecordPipeline receiver{fps::FpsClassifiedRecordCodec{
+        classified_config(fps::Direction::client_to_server, *client_controller.session_keys(), client_keys.public_key, server_keys.public_key)
+    }};
+    auto decoded = receiver.process_inbound_tls(
+        fps::Direction::server_to_client, shaped_record,
+        [&](fps::Direction direction) { return client_controller.current_transcript_snapshot(direction); },
+        [&](fps::Direction direction, const fps::TlsRecord& record) {
+            auto observed = client_controller.observe_tls_record(direction, record);
+            BOOST_TEST(observed.parse_errors.empty());
+        }
+    );
+
+    BOOST_TEST(!decoded.close_required);
+    BOOST_REQUIRE_EQUAL(decoded.frames.size(), 1U);
+    BOOST_CHECK(decoded.frames[0].frame_type == fps::FrameType::ping);
+    BOOST_CHECK(decoded.frames[0].payload == payload);
+    const auto scheduled = std::find_if(fixture.shaper_events.begin(), fixture.shaper_events.end(), [](const auto& event) {
+        return event.decision == fps::net::TlsTcpCarrierShaperDecision::scheduled;
+    });
+    BOOST_REQUIRE(scheduled != fixture.shaper_events.end());
+    BOOST_TEST(scheduled->tls_record_size == target_record_size);
+    BOOST_TEST(scheduled->encoded_tls_record_size == target_record_size);
+}
+
+BOOST_AUTO_TEST_CASE(shaped_authenticated_frame_queue_preflight_blocks_target_without_partial_write) {
+    constexpr std::size_t target_record_size = 900U;
+    const auto client_keys = key_pair(41);
+    const auto server_keys = key_pair(101);
+    auto options = bridge_zero_rtt_options(fps::ZeroRttUpgradeRole::server, client_keys, server_keys);
+    options.max_envelope_padding_size = 1024U;
+    ZeroRttBridgeFixture fixture{options, 4096U, 512U, fixed_record_shaper_profile(target_record_size)};
+    (void)authenticate_server_fixture(fixture, client_keys, server_keys);
+
+    const auto cover_record = tls_app_record(patterned_bytes(1024U, 0x31));
+    fps::ByteVector forwarded_cover(cover_record.size());
+    bool cover_done = false;
+    boost::system::error_code cover_error;
+    boost::asio::async_read(
+        fixture.client_pair.external, boost::asio::buffer(forwarded_cover), boost::asio::transfer_exactly(forwarded_cover.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            cover_error = error;
+            cover_done = true;
+        }
+    );
+    boost::asio::write(fixture.origin_pair.external, boost::asio::buffer(cover_record));
+    run_until(fixture.io, [&] { return cover_done; });
+    BOOST_REQUIRE(cover_done);
+    BOOST_REQUIRE(!cover_error);
+
+    const auto payload = bytes({0x65, 0x66, 0x67});
+    auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::ping, payload);
+    BOOST_REQUIRE(queued);
+    run_until(
+        fixture.io,
+        [&] {
+            return std::any_of(fixture.shaper_events.begin(), fixture.shaper_events.end(), [](const auto& event) {
+                return event.decision == fps::net::TlsTcpCarrierShaperDecision::blocked && event.tls_record_size == target_record_size;
+            });
+        },
+        200
+    );
+
+    boost::system::error_code available_error;
+    const auto available = fixture.client_pair.external.available(available_error);
+    BOOST_TEST(!available_error);
+    BOOST_TEST(available == 0U);
+    BOOST_TEST(!fixture.closed_stats.has_value());
+    BOOST_TEST(fixture.classified_encode_errors.empty());
+    const auto scheduled = std::find_if(fixture.shaper_events.begin(), fixture.shaper_events.end(), [](const auto& event) {
+        return event.decision == fps::net::TlsTcpCarrierShaperDecision::scheduled;
+    });
+    BOOST_CHECK(scheduled == fixture.shaper_events.end());
 }
 
 BOOST_AUTO_TEST_CASE(client_role_injects_late_zero_rtt_upgrade_and_forwards_following_tls) {

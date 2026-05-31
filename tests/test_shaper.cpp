@@ -72,6 +72,60 @@ BOOST_AUTO_TEST_CASE(enforces_cover_ratio_budget) {
     BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == plan.covert_payload_budget);
 }
 
+BOOST_AUTO_TEST_CASE(proposal_does_not_consume_budget_until_committed) {
+    fps::Shaper shaper{sample_profile()};
+    const auto data = payload_of_size(80);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto proposal = shaper.propose_send_plan(
+        fps::SendPlanRequest{
+            .direction = fps::Direction::client_to_server,
+            .min_covert_payload_size = 80,
+            .min_tls_record_size = 64,
+            .max_tls_record_size = 128,
+        }
+    );
+
+    BOOST_TEST(proposal.allow_injected_record);
+    BOOST_TEST(proposal.covert_payload_budget == 80U);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 80U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 0U);
+
+    shaper.commit_send_plan(proposal);
+
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 0U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 80U);
+}
+
+BOOST_AUTO_TEST_CASE(rejected_proposal_preserves_queue_budget_and_burst_state) {
+    auto profile = sample_profile();
+    profile.client_to_server.record_size_cdf = {{64, 1.0}};
+    fps::Shaper shaper{profile};
+    const auto data = payload_of_size(160);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto rejected = shaper.propose_send_plan(
+        fps::SendPlanRequest{
+            .direction = fps::Direction::client_to_server,
+            .min_covert_payload_size = 80,
+            .min_tls_record_size = 128,
+            .max_tls_record_size = 256,
+        }
+    );
+
+    BOOST_TEST(!rejected.allow_injected_record);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 160U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 0U);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    const auto allowed = shaper.next_send_plan(fps::Direction::client_to_server, 32, 64, 64);
+
+    BOOST_TEST(allowed.allow_injected_record);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 128U);
+}
+
 BOOST_AUTO_TEST_CASE(min_payload_size_blocks_without_consuming_budget) {
     auto profile = sample_profile();
     profile.client_to_server.record_size_cdf = {{128, 1.0}};

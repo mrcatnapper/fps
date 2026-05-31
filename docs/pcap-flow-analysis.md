@@ -115,13 +115,16 @@ traffic-shape mimicry.
 
 ## Engineering Conclusion
 
-The next traffic-analysis work should focus on classified-record scheduling and shaping,
-not on TLS record syntactic validity alone. Useful next experiments:
+The next traffic-analysis work should focus on classified-record scheduling and
+shaping, not on TLS record syntactic validity alone. The first shaper increment
+now pads inserted classified FPS records to planner-selected full TLS record
+wire sizes; this is necessary, but not sufficient, for statistical mimicry.
+Useful next experiments:
 
 - compare a pure carrier capture against carrier-plus-FPS captures at several
   TUN rates;
-- cap or pace covert datagram frames so they do not create a separate near-MTU packet
-  band;
+- cap or pace covert datagram frames so they do not create a separate near-MTU
+  packet band;
 - schedule FPS envelopes against the carrier's observed cadence instead of
   flushing immediately whenever TUN data is available;
 - rerun the same pcap analysis over real browser/application carrier sessions,

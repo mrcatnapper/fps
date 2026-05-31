@@ -2,6 +2,52 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-01
+
+### Add size-aware classified-record shaping
+
+Goal:
+
+- Start the traffic-shaping implementation by making inserted classified FPS
+  records use planner-selected full TLS record wire sizes.
+- Keep ordinary carrier TLS records byte-for-byte and leave adaptive
+  pcap-level mimicry for a later increment.
+
+Changes:
+
+- Added target-size options to classified-record encoding. The encoder now pads
+  encrypted classified records to an exact outer TLS Application Data record
+  size when requested.
+- Added precise rejection for too-small target records and preserved send
+  sequence on target-size/padding validation failures.
+- Split shaper scheduling into proposal and commit steps so blocked target
+  sizes, padding limits and write-queue pressure do not consume queued covert
+  bytes, cover budget or burst allowance.
+- Wired shaped classified writes in `TlsTcpCarrierSession` to use
+  `plan.tls_record_size` as the real emitted TLS record size and to report
+  actual encoded size in shaper events.
+- Updated the TUN shaper integration fixture so shaped profiles have enough
+  configured classified-record padding capacity.
+- Updated shaper/spec/testing documentation to define record-size CDF buckets as
+  full TLS record wire sizes.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=fps_classified_record,shaper,tls_tcp_carrier_session --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -R fps_tun_zero_rtt_shaper --output-on-failure`
+- `git diff --check`
+
+Open follow-up:
+
+- Add pcap-level distribution checks after the shaper can schedule against
+  learned or captured carrier profiles rather than static CDFs only.
+
 ## 2026-05-31
 
 ### Expand adversarial Zero-RTT regression coverage

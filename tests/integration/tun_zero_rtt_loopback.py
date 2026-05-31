@@ -268,6 +268,12 @@ def shaper_json(enabled):
 """
 
 
+def codec_frame_padding(enable_shaper, cover_padding_size):
+    if enable_shaper:
+        return max(64, cover_padding_size)
+    return 64
+
+
 def zero_rtt_json(role):
     if role == "client":
         key_config = """
@@ -308,6 +314,7 @@ def write_json_config(
     enable_shaper,
     tun_mtu,
     codec_max_frame_payload,
+    cover_padding_size,
     lease_file=None,
 ):
     if role == "server":
@@ -336,7 +343,7 @@ def write_json_config(
 %s
   "codec": {
     "max_frame_payload": %d,
-    "max_frame_padding": 64,
+    "max_frame_padding": %d,
     "allow_fragmentation": true
   },
   "tun": {
@@ -355,6 +362,7 @@ def write_json_config(
             target,
             zero_rtt_json(role),
             codec_max_frame_payload,
+            codec_frame_padding(enable_shaper, cover_padding_size),
             tun_name,
             tun_mtu,
             lease_json,
@@ -510,6 +518,7 @@ def main():
             args.enable_shaper,
             args.tun_mtu,
             args.codec_max_frame_payload,
+            args.cover_padding_size,
             str(tmpdir / "leases.json"),
         )
         write_json_config(
@@ -522,6 +531,7 @@ def main():
             args.enable_shaper,
             args.tun_mtu,
             args.codec_max_frame_payload,
+            args.cover_padding_size,
         )
 
         try:

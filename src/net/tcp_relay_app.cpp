@@ -1045,6 +1045,7 @@ private:
             options.controller_config = config_.zero_rtt->controller_config;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
+            options.max_envelope_padding_size = config_.max_frame_padding_size;
             if(config_.role == RelayRole::client && client_instance_id_.has_value()) {
                 options.client_upgrade_padding = encode_client_instance_control(*client_instance_id_);
             }

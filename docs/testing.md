@@ -311,13 +311,14 @@ Unit tests cover:
   boundary tracking.
 - Classified-record and internal frame-bundle codecs, covert frames, padding,
   implicit sequence, tamper rejection and no-plaintext-metadata smoke.
-- Shaper deterministic plans, CDF validation, ratio budget, burst limit,
-  backpressure clear/block, direction isolation and profile exhaustion.
+- Shaper deterministic plans, CDF validation, ratio budget, proposal/commit
+  scheduling, target TLS record size bounds, burst limit, backpressure
+  clear/block, direction isolation and profile exhaustion.
 - `TlsTcpCarrierSession` passthrough, Zero-RTT client-auth/server-accept/classify,
   client late upgrade, race-safe server-accept wait with cover-record fallback,
   fragmented server-accept wait, post-accept carrier passthrough plus classified
-  record insertion and unauthenticated enqueue
-  rejection.
+  record insertion, size-aware shaped classified records, shaper queue preflight
+  and unauthenticated enqueue rejection.
 - `CovertDatagramTransport`, `TunTunnelAdapter` and `TunPacketPump` carrier
   registration/removal, generic datagram round-robin and targeted writes,
   lease-aware destination routing, strict source-IP enforcement,
@@ -475,7 +476,8 @@ example run, plots and conclusions.
   they need a local Docker daemon, `/dev/net/tun` and `NET_ADMIN`.
 - There is no long-running soak/stress test for sustained TUN backpressure.
 - Fuzzing is bounded smoke, not a long corpus-minimization campaign.
-- Shaper does not yet assert full visible TLS record timing/size distributions.
+- Shaper unit/session tests assert exact inserted classified TLS record wire
+  sizes, but not yet full pcap-level timing/size distribution mimicry.
 - Production UUID/key rotation, hardened proxy overlay policy,
   lease-management UX beyond list/revoke/prune and realistic carrier traffic
   modeling workflows remain future work.

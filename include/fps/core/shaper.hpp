@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <random>
 #include <span>
@@ -59,13 +60,25 @@ struct SendPlan {
     bool allow_injected_record = false;
 };
 
+struct SendPlanRequest {
+    Direction direction{};
+    std::size_t min_covert_payload_size = 0;
+    std::size_t min_tls_record_size = 0;
+    std::size_t max_tls_record_size = std::numeric_limits<std::size_t>::max();
+};
+
 class Shaper {
 public:
     explicit Shaper(ShaperProfile profile);
 
     void observe_cover_record(const CoverRecordObservation& observation);
     void enqueue_covert_payload(const CovertPayloadView& payload);
-    [[nodiscard]] auto next_send_plan(Direction direction, std::size_t min_covert_payload_size = 0) -> SendPlan;
+    [[nodiscard]] auto propose_send_plan(const SendPlanRequest& request) -> SendPlan;
+    void commit_send_plan(const SendPlan& plan);
+    [[nodiscard]] auto next_send_plan(
+        Direction direction, std::size_t min_covert_payload_size = 0, std::size_t min_tls_record_size = 0,
+        std::size_t max_tls_record_size = std::numeric_limits<std::size_t>::max()
+    ) -> SendPlan;
     void on_backpressure(Direction direction, std::size_t queued_bytes);
     void on_profile_exhausted(Direction direction);
 

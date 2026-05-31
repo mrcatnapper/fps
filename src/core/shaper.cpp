@@ -39,13 +39,13 @@ void Shaper::enqueue_covert_payload(const CovertPayloadView& payload) {
     state.queued_covert_bytes = saturated_add(state.queued_covert_bytes, payload.bytes.size());
 }
 
-auto Shaper::next_send_plan(Direction direction, std::size_t min_covert_payload_size) -> SendPlan {
-    auto& state = state_for(direction);
-    const auto& direction_profile = profile_for(direction);
+auto Shaper::propose_send_plan(const SendPlanRequest& request) -> SendPlan {
+    auto& state = state_for(request.direction);
+    const auto& direction_profile = profile_for(request.direction);
     const auto record_size = sample_cdf(direction_profile.record_size_cdf);
 
     SendPlan plan;
-    plan.direction = direction;
+    plan.direction = request.direction;
     plan.delay = sample_delay(direction_profile);
     plan.tls_record_size = record_size;
     plan.allow_cover_forward = true;
@@ -54,24 +54,46 @@ auto Shaper::next_send_plan(Direction direction, std::size_t min_covert_payload_
     const auto burst_allowed = state.consecutive_injected_records < profile_.burst_records_max;
     const auto can_inject = !state.backpressured && !state.profile_exhausted && state.queued_covert_bytes > 0U && budget > 0U && burst_allowed;
 
-    if(!can_inject) {
+    if(!can_inject || record_size < request.min_tls_record_size || record_size > request.max_tls_record_size) {
         return plan;
     }
 
     auto payload_budget = std::min({record_size, state.queued_covert_bytes, budget});
-    if(min_covert_payload_size > 0U && payload_budget < min_covert_payload_size) {
+    if(request.min_covert_payload_size > 0U && payload_budget < request.min_covert_payload_size) {
         return plan;
     }
-    if(min_covert_payload_size > 0U) {
-        payload_budget = min_covert_payload_size;
+    if(request.min_covert_payload_size > 0U) {
+        payload_budget = request.min_covert_payload_size;
     }
 
     plan.allow_injected_record = true;
     plan.covert_payload_budget = payload_budget;
+    return plan;
+}
 
-    state.queued_covert_bytes -= plan.covert_payload_budget;
+void Shaper::commit_send_plan(const SendPlan& plan) {
+    if(!plan.allow_injected_record || plan.covert_payload_budget == 0U) {
+        return;
+    }
+
+    auto& state = state_for(plan.direction);
+    state.queued_covert_bytes = saturated_sub(state.queued_covert_bytes, plan.covert_payload_budget);
     state.planned_covert_bytes = saturated_add(state.planned_covert_bytes, plan.covert_payload_budget);
     ++state.consecutive_injected_records;
+}
+
+auto Shaper::next_send_plan(
+    Direction direction, std::size_t min_covert_payload_size, std::size_t min_tls_record_size, std::size_t max_tls_record_size
+) -> SendPlan {
+    auto plan = propose_send_plan(
+        SendPlanRequest{
+            .direction = direction,
+            .min_covert_payload_size = min_covert_payload_size,
+            .min_tls_record_size = min_tls_record_size,
+            .max_tls_record_size = max_tls_record_size,
+        }
+    );
+    commit_send_plan(plan);
     return plan;
 }
 

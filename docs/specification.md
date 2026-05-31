@@ -365,12 +365,24 @@ Current implemented scope:
 
 - deterministic profile-driven budget for externally injected datagram/control
   frames;
+- size-aware classified-record encoding: when the shaper selects a target TLS
+  Application Data record wire size, FPS pads the encrypted classified record to
+  that exact outer TLS record size;
+- commit-safe shaper scheduling: rejected target sizes, padding limits and
+  write-queue pressure leave queued covert data and shaper budget intact;
 - backpressure accounting and bounded write queues;
 - fragmentation lets near-MTU TUN packets be sent as smaller covert frames.
 
+`shaper.record_size_cdf_c2s` and `shaper.record_size_cdf_s2c` buckets are full
+outer TLS record wire sizes, including the 5-byte TLS record header. A sampled
+size smaller than the classified-record overhead, or larger than the configured
+classified-record padding capacity, blocks injection until another scheduling
+attempt. `codec.max_frame_padding` also limits classified-record padding in the
+current Linux relay config.
+
 Deferred work:
 
-- full timing/size control of inserted classified FPS records against the
+- adaptive timing/size control of inserted classified FPS records against the
   observed carrier profile;
 - statistical assertions for record size/delay distributions;
 - profile capture tooling and classifier regression lab.

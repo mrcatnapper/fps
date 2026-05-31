@@ -53,9 +53,12 @@ struct TlsTcpCarrierShaperEvent {
     std::size_t queue_bytes{};
     std::chrono::milliseconds delay{0};
     std::size_t tls_record_size{};
+    std::size_t encoded_tls_record_size{};
     std::size_t covert_payload_budget{};
 };
-BOOST_DESCRIBE_STRUCT(TlsTcpCarrierShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay, tls_record_size, covert_payload_budget))
+BOOST_DESCRIBE_STRUCT(
+    TlsTcpCarrierShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay, tls_record_size, encoded_tls_record_size, covert_payload_budget)
+)
 
 struct TlsTcpCarrierDirectionStats {
     std::uint64_t tcp_read_bytes = 0;
@@ -182,6 +185,7 @@ private:
         WriteItem write;
         std::size_t payload_size = 0;
         std::vector<TlsTcpCarrierOwnedCovertFrame> classified_frames;
+        std::optional<SendPlan> send_plan;
     };
 
     struct ClassifiedRecordPipelines {
@@ -214,9 +218,13 @@ private:
     [[nodiscard]] auto send_zero_rtt_server_accept(Direction upgrade_direction, const X25519PublicKey& client_public_key, std::span<const std::byte> payload)
         -> bool;
     [[nodiscard]] auto can_enqueue_write(Direction direction, std::size_t bytes) const noexcept -> bool;
+    [[nodiscard]] auto can_replace_queued_write(Direction direction, std::size_t current_bytes, std::size_t replacement_bytes) const noexcept -> bool;
     [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames) -> TlsTcpCarrierEnqueueResult;
     [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames)
         -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
+    [[nodiscard]] auto encode_classified_write(
+        Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t target_tls_record_size
+    ) -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
     [[nodiscard]] auto shaper_enabled() const noexcept -> bool;
     void observe_cover_bytes(Direction direction, std::size_t bytes);
     void enqueue_counted_write(Direction direction, WriteItem item);
