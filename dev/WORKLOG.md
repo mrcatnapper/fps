@@ -4,6 +4,37 @@
 
 ## 2026-05-31
 
+### Document datagram core and TUN adapter architecture
+
+Goal:
+
+- Make public docs and article drafts reflect the current architecture: FPS core
+  is a covert best-effort datagram transport, while Linux TUN is the first and
+  most important product adapter for VPN service.
+
+Changes:
+
+- Updated root and public docs to describe the current split:
+  `CovertDatagramTransport` as reusable core and `TunTunnelAdapter` as the
+  Linux leased L3 VPN adapter.
+- Clarified Docker, routing, profile, proxy-overlay, beta-status, pcap-analysis
+  and testing docs so TUN is not presented as the whole protocol.
+- Updated both article drafts to remove stale wording that post-auth carrier
+  TLS bytes are packed into FPS envelopes. Current wording says ordinary
+  carrier TLS records are forwarded byte-for-byte and FPS inserts separate
+  classified records containing opaque datagrams/control payloads.
+- Updated article diagrams:
+  - architecture diagram now shows `datagram core` plus `TUN adapter`;
+  - TLS record stream diagram now shows interleaved carrier TLS records and
+    classified FPS records carrying opaque datagrams/control.
+
+Verification:
+
+- `rg -n "real carrier TLS bytes inside envelopes|keeping the real carrier|carries that stream|TUN/control frames|TUN frames|TUN-кадры|transparent relay \\+ TUN|pre-reverse-proxy \\+ TUN|hidden L3 TUN tunnel|tun_packet|tun_packet_fragment" README.md docs articles`
+- `dot -Tsvg articles/assets/fps-architecture.dot -o articles/assets/fps-architecture.svg`
+- `dot -Tsvg articles/assets/fps-tls-record-stream.dot -o articles/assets/fps-tls-record-stream.svg`
+- `git diff --check`
+
 ### Run 5-minute fpshop soak for datagram/TUN split PR
 
 Goal:

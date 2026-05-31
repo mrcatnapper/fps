@@ -1,9 +1,11 @@
 # FPS / Free Porn Storage
 
-FPS is an experimental Linux-first VPN framework: a hidden L3 TUN tunnel carried
-inside live TLS cover sessions. Carrier authentication uses transcript-bound
-Zero-RTT, visible FPS traffic is shaped as TLS Application Data records, and
-post-auth covert records are inserted between ordinary carrier TLS records.
+FPS is an experimental Linux-first covert transport framework. Its core carries
+best-effort opaque datagrams inside live TLS cover sessions; the current primary
+product adapter maps those datagrams to a leased L3 TUN VPN service. Carrier
+authentication uses transcript-bound Zero-RTT, visible FPS traffic is shaped as
+TLS Application Data records, and post-auth covert records are inserted between
+ordinary carrier TLS records.
 
 The expanded name, **Free Porn Storage**, is intentionally misleading. It gives
 the project a noisy, hard-to-search label: someone who does not already know

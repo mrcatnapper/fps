@@ -3,9 +3,10 @@
 ## Verdict
 
 FPS is ready for controlled Linux/Docker beta deployments. The current tree is
-coherent: transcript-bound Zero-RTT is the only authentication path, leased TUN routing is
-strict, Docker is the primary runtime, proxy daemons are documented as overlays,
-and the local/CI quality workflow is defined.
+coherent: transcript-bound Zero-RTT is the only authentication path, the
+covert datagram core is separated from the Linux TUN VPN adapter, leased TUN
+routing is strict, Docker is the primary runtime, proxy daemons are documented
+as overlays, and the local/CI quality workflow is defined.
 
 FPS is not ready for public production or an unattended public beta. The main
 remaining work is independent protocol review, repeated release-candidate soak
@@ -27,6 +28,10 @@ deliberately deferred until the private release policy is settled.
 - Server-owned IPv4 leases are implemented. The server routes packets to the
   carrier that owns the destination lease and drops client packets whose IPv4
   source does not match the assigned lease.
+- The carrier/data path is split into a reusable `CovertDatagramTransport` and
+  the current `TunTunnelAdapter`. TUN is the first and most important product
+  adapter for VPN service, but the core no longer assumes that every covert
+  payload is an IP packet.
 - Docker is the primary Linux runtime path. The base image contains FPS binaries,
   `fps_carrier`, route/debug tooling and the operator entrypoint, but no embedded
   SOCKS/HTTP proxy daemon.

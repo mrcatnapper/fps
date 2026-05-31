@@ -3,6 +3,11 @@
 FPS client setup is centered on generated profiles rather than hand-written key
 material.
 
+Profiles configure the current Linux TUN VPN adapter on top of the reusable FPS
+covert datagram core. The client UUID authenticates the carrier datagram
+transport; the server-assigned TUN lease is adapter metadata, not a separate
+identity mechanism.
+
 ## Current Behavior
 
 - The user-facing client identity is one secret `client_uuid`.

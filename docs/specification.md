@@ -8,7 +8,8 @@ and OpenSSL.
 ## 1. Purpose
 
 FPS is an experimental covert datagram transport carried over live TLS cover
-sessions. The current product adapter uses those datagrams as an L3 TUN tunnel.
+sessions. The current product adapter, and the first production-facing use case,
+maps those datagrams to a leased L3 TUN VPN service.
 On the `fps_client <-> fps_server` link an observer should see a TCP stream
 made of TLS Application Data records. Real browser/origin TLS bytes are not
 terminated by FPS. After upgrade, ordinary carrier TLS records continue to be

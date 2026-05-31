@@ -8,13 +8,15 @@ distributions in a way that is visible below TLS.
 
 ## Scenario
 
-The experiment used a local Docker/TUN topology:
+The experiment used the current Linux TUN VPN adapter over the generic FPS
+covert datagram transport, in a local Docker/TUN topology:
 
 - one `fps_server`;
 - one `fps_client`;
 - one debug HTTPS/WSS `fps_carrier` origin;
 - one persistent WSS carrier client;
-- bidirectional UDP `iperf3` traffic over the FPS TUN lease.
+- bidirectional UDP `iperf3` traffic over the FPS TUN lease, which the adapter
+  mapped to opaque FPS datagrams before transmission.
 
 The carrier generator produced continuous WSS echo traffic. Zero-RTT upgrade was
 intentionally delayed with `--pre-upgrade-records 60` so the capture had a small

@@ -1,7 +1,9 @@
 # Proxy Overlays Over FPS
 
-FPS provides an authenticated L3 TUN tunnel. Application proxy daemons are
-deployment overlays, not part of the base `fps` image or FPS protocol contract.
+FPS core provides an authenticated covert datagram transport. The current Linux
+product adapter exposes those datagrams as a leased L3 TUN VPN service.
+Application proxy daemons are deployment overlays on top of that TUN adapter,
+not part of the base `fps` image or FPS protocol contract.
 
 The common pattern is:
 

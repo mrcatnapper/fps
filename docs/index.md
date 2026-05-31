@@ -1,8 +1,10 @@
 # FPS Documentation
 
-FPS is an experimental Linux-first VPN framework: a hidden L3 TUN tunnel carried
-inside live TLS cover sessions. These pages are the public operator and project
-documentation for the current beta candidate.
+FPS is an experimental Linux-first covert transport framework. Its core carries
+best-effort opaque datagrams inside live TLS cover sessions; the current primary
+product adapter turns those datagrams into a leased L3 TUN VPN service. These
+pages are the public operator and project documentation for the current beta
+candidate.
 
 Start with the quickstart if you want to run the stack. Use the reference pages
 when you need exact CLI, Docker, routing, protocol or testing details.
@@ -31,9 +33,9 @@ when you need exact CLI, Docker, routing, protocol or testing details.
 
 ## Reference
 
-- [Protocol and architecture specification](./specification.md): current
-  wire rules, Zero-RTT authentication, classified FPS records and lease
-  semantics.
+- [Protocol and architecture specification](./specification.md): current wire
+  rules, Zero-RTT authentication, classified FPS records, the covert datagram
+  core and TUN adapter lease semantics.
 - [Testing and quality workflow](./testing.md): local tests, GitHub Actions,
   Docker simulations, fuzzing and soak checks.
 - [TCP flow shape experiment](./pcap-flow-analysis.md): pcap-based packet-size

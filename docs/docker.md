@@ -1,9 +1,11 @@
 # Docker Runtime
 
 FPS ships a single Linux Docker image that contains `fps_client`, `fps_server`,
-`fps_linux_route.sh`, `fps_carrier` and a small entrypoint. The image is
-intended for server-first deployments and for client deployments where the
-operator accepts the Linux TUN/capability requirements.
+`fps_linux_route.sh`, `fps_carrier` and a small entrypoint. The image runs the
+current product adapter: a leased L3 TUN VPN service built on top of the generic
+FPS covert datagram transport. It is intended for server-first deployments and
+for client deployments where the operator accepts the Linux TUN/capability
+requirements.
 
 For the end-to-end public beta operator flow, start with
 [public-beta-quickstart.md](./public-beta-quickstart.md). This document is the
@@ -23,10 +25,10 @@ container/runtime support, TUN support and the needed network capabilities; it
 is not yet part of the tested release matrix.
 
 Proxy daemons are intentionally not part of the base FPS image. If an operator
-wants an application-level proxy on top of the FPS TUN link, use a small overlay
-image such as the official Dante example in `examples/docker/proxy-dante`.
-DHCP is still deferred because current FPS is an L3 TUN tunnel; ordinary DHCP
-expects L2/broadcast semantics.
+wants an application-level proxy on top of the FPS TUN adapter, use a small
+overlay image such as the official Dante example in
+`examples/docker/proxy-dante`. DHCP is still deferred because the current VPN
+adapter is L3 TUN; ordinary DHCP expects L2/broadcast semantics.
 
 ## Build
 

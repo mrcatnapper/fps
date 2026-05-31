@@ -7,6 +7,10 @@ deployments can also use browser/application sessions to an external origin as
 described in [real-origin-carriers.md](./real-origin-carriers.md). Replace
 example addresses and names before using the commands outside a lab.
 
+This flow exercises the current primary product adapter: Linux TUN VPN over the
+generic FPS covert datagram core. The core transports opaque datagrams; the TUN
+adapter turns those datagrams into leased IPv4 packets for VPN-style use.
+
 ## 1. Build The Image
 
 ```sh

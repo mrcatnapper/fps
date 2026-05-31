@@ -26,9 +26,10 @@ digraph fps_tls_record_stream {
   r1 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>TLS<SUB>n-2</SUB></TD></TR></TABLE>>];
   r2 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>TLS<SUB>n-1</SUB></TD></TR></TABLE>>];
   z [label="TLS-like Zero-RTT\nupgrade candidate", fillcolor="#fff7e6", color="#b54708"];
-  e1 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n</SUB>   + TUN frames</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
-  e2 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n+1</SUB>   + padding</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
-  e3 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>outer TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>inner TLS<SUB>n+2</SUB>   + control</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
+  e1 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>carrier TLS<SUB>n</SUB></TD></TR><TR><TD>forwarded byte-for-byte</TD></TR></TABLE>>];
+  e2 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>classified FPS TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>opaque datagram + padding</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
+  e3 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>carrier TLS<SUB>n+1</SUB></TD></TR><TR><TD>forwarded byte-for-byte</TD></TR></TABLE>>];
+  e4 [label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD>classified FPS TLS record</TD></TR><TR><TD>AEAD envelope</TD></TR><TR><TD>control / datagram fragment</TD></TR></TABLE>>, fillcolor="#eaf4ff", color="#0b6bcb"];
 
-  r1 -> r2 -> z -> e1 -> e2 -> e3;
+  r1 -> r2 -> z -> e1 -> e2 -> e3 -> e4;
 }
