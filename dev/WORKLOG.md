@@ -2,6 +2,32 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-31
+
+### Add article UPDATE sections for classified records and pcap experiment
+
+Goal:
+
+- Update both article drafts with short tail sections about the current wire
+  model and the packet-capture flow experiment.
+
+Changes:
+
+- Added UPDATE sections to the English HackerNoon draft:
+  - FPS classified payloads are now inserted as separate TLS Application Data
+    records, which gives the future shaper explicit scheduling units;
+  - the pcap experiment confirms TLS record syntax but shows a visible
+    post-upgrade traffic-shape change.
+- Added the same update to the Russian Habr draft and extended its table of
+  contents.
+- Linked both drafts to `docs/pcap-flow-analysis.md` and the two generated
+  pcap-flow plots.
+
+Verification:
+
+- `git diff --check`
+- Manual diff review for both article drafts.
+
 ## 2026-05-29
 
 ### Run extended fpshop 10-minute Docker soak
