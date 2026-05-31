@@ -10,15 +10,15 @@
 namespace fps {
 
 enum class FrameType : std::uint8_t {
-    tun_packet = 1,
+    opaque_datagram = 1,
     ping = 2,
     pong = 3,
     flow_control = 4,
     close = 5,
-    tun_packet_fragment = 6,
+    opaque_datagram_fragment = 6,
     control = 7,
 };
-BOOST_DESCRIBE_ENUM(FrameType, tun_packet, ping, pong, flow_control, close, tun_packet_fragment, control)
+BOOST_DESCRIBE_ENUM(FrameType, opaque_datagram, ping, pong, flow_control, close, opaque_datagram_fragment, control)
 
 enum class CodecError {
     invalid_config,

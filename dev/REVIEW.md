@@ -134,10 +134,10 @@ Date: 2026-05-29
   pass confirms which checks and file layout operators actually need.
 - Treat router/LAN-gateway mode as a documented experimental pattern until it
   passes a real hardware or close VM validation run.
-- Split protocol core from Asio/Linux transport targets before Android work:
-  keep crypto, identity, TLS parsing, Zero-RTT, classified records, shaper and
-  lease/control serialization in a smaller reusable core; keep TCP bridge and
-  TUN pump in transport/runtime targets.
+- Continue the protocol-core split started by `CovertDatagramTransport` and
+  `TunTunnelAdapter`: the reusable carrier/datagram layer is now separate from
+  IPv4 lease/source enforcement, while TCP bridge and Linux TUN pump still need
+  further target-level isolation before Android work.
 - Continue splitting relay runtime helpers by responsibility, starting with
   status service, TUN service, carrier registration/lease logic and
   CLI/profile/status/lease command helpers if `tcp_relay_app.cpp` grows again.

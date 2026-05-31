@@ -24,7 +24,7 @@ using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
 using detail::covert_tls_record_size;
 using detail::frame_payload_size_sum;
-using detail::is_tun_frame;
+using detail::is_datagram_frame;
 using detail::tcp_bridge_error_from_classified_encode;
 
 namespace {
@@ -135,9 +135,9 @@ auto TcpBridgeSession::enqueue_covert_frames(Direction direction, std::span<cons
     for(const auto& frame : frames) {
         add_stat(stats.covert_frames_out, 1U);
         add_stat(stats.covert_frame_bytes_out, frame.payload.size());
-        if(is_tun_frame(frame.frame_type)) {
-            add_stat(stats.tun_frames_out, 1U);
-            add_stat(stats.tun_frame_bytes_out, frame.payload.size());
+        if(is_datagram_frame(frame.frame_type)) {
+            add_stat(stats.datagram_frames_out, 1U);
+            add_stat(stats.datagram_frame_bytes_out, frame.payload.size());
         }
     }
     return TcpBridgeEnqueueResult::success(queued_size);
@@ -540,9 +540,9 @@ auto TcpBridgeSession::enqueue_zero_rtt_classified_frames(Direction direction, s
     for(const auto& frame : frames) {
         add_stat(stats.covert_frames_out, 1U);
         add_stat(stats.covert_frame_bytes_out, frame.payload.size());
-        if(is_tun_frame(frame.frame_type)) {
-            add_stat(stats.tun_frames_out, 1U);
-            add_stat(stats.tun_frame_bytes_out, frame.payload.size());
+        if(is_datagram_frame(frame.frame_type)) {
+            add_stat(stats.datagram_frames_out, 1U);
+            add_stat(stats.datagram_frame_bytes_out, frame.payload.size());
         }
     }
     return TcpBridgeEnqueueResult::success(*estimated_size);

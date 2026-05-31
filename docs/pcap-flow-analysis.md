@@ -118,7 +118,7 @@ not on TLS record syntactic validity alone. Useful next experiments:
 
 - compare a pure carrier capture against carrier-plus-FPS captures at several
   TUN rates;
-- cap or pace covert TUN frames so they do not create a separate near-MTU packet
+- cap or pace covert datagram frames so they do not create a separate near-MTU packet
   band;
 - schedule FPS envelopes against the carrier's observed cadence instead of
   flushing immediately whenever TUN data is available;

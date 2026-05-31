@@ -54,7 +54,7 @@ BOOST_AUTO_TEST_CASE(roundtrip_classifies_and_decodes_frame_bundle) {
         .frames =
             {
                 fps::FpsEnvelopeFrame{
-                    .frame_type = fps::FrameType::tun_packet,
+                    .frame_type = fps::FrameType::opaque_datagram,
                     .flags = 0x7,
                     .payload = payload,
                     .padding_size = 2,
@@ -68,7 +68,7 @@ BOOST_AUTO_TEST_CASE(roundtrip_classifies_and_decodes_frame_bundle) {
     auto decoded = receiver.decode(encoded.value(), binding(fps::Direction::client_to_server));
     BOOST_CHECK(decoded.classification == fps::FpsClassifiedRecordClassification::fps_record);
     BOOST_REQUIRE_EQUAL(decoded.content.frames.size(), 1U);
-    BOOST_CHECK(decoded.content.frames[0].frame_type == fps::FrameType::tun_packet);
+    BOOST_CHECK(decoded.content.frames[0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_TEST(decoded.content.frames[0].flags == 0x7U);
     BOOST_CHECK(decoded.content.frames[0].payload == payload);
     BOOST_TEST(decoded.content.frames[0].padding_size == 2U);

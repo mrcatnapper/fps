@@ -21,7 +21,7 @@ using detail::classified_record_config;
 using detail::close_info;
 using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
-using detail::is_tun_frame;
+using detail::is_datagram_frame;
 using detail::normalize_config;
 
 namespace {
@@ -241,9 +241,9 @@ void TcpBridgeSession::emit_process_result(Direction direction, const CoverSessi
     for(const auto& frame : result.covert_frames) {
         add_stat(stats.covert_frames_in, 1U);
         add_stat(stats.covert_frame_bytes_in, frame.payload.size());
-        if(is_tun_frame(frame.frame_type)) {
-            add_stat(stats.tun_frames_in, 1U);
-            add_stat(stats.tun_frame_bytes_in, frame.payload.size());
+        if(is_datagram_frame(frame.frame_type)) {
+            add_stat(stats.datagram_frames_in, 1U);
+            add_stat(stats.datagram_frame_bytes_in, frame.payload.size());
         }
     }
     if(handlers_.on_covert_frame) {
@@ -307,9 +307,9 @@ void TcpBridgeSession::emit_classified_process_result(Direction direction, const
     for(const auto& frame : result.frames) {
         add_stat(stats.covert_frames_in, 1U);
         add_stat(stats.covert_frame_bytes_in, frame.payload.size());
-        if(is_tun_frame(frame.frame_type)) {
-            add_stat(stats.tun_frames_in, 1U);
-            add_stat(stats.tun_frame_bytes_in, frame.payload.size());
+        if(is_datagram_frame(frame.frame_type)) {
+            add_stat(stats.datagram_frames_in, 1U);
+            add_stat(stats.datagram_frame_bytes_in, frame.payload.size());
         }
     }
     if(handlers_.on_covert_frame) {

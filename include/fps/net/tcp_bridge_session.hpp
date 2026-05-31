@@ -69,15 +69,15 @@ struct TcpBridgeDirectionStats {
     std::uint64_t covert_frame_bytes_in = 0;
     std::uint64_t covert_frames_out = 0;
     std::uint64_t covert_frame_bytes_out = 0;
-    std::uint64_t tun_frames_in = 0;
-    std::uint64_t tun_frame_bytes_in = 0;
-    std::uint64_t tun_frames_out = 0;
-    std::uint64_t tun_frame_bytes_out = 0;
+    std::uint64_t datagram_frames_in = 0;
+    std::uint64_t datagram_frame_bytes_in = 0;
+    std::uint64_t datagram_frames_out = 0;
+    std::uint64_t datagram_frame_bytes_out = 0;
 };
 BOOST_DESCRIBE_STRUCT(
     TcpBridgeDirectionStats, (),
-    (tcp_read_bytes, tcp_written_bytes, covert_frames_in, covert_frame_bytes_in, covert_frames_out, covert_frame_bytes_out, tun_frames_in, tun_frame_bytes_in,
-     tun_frames_out, tun_frame_bytes_out)
+    (tcp_read_bytes, tcp_written_bytes, covert_frames_in, covert_frame_bytes_in, covert_frames_out, covert_frame_bytes_out, datagram_frames_in,
+     datagram_frame_bytes_in, datagram_frames_out, datagram_frame_bytes_out)
 )
 
 enum class TcpBridgeCloseReason {

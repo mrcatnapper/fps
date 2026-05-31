@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "fps/core/types.hpp"
-#include "fps/net/session_manager.hpp"
+#include "fps/net/tun_tunnel_adapter.hpp"
 
 namespace fps::net {
 
@@ -32,7 +32,7 @@ BOOST_DESCRIBE_ENUM(TunPacketPumpError, closed, empty_packet, packet_too_large, 
 using TunPacketPumpWriteResult = Result<std::size_t, TunPacketPumpError>;
 
 struct TunPacketPumpHandlers {
-    std::function<void(SessionManagerError)> on_session_error;
+    std::function<void(TunTunnelError)> on_session_error;
     std::function<void(TunPacketPumpError)> on_error;
     std::function<void(std::size_t)> on_read_packet;
     std::function<void(std::size_t)> on_write_packet;
@@ -42,7 +42,7 @@ struct TunPacketPumpHandlers {
 class TunPacketPump : public std::enable_shared_from_this<TunPacketPump> {
 public:
     [[nodiscard]] static auto
-    create(boost::asio::io_context& io, int fd, SessionManager& session_manager, TunPacketPumpConfig config = {}, TunPacketPumpHandlers handlers = {})
+    create(boost::asio::io_context& io, int fd, TunTunnelAdapter& tun_tunnel, TunPacketPumpConfig config = {}, TunPacketPumpHandlers handlers = {})
         -> std::shared_ptr<TunPacketPump>;
 
     TunPacketPump(const TunPacketPump&) = delete;
@@ -58,7 +58,7 @@ public:
     [[nodiscard]] auto queued_write_packets() const noexcept -> std::size_t;
 
 private:
-    TunPacketPump(boost::asio::io_context& io, int fd, SessionManager& session_manager, TunPacketPumpConfig config, TunPacketPumpHandlers handlers);
+    TunPacketPump(boost::asio::io_context& io, int fd, TunTunnelAdapter& tun_tunnel, TunPacketPumpConfig config, TunPacketPumpHandlers handlers);
 
     void read_next();
     void handle_read(const boost::system::error_code& error, std::size_t bytes_read);
@@ -67,7 +67,7 @@ private:
     void emit_closed();
 
     boost::asio::posix::stream_descriptor descriptor_;
-    SessionManager& session_manager_;
+    TunTunnelAdapter& tun_tunnel_;
     TunPacketPumpConfig config_;
     TunPacketPumpHandlers handlers_;
     std::vector<std::byte> read_buffer_;

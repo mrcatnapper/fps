@@ -9,13 +9,13 @@
 
 namespace fps::net {
 
-auto TunPacketPump::create(boost::asio::io_context& io, int fd, SessionManager& session_manager, TunPacketPumpConfig config, TunPacketPumpHandlers handlers)
+auto TunPacketPump::create(boost::asio::io_context& io, int fd, TunTunnelAdapter& tun_tunnel, TunPacketPumpConfig config, TunPacketPumpHandlers handlers)
     -> std::shared_ptr<TunPacketPump> {
-    return std::shared_ptr<TunPacketPump>(new TunPacketPump(io, fd, session_manager, config, std::move(handlers)));
+    return std::shared_ptr<TunPacketPump>(new TunPacketPump(io, fd, tun_tunnel, config, std::move(handlers)));
 }
 
-TunPacketPump::TunPacketPump(boost::asio::io_context& io, int fd, SessionManager& session_manager, TunPacketPumpConfig config, TunPacketPumpHandlers handlers)
-    : descriptor_(io, fd), session_manager_(session_manager), config_(config), handlers_(std::move(handlers)), read_buffer_(config_.mtu) {
+TunPacketPump::TunPacketPump(boost::asio::io_context& io, int fd, TunTunnelAdapter& tun_tunnel, TunPacketPumpConfig config, TunPacketPumpHandlers handlers)
+    : descriptor_(io, fd), tun_tunnel_(tun_tunnel), config_(config), handlers_(std::move(handlers)), read_buffer_(config_.mtu) {
     if(config_.mtu == 0U) {
         throw std::invalid_argument("TunPacketPump mtu must be positive");
     }
@@ -98,7 +98,7 @@ void TunPacketPump::handle_read(const boost::system::error_code& error, std::siz
         if(handlers_.on_read_packet) {
             handlers_.on_read_packet(bytes_read);
         }
-        auto result = session_manager_.handle_tun_packet(std::span<const std::byte>{read_buffer_.data(), bytes_read});
+        auto result = tun_tunnel_.handle_tun_packet(std::span<const std::byte>{read_buffer_.data(), bytes_read});
         if(!result && handlers_.on_session_error) {
             handlers_.on_session_error(result.error());
         }

@@ -193,10 +193,7 @@ def stats_have_tun_traffic(lines: list[str]) -> bool:
                 stats = {}
             for direction in ("client_to_server", "server_to_client"):
                 direction_stats = stats.get(direction, {})
-                if any(
-                    int(direction_stats.get(name, 0)) > 0
-                    for name in ("tun_frames_in", "tun_frames_out")
-                ):
+                if any(int(direction_stats.get(name, 0)) > 0 for name in ("datagram_frames_in", "datagram_frames_out")):
                     return True
     return False
 

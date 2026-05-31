@@ -4,6 +4,47 @@
 
 ## 2026-05-31
 
+### Split covert datagram core from TUN adapter
+
+Goal:
+
+- Refactor the carrier core so FPS can carry generic best-effort opaque
+  datagrams, with the current Linux VPN behavior implemented as a TUN adapter
+  rather than being hard-wired into the frame protocol.
+
+Changes:
+
+- Replaced wire frame names `tun_packet`/`tun_packet_fragment` with
+  `opaque_datagram`/`opaque_datagram_fragment`, preserving numeric frame values.
+- Added `fps::net::CovertDatagramTransport` for authenticated carrier
+  registration, round-robin/targeted writes, bounded fragmentation/reassembly
+  and generic datagram delivery with source carrier metadata.
+- Added `fps::net::TunTunnelAdapter` on top of the generic transport for Linux
+  TUN-specific IPv4 lease routing, strict source-IP enforcement and duplicate
+  client instance replacement policy.
+- Updated `TunPacketPump`, relay runtime status/log counters and Docker helper
+  scripts to use the TUN adapter and generic `datagram_*` frame stats.
+- Added focused unit coverage for generic datagram scheduling, targeted carrier
+  writes, fragmentation/reassembly, queue preflight and non-datagram frame
+  rejection.
+- Updated `docs/specification.md`, `docs/testing.md`, `dev/ROADMAP.md`,
+  `dev/REVIEW.md` and `dev/PROTOCOL_REVIEW_BRIEF.md` to record the split.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `git diff --check`
+
+Commit:
+
+- `aa5d306` (`Split covert datagram core from TUN adapter`)
+
 ### Add article UPDATE sections for classified records and pcap experiment
 
 Goal:

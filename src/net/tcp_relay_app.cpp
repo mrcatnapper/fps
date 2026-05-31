@@ -31,9 +31,9 @@
 #include "fps/log/describe.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
-#include "fps/net/session_manager.hpp"
 #include "fps/net/tcp_bridge_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
+#include "fps/net/tun_tunnel_adapter.hpp"
 #include "fps/platform/linux/tun_runtime.hpp"
 
 namespace fps::net {
@@ -52,8 +52,8 @@ using detail::classified_record_error_message;
 using detail::direction_name;
 using detail::endpoint_to_string;
 using detail::role_name;
-using detail::session_manager_error_message;
-using detail::session_manager_event_message;
+using detail::tun_tunnel_error_message;
+using detail::tun_tunnel_event_message;
 using detail::tcp_bridge_enqueue_error_message;
 using detail::tls_parse_error_message;
 using detail::tls_record_error_message;
@@ -101,15 +101,15 @@ using detail::zero_rtt_upgrade_error_message;
     return CryptoResult<ClientInstanceId>::success(id);
 }
 
-constexpr std::size_t kSessionManagerEventCount = enum_count<SessionManagerEvent>();
-constexpr std::size_t kSessionManagerErrorCount = enum_count<SessionManagerError>();
+constexpr std::size_t kTunTunnelEventCount = enum_count<TunTunnelEvent>();
+constexpr std::size_t kTunTunnelErrorCount = enum_count<TunTunnelError>();
 constexpr std::size_t kTunPacketPumpErrorCount = enum_count<TunPacketPumpError>();
 constexpr std::size_t kTlsParseErrorCount = enum_count<TlsParseError>();
 constexpr std::size_t kRecentClosedSessionLimit = 16U;
 
-[[nodiscard]] auto session_manager_event_index(SessionManagerEvent event) noexcept -> std::size_t { return enum_index(event).value_or(0U); }
+[[nodiscard]] auto tun_tunnel_event_index(TunTunnelEvent event) noexcept -> std::size_t { return enum_index(event).value_or(0U); }
 
-[[nodiscard]] auto session_manager_error_index(SessionManagerError error) noexcept -> std::size_t { return enum_index(error).value_or(0U); }
+[[nodiscard]] auto tun_tunnel_error_index(TunTunnelError error) noexcept -> std::size_t { return enum_index(error).value_or(0U); }
 
 [[nodiscard]] auto tun_packet_pump_error_index(TunPacketPumpError error) noexcept -> std::size_t { return enum_index(error).value_or(0U); }
 
@@ -130,8 +130,8 @@ struct RelayRuntimeStats {
     std::uint64_t shaper_queued = 0;
     std::uint64_t shaper_scheduled = 0;
     std::uint64_t shaper_blocked = 0;
-    std::array<std::uint64_t, kSessionManagerEventCount> session_manager_events{};
-    std::array<std::uint64_t, kSessionManagerErrorCount> tun_session_errors{};
+    std::array<std::uint64_t, kTunTunnelEventCount> tun_tunnel_events{};
+    std::array<std::uint64_t, kTunTunnelErrorCount> tun_session_errors{};
     std::array<std::uint64_t, kTunPacketPumpErrorCount> tun_pump_errors{};
 };
 
@@ -190,9 +190,8 @@ template <typename Enum>
     return enum_name_at<Enum>(index).value_or("unknown");
 }
 
-[[nodiscard]] auto should_rate_limit_tun_session_error(SessionManagerError error) noexcept -> bool {
-    return error == SessionManagerError::no_carrier_session || error == SessionManagerError::write_queue_full ||
-           error == SessionManagerError::non_ipv4_tun_destination;
+[[nodiscard]] auto should_rate_limit_tun_session_error(TunTunnelError error) noexcept -> bool {
+    return error == TunTunnelError::no_carrier_session || error == TunTunnelError::write_queue_full || error == TunTunnelError::non_ipv4_tun_destination;
 }
 
 [[nodiscard]] auto should_rate_limit_tls_parse_error(TlsParseError error) noexcept -> bool { return error == TlsParseError::invalid_header; }
@@ -304,8 +303,8 @@ private:
         std::optional<TunLease> assigned_lease;
     };
 
-    [[nodiscard]] auto observe_tun_session_error_log(SessionManagerError error) -> RepeatedLogDecision {
-        return observe_repeated_log(tun_session_error_log_limits_[session_manager_error_index(error)]);
+    [[nodiscard]] auto observe_tun_session_error_log(TunTunnelError error) -> RepeatedLogDecision {
+        return observe_repeated_log(tun_session_error_log_limits_[tun_tunnel_error_index(error)]);
     }
 
     [[nodiscard]] auto observe_tls_parse_error_log(TlsParseError error) -> RepeatedLogDecision {
@@ -357,7 +356,7 @@ private:
         std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session, BridgeSessionRuntimeState& state,
         std::optional<ClientInstanceId> client_instance_id, bool send_lease_control
     ) -> CarrierRegistrationResult {
-        if(!session_manager_ || !session || state.carrier_registered) {
+        if(!tun_tunnel_ || !session || state.carrier_registered) {
             return {};
         }
 
@@ -380,13 +379,13 @@ private:
             assigned_lease = lease.value();
         }
 
-        auto registration = session_manager_->add_carrier_session_with_metadata(
+        auto registration = tun_tunnel_->add_carrier_session_with_metadata(
             session, assigned_lease.has_value() ? std::optional<std::uint32_t>{assigned_lease->client_ipv4} : std::nullopt, client_instance_id
         );
         if(!registration.added) {
-            state.carrier_registered = session_manager_->is_carrier_session(session);
+            state.carrier_registered = tun_tunnel_->is_carrier_session(session);
             FPS_LOG_DEBUG("relay") << "event=carrier_already_registered source=zero_rtt session_id=" << session_id
-                                   << " carrier_count=" << session_manager_->carrier_count();
+                                   << " carrier_count=" << tun_tunnel_->carrier_count();
             return {.registered = false, .assigned_lease = std::move(assigned_lease)};
         }
 
@@ -396,10 +395,9 @@ private:
             stats_.carriers_removed += static_cast<std::uint64_t>(registration.replaced_sessions.size());
             ++stats_.duplicate_client_replacements;
             FPS_LOG_WARNING("relay") << "event=duplicate_client_replaced session_id=" << session_id
-                                     << " replaced_carriers=" << registration.replaced_sessions.size()
-                                     << " carrier_count=" << session_manager_->carrier_count();
+                                     << " replaced_carriers=" << registration.replaced_sessions.size() << " carrier_count=" << tun_tunnel_->carrier_count();
         }
-        FPS_LOG_INFO("relay") << "event=carrier_registered source=zero_rtt session_id=" << session_id << " carrier_count=" << session_manager_->carrier_count();
+        FPS_LOG_INFO("relay") << "event=carrier_registered source=zero_rtt session_id=" << session_id << " carrier_count=" << tun_tunnel_->carrier_count();
 
         if(assigned_lease.has_value()) {
             ++stats_.tun_leases_assigned;
@@ -516,7 +514,7 @@ private:
         sessions["accepted"] = stats_.sessions_accepted;
         sessions["active"] = stats_.sessions_active;
         sessions["closed"] = stats_.sessions_closed;
-        sessions["carriers_current"] = session_manager_ ? session_manager_->carrier_count() : 0U;
+        sessions["carriers_current"] = tun_tunnel_ ? tun_tunnel_->carrier_count() : 0U;
         sessions["carriers_registered"] = stats_.carriers_registered;
         sessions["carriers_removed"] = stats_.carriers_removed;
         sessions["duplicate_client_replacements"] = stats_.duplicate_client_replacements;
@@ -575,10 +573,10 @@ private:
             }
         }
         tun["session_errors"] =
-            counters_to_json(stats_.tun_session_errors, [](std::size_t index) { return enum_name_for_counter_index<SessionManagerError>(index); });
+            counters_to_json(stats_.tun_session_errors, [](std::size_t index) { return enum_name_for_counter_index<TunTunnelError>(index); });
         tun["pump_errors"] = counters_to_json(stats_.tun_pump_errors, [](std::size_t index) { return enum_name_for_counter_index<TunPacketPumpError>(index); });
-        tun["session_manager_events"] =
-            counters_to_json(stats_.session_manager_events, [](std::size_t index) { return enum_name_for_counter_index<SessionManagerEvent>(index); });
+        tun["tun_tunnel_events"] =
+            counters_to_json(stats_.tun_tunnel_events, [](std::size_t index) { return enum_name_for_counter_index<TunTunnelEvent>(index); });
 
         json::object shaper;
         shaper["queued"] = stats_.shaper_queued;
@@ -618,15 +616,15 @@ private:
 
         const auto& tun = *config_.tun;
         const std::weak_ptr<TcpRelayServer> weak_self = weak_from_this();
-        auto manager = std::make_shared<SessionManager>(
-            SessionManagerConfig{
+        auto manager = std::make_shared<TunTunnelAdapter>(
+            TunTunnelConfig{
                 .role = config_.role,
                 .max_tun_packet_size = tun.mtu,
                 .max_frame_payload_size = config_.max_frame_payload_size,
                 .allow_fragmentation = config_.allow_fragmentation,
                 .enforce_leased_clients = config_.role == RelayRole::server && tun.lease_pool.has_value(),
             },
-            SessionManagerHandlers{
+            TunTunnelHandlers{
                 .on_tun_packet =
                     [weak_self](ByteVector packet) {
                         if(const auto self = weak_self.lock()) {
@@ -634,10 +632,10 @@ private:
                         }
                     },
                 .on_event =
-                    [weak_self](SessionManagerEvent event) {
+                    [weak_self](TunTunnelEvent event) {
                         if(const auto self = weak_self.lock()) {
-                            ++self->stats_.session_manager_events[session_manager_event_index(event)];
-                            FPS_LOG_DEBUG("session_manager") << "event=session_manager_event detail=" << session_manager_event_message(event);
+                            ++self->stats_.tun_tunnel_events[tun_tunnel_event_index(event)];
+                            FPS_LOG_DEBUG("tun_tunnel") << "event=tun_tunnel_event detail=" << tun_tunnel_event_message(event);
                         }
                     },
             }
@@ -673,19 +671,19 @@ private:
                 io_, device.value().native_handle, *manager, TunPacketPumpConfig{.mtu = tun.mtu, .max_write_queue_packets = tun.max_write_queue_packets},
                 TunPacketPumpHandlers{
                     .on_session_error =
-                        [weak_self](SessionManagerError error) {
+                        [weak_self](TunTunnelError error) {
                             if(const auto self = weak_self.lock()) {
-                                ++self->stats_.tun_session_errors[session_manager_error_index(error)];
+                                ++self->stats_.tun_session_errors[tun_tunnel_error_index(error)];
                                 if(should_rate_limit_tun_session_error(error)) {
                                     const auto decision = self->observe_tun_session_error_log(error);
                                     if(!decision.should_log) {
                                         return;
                                     }
-                                    FPS_LOG_WARNING("tun") << "event=tun_read_session_error error=" << session_manager_error_message(error)
+                                    FPS_LOG_WARNING("tun") << "event=tun_read_session_error error=" << tun_tunnel_error_message(error)
                                                            << " count=" << decision.count << " suppressed=" << decision.suppressed_since_last_log;
                                     return;
                                 }
-                                FPS_LOG_WARNING("tun") << "event=tun_read_session_error error=" << session_manager_error_message(error);
+                                FPS_LOG_WARNING("tun") << "event=tun_read_session_error error=" << tun_tunnel_error_message(error);
                             }
                         },
                     .on_error =
@@ -718,7 +716,7 @@ private:
                 }
             );
 
-            session_manager_ = std::move(manager);
+            tun_tunnel_ = std::move(manager);
             tun_pump_ = std::move(pump);
             tun_pump_->start();
             FPS_LOG_INFO("tun") << "event=tun_opened name=" << actual_name << " mtu=" << tun.mtu << " write_queue_packets=" << tun.max_write_queue_packets;
@@ -868,11 +866,11 @@ private:
         auto runtime_state = std::make_shared<BridgeSessionRuntimeState>();
         handlers.on_covert_frame = [weak_self, session_slot, runtime_state, session_id](Direction direction, const DecodedFrame& frame) {
             if(const auto self = weak_self.lock()) {
-                if(!self->session_manager_) {
+                if(!self->tun_tunnel_) {
                     return;
                 }
                 const auto session = session_slot->lock();
-                if(!self->session_manager_->is_carrier_session(session)) {
+                if(!self->tun_tunnel_->is_carrier_session(session)) {
                     if(self->try_handle_pre_registration_control(session_id, session, *runtime_state, direction, frame)) {
                         return;
                     }
@@ -886,7 +884,7 @@ private:
                     self->handle_control_frame(direction, frame.payload);
                     return;
                 }
-                self->session_manager_->handle_covert_frame(session, direction, frame);
+                self->tun_tunnel_->handle_covert_frame(session, direction, frame);
             }
         };
         handlers.on_closed = [weak_self, session_slot, session_id](const TcpBridgeSessionStats& stats) {
@@ -896,12 +894,11 @@ private:
                 }
                 ++self->stats_.sessions_closed;
                 self->record_closed_session(session_id, stats.zero_rtt_authenticated, stats.close);
-                if(self->session_manager_) {
+                if(self->tun_tunnel_) {
                     const auto session = session_slot->lock();
-                    if(self->session_manager_->remove_carrier_session_if(session)) {
+                    if(self->tun_tunnel_->remove_carrier_session_if(session)) {
                         ++self->stats_.carriers_removed;
-                        FPS_LOG_INFO("relay") << "event=carrier_removed session_id=" << session_id
-                                              << " carrier_count=" << self->session_manager_->carrier_count();
+                        FPS_LOG_INFO("relay") << "event=carrier_removed session_id=" << session_id << " carrier_count=" << self->tun_tunnel_->carrier_count();
                     }
                 }
                 FPS_LOG_INFO("relay") << "event=session_stats session_id=" << session_id << " stats=" << ::fps::log::as_json(stats);
@@ -981,7 +978,7 @@ private:
                     return;
                 }
                 runtime_state->authenticated_client_public_key = client_public_key;
-                if(!self->session_manager_ || self->server_requires_client_instance_metadata()) {
+                if(!self->tun_tunnel_ || self->server_requires_client_instance_metadata()) {
                     return;
                 }
                 (void)self->register_authenticated_carrier(session_id, session, *runtime_state, std::nullopt, true);
@@ -999,7 +996,7 @@ private:
             if(!session) {
                 return std::nullopt;
             }
-            if(!self->session_manager_) {
+            if(!self->tun_tunnel_) {
                 return ByteVector{};
             }
 
@@ -1070,7 +1067,7 @@ private:
     local_stream::acceptor status_acceptor_;
     TcpRelayConfig config_;
     std::shared_ptr<TunRuntime> tun_runtime_;
-    std::shared_ptr<SessionManager> session_manager_;
+    std::shared_ptr<TunTunnelAdapter> tun_tunnel_;
     std::shared_ptr<TunPacketPump> tun_pump_;
     std::unique_ptr<TunLeaseAllocator> lease_allocator_;
     std::optional<TunLease> tun_lease_;
@@ -1080,7 +1077,7 @@ private:
     RelayAuthStats auth_stats_;
     RelayClassifiedRecordStats classified_record_stats_;
     std::deque<ClosedSessionSnapshot> recent_closed_sessions_;
-    std::array<RepeatedLogState, kSessionManagerErrorCount> tun_session_error_log_limits_{};
+    std::array<RepeatedLogState, kTunTunnelErrorCount> tun_session_error_log_limits_{};
     std::array<RepeatedLogState, kTlsParseErrorCount> tls_parse_error_log_limits_{};
     std::array<RepeatedLogState, kTunPacketPumpErrorCount> tun_write_error_log_limits_{};
     std::uint64_t next_session_id_ = 1;

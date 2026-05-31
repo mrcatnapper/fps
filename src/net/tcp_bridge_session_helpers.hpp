@@ -145,8 +145,7 @@ inline void add_stat(std::uint64_t& value, std::size_t delta) noexcept {
     );
 }
 
-[[nodiscard]] inline auto close_info_from_classified_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result)
-    -> TcpBridgeCloseInfo {
+[[nodiscard]] inline auto close_info_from_classified_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result) -> TcpBridgeCloseInfo {
     if(!result.parse_errors.empty()) {
         return close_info(
             TcpBridgeCloseReason::tls_parse_error, direction, TcpBridgeCloseComponent::tls_parser, std::string{enum_name_or(result.parse_errors.back())}
@@ -180,8 +179,8 @@ inline void add_stat(std::uint64_t& value, std::size_t delta) noexcept {
     return close_info(TcpBridgeCloseReason::internal_error, direction, TcpBridgeCloseComponent::session, "unknown_enqueue_error");
 }
 
-[[nodiscard]] inline auto is_tun_frame(FrameType frame_type) noexcept -> bool {
-    return frame_type == FrameType::tun_packet || frame_type == FrameType::tun_packet_fragment;
+[[nodiscard]] inline auto is_datagram_frame(FrameType frame_type) noexcept -> bool {
+    return frame_type == FrameType::opaque_datagram || frame_type == FrameType::opaque_datagram_fragment;
 }
 
 [[nodiscard]] inline auto tcp_bridge_error_from_classified_encode(const FpsClassifiedRecordPipelineEncodeError& error) noexcept -> TcpBridgeEnqueueError {

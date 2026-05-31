@@ -328,7 +328,7 @@ BOOST_AUTO_TEST_CASE(close_reports_tcp_traffic_stats) {
     BOOST_TEST(fixture.closed_stats->client_to_server.tcp_read_bytes == record.size());
     BOOST_TEST(fixture.closed_stats->client_to_server.tcp_written_bytes == record.size());
     BOOST_TEST(fixture.closed_stats->client_to_server.covert_frames_in == 0U);
-    BOOST_TEST(fixture.closed_stats->client_to_server.tun_frames_in == 0U);
+    BOOST_TEST(fixture.closed_stats->client_to_server.datagram_frames_in == 0U);
     BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TcpBridgeCloseReason::normal_stop);
     BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TcpBridgeCloseComponent::session);
 }
@@ -388,7 +388,7 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
             .frames =
                 {
                     fps::FpsEnvelopeFrame{
-                        .frame_type = fps::FrameType::tun_packet,
+                        .frame_type = fps::FrameType::opaque_datagram,
                         .flags = 0x77,
                         .payload = payload,
                         .padding_size = 1,
@@ -420,7 +420,7 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
     BOOST_REQUIRE(!inner_error);
     BOOST_CHECK(forwarded_inner == inner_tls);
     BOOST_REQUIRE_EQUAL(fixture.frames.size(), 1U);
-    BOOST_CHECK(fixture.frames[0].frame_type == fps::FrameType::tun_packet);
+    BOOST_CHECK(fixture.frames[0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_TEST(fixture.frames[0].flags == 0x77U);
     BOOST_CHECK(fixture.frames[0].payload == payload);
     BOOST_TEST(fixture.classified_errors.empty());
@@ -429,8 +429,8 @@ BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_
     BOOST_TEST(fixture.closed_stats->zero_rtt_authenticated);
     BOOST_TEST(fixture.closed_stats->client_to_server.covert_frames_in == 1U);
     BOOST_TEST(fixture.closed_stats->client_to_server.covert_frame_bytes_in == payload.size());
-    BOOST_TEST(fixture.closed_stats->client_to_server.tun_frames_in == 1U);
-    BOOST_TEST(fixture.closed_stats->client_to_server.tun_frame_bytes_in == payload.size());
+    BOOST_TEST(fixture.closed_stats->client_to_server.datagram_frames_in == 1U);
+    BOOST_TEST(fixture.closed_stats->client_to_server.datagram_frame_bytes_in == payload.size());
 }
 
 BOOST_AUTO_TEST_CASE(server_role_forwards_post_auth_tls_record_coalesced_with_upgrade) {
@@ -752,7 +752,7 @@ BOOST_AUTO_TEST_CASE(authenticated_classified_frame_preflight_avoids_partial_enq
     (void)authenticate_server_fixture(fixture, client_keys, server_keys);
 
     const auto payload = patterned_bytes(100U, 0x59);
-    auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::tun_packet, payload);
+    auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::opaque_datagram, payload);
 
     BOOST_REQUIRE(!queued);
     BOOST_CHECK(queued.error() == fps::net::TcpBridgeEnqueueError::write_queue_full);
