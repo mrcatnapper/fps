@@ -1,19 +1,19 @@
-#include "fps/net/tcp_bridge_carrier.hpp"
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
 
 #include <vector>
 
 namespace fps::net {
 namespace {
 
-[[nodiscard]] auto map_enqueue_error(TcpBridgeEnqueueError error) -> CovertDatagramError {
+[[nodiscard]] auto map_enqueue_error(TlsTcpCarrierEnqueueError error) -> CovertDatagramError {
     switch(error) {
-    case TcpBridgeEnqueueError::session_closed:
+    case TlsTcpCarrierEnqueueError::session_closed:
         return CovertDatagramError::session_closed;
-    case TcpBridgeEnqueueError::codec_error:
+    case TlsTcpCarrierEnqueueError::codec_error:
         return CovertDatagramError::codec_error;
-    case TcpBridgeEnqueueError::tls_record_error:
+    case TlsTcpCarrierEnqueueError::tls_record_error:
         return CovertDatagramError::tls_record_error;
-    case TcpBridgeEnqueueError::write_queue_full:
+    case TlsTcpCarrierEnqueueError::write_queue_full:
         return CovertDatagramError::write_queue_full;
     }
     return CovertDatagramError::session_closed;
@@ -21,7 +21,7 @@ namespace {
 
 } // namespace
 
-auto make_tcp_bridge_carrier(CarrierId carrier_id, std::weak_ptr<TcpBridgeSession> session) -> CovertCarrier {
+auto make_tls_tcp_carrier_adapter(CarrierId carrier_id, std::weak_ptr<TlsTcpCarrierSession> session) -> CovertCarrier {
     return CovertCarrier{
         .id = carrier_id,
         .enqueue_frames = [session](Direction direction, std::span<const CovertCarrierFrame> frames) -> CovertDatagramResult {
@@ -30,11 +30,11 @@ auto make_tcp_bridge_carrier(CarrierId carrier_id, std::weak_ptr<TcpBridgeSessio
                 return CovertDatagramResult::failure(CovertDatagramError::session_closed);
             }
 
-            std::vector<TcpBridgeCovertFrame> bridge_frames;
-            bridge_frames.reserve(frames.size());
+            std::vector<TlsTcpCarrierCovertFrame> carrier_frames;
+            carrier_frames.reserve(frames.size());
             for(const auto& frame : frames) {
-                bridge_frames.push_back(
-                    TcpBridgeCovertFrame{
+                carrier_frames.push_back(
+                    TlsTcpCarrierCovertFrame{
                         .frame_type = frame.frame_type,
                         .payload = frame.payload,
                         .padding_size = frame.padding_size,
@@ -43,7 +43,7 @@ auto make_tcp_bridge_carrier(CarrierId carrier_id, std::weak_ptr<TcpBridgeSessio
                 );
             }
 
-            auto queued = locked->enqueue_covert_frames(direction, bridge_frames);
+            auto queued = locked->enqueue_covert_frames(direction, carrier_frames);
             if(!queued) {
                 return CovertDatagramResult::failure(map_enqueue_error(queued.error()));
             }

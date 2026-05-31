@@ -87,11 +87,14 @@ target_link_libraries(fps_protocol_core
 
 target_compile_definitions(fps_protocol_core PUBLIC BOOST_LOG_DYN_LINK)
 
+# Generic covert datagram scheduling plus the current TLS-over-TCP carrier
+# implementation. Non-TLS carriers should plug into CovertCarrier without
+# depending on the TLS/TCP session implementation.
 add_library(fps_carrier_core
   src/net/covert_datagram_transport.cpp
-  src/net/tcp_bridge_carrier.cpp
-  src/net/tcp_bridge_session.cpp
-  src/net/tcp_bridge_session_io.cpp)
+  src/net/tls_tcp_carrier_adapter.cpp
+  src/net/tls_tcp_carrier_session.cpp
+  src/net/tls_tcp_carrier_session_io.cpp)
 
 fps_configure_library(fps_carrier_core)
 
@@ -214,7 +217,7 @@ if(FPS_BUILD_TESTS)
     tests/test_covert_datagram_transport.cpp
     tests/test_tun_tunnel_adapter.cpp
     tests/test_shaper.cpp
-    tests/test_tcp_bridge_session.cpp
+    tests/test_tls_tcp_carrier_session.cpp
     tests/test_tcp_relay_app.cpp
     tests/test_tls_record_layer.cpp
     tests/test_tls_record_parser.cpp

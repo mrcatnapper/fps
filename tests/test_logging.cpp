@@ -7,7 +7,7 @@
 #include <string_view>
 
 #include "fps/log/describe.hpp"
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_runtime.hpp"
 
 BOOST_AUTO_TEST_SUITE(logging)
@@ -55,7 +55,7 @@ BOOST_AUTO_TEST_CASE(severity_to_string_covers_all_supported_levels) {
 }
 
 BOOST_AUTO_TEST_CASE(described_structs_serialize_to_json_without_manual_fields) {
-    fps::net::TcpBridgeSessionStats stats;
+    fps::net::TlsTcpCarrierSessionStats stats;
     stats.zero_rtt_authenticated = true;
     stats.client_to_server.tcp_read_bytes = 42;
     stats.client_to_server.datagram_frames_in = 3;
@@ -72,9 +72,9 @@ BOOST_AUTO_TEST_CASE(described_structs_serialize_to_json_without_manual_fields) 
 }
 
 BOOST_AUTO_TEST_CASE(described_log_value_handles_enums_and_durations) {
-    const fps::net::TcpBridgeShaperEvent event{
+    const fps::net::TlsTcpCarrierShaperEvent event{
         .direction = fps::Direction::client_to_server,
-        .decision = fps::net::TcpBridgeShaperDecision::scheduled,
+        .decision = fps::net::TlsTcpCarrierShaperDecision::scheduled,
         .payload_size = 128,
         .queue_bytes = 256,
         .delay = std::chrono::milliseconds{7},

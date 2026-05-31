@@ -12,7 +12,7 @@
 #include "fps/core/fps_upgrade_controller.hpp"
 #include "fps/core/protocol_constants.hpp"
 #include "fps/log/logging.hpp"
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_lease.hpp"
 #include "fps/net/tun_runtime.hpp"
 

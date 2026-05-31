@@ -4,6 +4,91 @@
 
 ## 2026-05-31
 
+### Rename TLS/TCP carrier session boundary
+
+Goal:
+
+- Clarify that TLS record slicing, transcript tracking and FPS classified-record
+  injection belong to the concrete TLS-over-TCP carrier adapter, while
+  `CovertDatagramTransport` remains the generic opaque datagram pool.
+- Keep behavior and wire format unchanged.
+
+Changes:
+
+- Renamed active `TcpBridgeSession` types and files to
+  `TlsTcpCarrierSession`.
+- Renamed the thin generic carrier wrapper to
+  `make_tls_tcp_carrier_adapter(...)` and
+  `tls_tcp_carrier_adapter.*`.
+- Updated tests, CMake sources and active docs to use the TLS/TCP carrier
+  terminology.
+- Added a specification boundary note for `fps_protocol_core`,
+  `fps_carrier_core`, `TlsTcpCarrierSession`, `TunTunnelAdapter` and
+  `fps_linux_runtime`.
+
+Self review:
+
+- Behavior and wire format are intentionally unchanged: this is a naming and
+  documentation boundary cleanup.
+- The main risk was stale active references to `TcpBridge*` in code, tests,
+  CMake or public docs; the active-tree search is clean. Historical
+  `dev/WORKLOG.md` entries are intentionally not rewritten.
+- The rename makes the current adapter responsibility explicit: TLS record
+  slicing and transcript tracking are part of the TLS-over-TCP carrier session,
+  not the generic datagram transport contract.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `rg -n "TcpBridge|tcp_bridge" include src tests docs dev/REVIEW.md dev/ROADMAP.md CMakeLists.txt`
+- `git diff --check`
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local build/tests passed;
+  - ASan+UBSan local tests passed;
+  - Valgrind unit pass: 0 errors, no leaks;
+  - coverage: `72.57%` total lines, `80.59%` total functions;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - `4.9995 Mbit/s`, `0%` loss.
+- `tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 10 --bandwidth 5M --length 1200`
+  - `5.0001 Mbit/s`, `0%` loss.
+- `tools/docker_multi_client_sim.py --sudo --image fps:local --duration 10 --bandwidth 1M --length 1000`
+  - two distinct leases, bidirectional UDP probes around `1 Mbit/s`, `0%`
+    loss, spoof drop observed, all services alive.
+- `tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - `duplicate_client_replacements=1`, old client blocked, new client OK.
+- `tools/docker_socks_smoke.py --sudo --image fps:local --proxy-image fps-dante-proxy:local --build`
+  - SOCKS HTTP probe OK, all six services alive.
+- Remote 5-minute `fpshop` Docker/TUN resilience soak using temporary image tag
+  `fps:soak-tlsrename-30b7ea1`:
+  - command:
+    `python3 tools/docker_resilience_soak.py --sudo --image fps:soak-tlsrename-30b7ea1 --duration 300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure --stress-bandwidth 2M --startup-timeout 90`;
+  - main mixed client-to-server UDP: `300.05s`, `14,649` packets, `0%` loss,
+    about `0.200 Mbit/s`, plus `547` HTTP probes;
+  - server-to-client UDP probes to both leases: `489` packets each, `0%` loss;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier stop/start recovery passed with `489` recovered packets, `0%`
+    loss;
+  - final status: two active carriers, non-zero TUN counters, all six services
+    running;
+  - Docker-level pressure did not produce `write_queue_full`, which remains
+    acceptable for routine soak because it is topology/timing dependent.
+- Temporary remote directory and local/remote soak image tag were removed.
+
+Commit:
+
+- Local commit `Rename TLS TCP carrier session types`.
+
 ### Split carrier abstraction and build targets
 
 Goal:

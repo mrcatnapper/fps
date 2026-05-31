@@ -1,4 +1,4 @@
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 
 #include <boost/asio/write.hpp>
 
@@ -12,7 +12,7 @@
 
 #include "fps/core/enum.hpp"
 
-#include "tcp_bridge_session_helpers.hpp"
+#include "tls_tcp_carrier_session_helpers.hpp"
 
 namespace fps::net {
 
@@ -26,7 +26,7 @@ using detail::normalize_config;
 
 namespace {
 
-[[nodiscard]] auto session_parser_options(const TcpBridgeSessionConfig& config) -> TlsRecordParserOptions {
+[[nodiscard]] auto session_parser_options(const TlsTcpCarrierSessionConfig& config) -> TlsRecordParserOptions {
     if(config.zero_rtt.has_value()) {
         return config.zero_rtt->controller_config.parser_options;
     }
@@ -35,11 +35,11 @@ namespace {
 
 } // namespace
 
-auto TcpBridgeSession::create(
+auto TlsTcpCarrierSession::create(
     TcpSocket client_socket, TcpSocket origin_socket, CoverSessionPipeline client_to_server_pipeline, CoverSessionPipeline server_to_client_pipeline,
-    TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
-) -> std::shared_ptr<TcpBridgeSession> {
-    TcpBridgeSessionPipelines pipelines{
+    TlsTcpCarrierSessionHandlers handlers, TlsTcpCarrierSessionConfig config
+) -> std::shared_ptr<TlsTcpCarrierSession> {
+    TlsTcpCarrierSessionPipelines pipelines{
         .inbound_client_to_server = client_to_server_pipeline,
         .inbound_server_to_client = server_to_client_pipeline,
         .outbound_client_to_server = client_to_server_pipeline,
@@ -48,16 +48,18 @@ auto TcpBridgeSession::create(
     return create(std::move(client_socket), std::move(origin_socket), std::move(pipelines), std::move(handlers), config);
 }
 
-auto TcpBridgeSession::create(
-    TcpSocket client_socket, TcpSocket origin_socket, TcpBridgeSessionPipelines pipelines, TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
-) -> std::shared_ptr<TcpBridgeSession> {
-    return std::shared_ptr<TcpBridgeSession>(
-        new TcpBridgeSession(std::move(client_socket), std::move(origin_socket), std::move(pipelines), std::move(handlers), config)
+auto TlsTcpCarrierSession::create(
+    TcpSocket client_socket, TcpSocket origin_socket, TlsTcpCarrierSessionPipelines pipelines, TlsTcpCarrierSessionHandlers handlers,
+    TlsTcpCarrierSessionConfig config
+) -> std::shared_ptr<TlsTcpCarrierSession> {
+    return std::shared_ptr<TlsTcpCarrierSession>(
+        new TlsTcpCarrierSession(std::move(client_socket), std::move(origin_socket), std::move(pipelines), std::move(handlers), config)
     );
 }
 
-TcpBridgeSession::TcpBridgeSession(
-    TcpSocket client_socket, TcpSocket origin_socket, TcpBridgeSessionPipelines pipelines, TcpBridgeSessionHandlers handlers, TcpBridgeSessionConfig config
+TlsTcpCarrierSession::TlsTcpCarrierSession(
+    TcpSocket client_socket, TcpSocket origin_socket, TlsTcpCarrierSessionPipelines pipelines, TlsTcpCarrierSessionHandlers handlers,
+    TlsTcpCarrierSessionConfig config
 )
     : client_socket_(std::move(client_socket))
     , origin_socket_(std::move(origin_socket))
@@ -78,7 +80,7 @@ TcpBridgeSession::TcpBridgeSession(
     }
 }
 
-void TcpBridgeSession::start() {
+void TlsTcpCarrierSession::start() {
     if(stopped_) {
         return;
     }
@@ -86,9 +88,9 @@ void TcpBridgeSession::start() {
     pump(Direction::server_to_client);
 }
 
-void TcpBridgeSession::stop() { stop_with(close_info(TcpBridgeCloseReason::normal_stop, std::nullopt, TcpBridgeCloseComponent::session)); }
+void TlsTcpCarrierSession::stop() { stop_with(close_info(TlsTcpCarrierCloseReason::normal_stop, std::nullopt, TlsTcpCarrierCloseComponent::session)); }
 
-void TcpBridgeSession::stop_with(TcpBridgeCloseInfo close_info) {
+void TlsTcpCarrierSession::stop_with(TlsTcpCarrierCloseInfo close_info) {
     if(stopped_) {
         return;
     }
@@ -118,19 +120,19 @@ void TcpBridgeSession::stop_with(TcpBridgeCloseInfo close_info) {
     }
 }
 
-void TcpBridgeSession::set_pending_close_info(TcpBridgeCloseInfo close_info) { pending_close_info_ = std::move(close_info); }
+void TlsTcpCarrierSession::set_pending_close_info(TlsTcpCarrierCloseInfo close_info) { pending_close_info_ = std::move(close_info); }
 
-auto TcpBridgeSession::pending_or_default_close(TcpBridgeCloseInfo fallback) const -> TcpBridgeCloseInfo {
+auto TlsTcpCarrierSession::pending_or_default_close(TlsTcpCarrierCloseInfo fallback) const -> TlsTcpCarrierCloseInfo {
     return pending_close_info_.value_or(std::move(fallback));
 }
 
-void TcpBridgeSession::handle_eof(Direction direction) {
-    set_pending_close_info(close_info(TcpBridgeCloseReason::peer_eof, direction, TcpBridgeCloseComponent::tcp, "eof"));
+void TlsTcpCarrierSession::handle_eof(Direction direction) {
+    set_pending_close_info(close_info(TlsTcpCarrierCloseReason::peer_eof, direction, TlsTcpCarrierCloseComponent::tcp, "eof"));
     done_flag(direction) = true;
     shutdown_send_when_drained(direction);
 }
 
-void TcpBridgeSession::shutdown_send_when_drained(Direction direction) {
+void TlsTcpCarrierSession::shutdown_send_when_drained(Direction direction) {
     if(!done_flag(direction) || shutdown_done_flag(direction) || write_in_progress(direction) || !write_queue(direction).empty() ||
        !shaped_write_queue(direction).empty() || shaper_timer_active(direction)) {
         return;
@@ -142,69 +144,73 @@ void TcpBridgeSession::shutdown_send_when_drained(Direction direction) {
     close_if_done();
 }
 
-void TcpBridgeSession::close_if_done() {
+void TlsTcpCarrierSession::close_if_done() {
     if(client_to_server_shutdown_done_ && server_to_client_shutdown_done_) {
-        stop_with(pending_or_default_close(close_info(TcpBridgeCloseReason::peer_eof, std::nullopt, TcpBridgeCloseComponent::tcp, "eof")));
+        stop_with(pending_or_default_close(close_info(TlsTcpCarrierCloseReason::peer_eof, std::nullopt, TlsTcpCarrierCloseComponent::tcp, "eof")));
     }
 }
 
-auto TcpBridgeSession::source_socket(Direction direction) -> TcpSocket& { return direction == Direction::client_to_server ? client_socket_ : origin_socket_; }
+auto TlsTcpCarrierSession::source_socket(Direction direction) -> TcpSocket& {
+    return direction == Direction::client_to_server ? client_socket_ : origin_socket_;
+}
 
-auto TcpBridgeSession::target_socket(Direction direction) -> TcpSocket& { return direction == Direction::client_to_server ? origin_socket_ : client_socket_; }
+auto TlsTcpCarrierSession::target_socket(Direction direction) -> TcpSocket& {
+    return direction == Direction::client_to_server ? origin_socket_ : client_socket_;
+}
 
-auto TcpBridgeSession::inbound_pipeline(Direction direction) -> CoverSessionPipeline& {
+auto TlsTcpCarrierSession::inbound_pipeline(Direction direction) -> CoverSessionPipeline& {
     return direction == Direction::client_to_server ? pipelines_.inbound_client_to_server : pipelines_.inbound_server_to_client;
 }
 
-auto TcpBridgeSession::outbound_pipeline(Direction direction) -> CoverSessionPipeline& {
+auto TlsTcpCarrierSession::outbound_pipeline(Direction direction) -> CoverSessionPipeline& {
     return direction == Direction::client_to_server ? pipelines_.outbound_client_to_server : pipelines_.outbound_server_to_client;
 }
 
-auto TcpBridgeSession::inbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
+auto TlsTcpCarrierSession::inbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
     return direction == Direction::client_to_server ? classified_pipelines_->inbound_client_to_server : classified_pipelines_->inbound_server_to_client;
 }
 
-auto TcpBridgeSession::outbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
+auto TlsTcpCarrierSession::outbound_classified_pipeline(Direction direction) -> FpsClassifiedRecordPipeline& {
     return direction == Direction::client_to_server ? classified_pipelines_->outbound_client_to_server : classified_pipelines_->outbound_server_to_client;
 }
 
-auto TcpBridgeSession::tls_record_parser(Direction direction) -> TlsRecordParser& {
+auto TlsTcpCarrierSession::tls_record_parser(Direction direction) -> TlsRecordParser& {
     return direction == Direction::client_to_server ? client_to_server_tls_parser_ : server_to_client_tls_parser_;
 }
 
-auto TcpBridgeSession::read_buffer(Direction direction) -> std::vector<std::byte>& {
+auto TlsTcpCarrierSession::read_buffer(Direction direction) -> std::vector<std::byte>& {
     return direction == Direction::client_to_server ? client_to_server_buffer_ : server_to_client_buffer_;
 }
 
-auto TcpBridgeSession::write_queue(Direction direction) -> std::deque<WriteItem>& {
+auto TlsTcpCarrierSession::write_queue(Direction direction) -> std::deque<WriteItem>& {
     return direction == Direction::client_to_server ? client_to_server_writes_ : server_to_client_writes_;
 }
 
-auto TcpBridgeSession::shaped_write_queue(Direction direction) -> std::deque<ShapedWriteItem>& {
+auto TlsTcpCarrierSession::shaped_write_queue(Direction direction) -> std::deque<ShapedWriteItem>& {
     return direction == Direction::client_to_server ? client_to_server_shaped_writes_ : server_to_client_shaped_writes_;
 }
 
-auto TcpBridgeSession::write_in_progress(Direction direction) -> bool& {
+auto TlsTcpCarrierSession::write_in_progress(Direction direction) -> bool& {
     return direction == Direction::client_to_server ? client_to_server_write_in_progress_ : server_to_client_write_in_progress_;
 }
 
-auto TcpBridgeSession::shaper_timer(Direction direction) -> boost::asio::steady_timer& {
+auto TlsTcpCarrierSession::shaper_timer(Direction direction) -> boost::asio::steady_timer& {
     return direction == Direction::client_to_server ? client_to_server_shaper_timer_ : server_to_client_shaper_timer_;
 }
 
-auto TcpBridgeSession::shaper_timer_active(Direction direction) noexcept -> bool& {
+auto TlsTcpCarrierSession::shaper_timer_active(Direction direction) noexcept -> bool& {
     return direction == Direction::client_to_server ? client_to_server_shaper_timer_active_ : server_to_client_shaper_timer_active_;
 }
 
-auto TcpBridgeSession::pending_write_bytes(Direction direction) noexcept -> std::size_t& {
+auto TlsTcpCarrierSession::pending_write_bytes(Direction direction) noexcept -> std::size_t& {
     return direction == Direction::client_to_server ? client_to_server_pending_write_bytes_ : server_to_client_pending_write_bytes_;
 }
 
-auto TcpBridgeSession::pending_write_bytes(Direction direction) const noexcept -> std::size_t {
+auto TlsTcpCarrierSession::pending_write_bytes(Direction direction) const noexcept -> std::size_t {
     return direction == Direction::client_to_server ? client_to_server_pending_write_bytes_ : server_to_client_pending_write_bytes_;
 }
 
-auto TcpBridgeSession::shaped_queue_bytes(Direction direction) const noexcept -> std::size_t {
+auto TlsTcpCarrierSession::shaped_queue_bytes(Direction direction) const noexcept -> std::size_t {
     const auto& queue = direction == Direction::client_to_server ? client_to_server_shaped_writes_ : server_to_client_shaped_writes_;
     std::size_t bytes = 0;
     for(const auto& item : queue) {
@@ -214,29 +220,29 @@ auto TcpBridgeSession::shaped_queue_bytes(Direction direction) const noexcept ->
     return bytes;
 }
 
-auto TcpBridgeSession::done_flag(Direction direction) -> bool& {
+auto TlsTcpCarrierSession::done_flag(Direction direction) -> bool& {
     return direction == Direction::client_to_server ? client_to_server_done_ : server_to_client_done_;
 }
 
-auto TcpBridgeSession::shutdown_done_flag(Direction direction) -> bool& {
+auto TlsTcpCarrierSession::shutdown_done_flag(Direction direction) -> bool& {
     return direction == Direction::client_to_server ? client_to_server_shutdown_done_ : server_to_client_shutdown_done_;
 }
 
-auto TcpBridgeSession::stats_for(Direction direction) noexcept -> TcpBridgeDirectionStats& {
+auto TlsTcpCarrierSession::stats_for(Direction direction) noexcept -> TlsTcpCarrierDirectionStats& {
     return direction == Direction::client_to_server ? stats_.client_to_server : stats_.server_to_client;
 }
 
-auto TcpBridgeSession::stats_for(Direction direction) const noexcept -> const TcpBridgeDirectionStats& {
+auto TlsTcpCarrierSession::stats_for(Direction direction) const noexcept -> const TlsTcpCarrierDirectionStats& {
     return direction == Direction::client_to_server ? stats_.client_to_server : stats_.server_to_client;
 }
 
-void TcpBridgeSession::emit_shaper_event(const TcpBridgeShaperEvent& event) const {
+void TlsTcpCarrierSession::emit_shaper_event(const TlsTcpCarrierShaperEvent& event) const {
     if(handlers_.on_shaper_event) {
         handlers_.on_shaper_event(event);
     }
 }
 
-void TcpBridgeSession::emit_process_result(Direction direction, const CoverSessionProcessResult& result) {
+void TlsTcpCarrierSession::emit_process_result(Direction direction, const CoverSessionProcessResult& result) {
     auto& stats = stats_for(direction);
     for(const auto& frame : result.covert_frames) {
         add_stat(stats.covert_frames_in, 1U);
@@ -268,7 +274,7 @@ void TcpBridgeSession::emit_process_result(Direction direction, const CoverSessi
     }
 }
 
-void TcpBridgeSession::emit_zero_rtt_observe_result(Direction direction, const FpsUpgradeObserveResult& result) {
+void TlsTcpCarrierSession::emit_zero_rtt_observe_result(Direction direction, const FpsUpgradeObserveResult& result) {
     if(handlers_.on_parse_error) {
         for(const auto error : result.parse_errors) {
             handlers_.on_parse_error(direction, error);
@@ -281,7 +287,7 @@ void TcpBridgeSession::emit_zero_rtt_observe_result(Direction direction, const F
     }
 }
 
-void TcpBridgeSession::emit_zero_rtt_process_result(Direction direction, const FpsUpgradeProcessResult& result) {
+void TlsTcpCarrierSession::emit_zero_rtt_process_result(Direction direction, const FpsUpgradeProcessResult& result) {
     if(handlers_.on_parse_error) {
         for(const auto error : result.parse_errors) {
             handlers_.on_parse_error(direction, error);
@@ -299,7 +305,7 @@ void TcpBridgeSession::emit_zero_rtt_process_result(Direction direction, const F
     }
 }
 
-void TcpBridgeSession::emit_classified_process_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result) {
+void TlsTcpCarrierSession::emit_classified_process_result(Direction direction, const FpsClassifiedRecordPipelineProcessResult& result) {
     auto& stats = stats_for(direction);
     if(result.decoded_fps_records > 0U && handlers_.on_classified_records_decoded) {
         handlers_.on_classified_records_decoded(direction, result.decoded_fps_records);
@@ -343,14 +349,14 @@ void TcpBridgeSession::emit_classified_process_result(Direction direction, const
     }
 }
 
-void TcpBridgeSession::emit_classified_encode_error(Direction direction, const FpsClassifiedRecordPipelineEncodeError& error) {
+void TlsTcpCarrierSession::emit_classified_encode_error(Direction direction, const FpsClassifiedRecordPipelineEncodeError& error) {
     set_pending_close_info(detail::close_info_from_classified_encode(direction, error));
     if(handlers_.on_classified_record_encode_error) {
         handlers_.on_classified_record_encode_error(direction, error);
     }
 }
 
-void TcpBridgeSession::emit_classified_records_encoded(Direction direction, std::size_t count) const {
+void TlsTcpCarrierSession::emit_classified_records_encoded(Direction direction, std::size_t count) const {
     if(count > 0U && handlers_.on_classified_records_encoded) {
         handlers_.on_classified_records_encoded(direction, count);
     }

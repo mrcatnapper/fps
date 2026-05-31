@@ -1,4 +1,4 @@
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/test/unit_test.hpp>
@@ -44,8 +44,8 @@ auto classified_config(
     };
 }
 
-auto passthrough_pipelines() -> fps::net::TcpBridgeSessionPipelines {
-    return fps::net::TcpBridgeSessionPipelines{
+auto passthrough_pipelines() -> fps::net::TlsTcpCarrierSessionPipelines {
+    return fps::net::TlsTcpCarrierSessionPipelines{
         .inbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
         .inbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
         .outbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
@@ -93,10 +93,10 @@ auto zero_rtt_controller_config(fps::ZeroRttUpgradeRole role, const fps::X25519K
 
 auto bridge_zero_rtt_options(
     fps::ZeroRttUpgradeRole role, const fps::X25519KeyPair& client, const fps::X25519KeyPair& server, std::optional<fps::X25519KeyPair> ephemeral = std::nullopt
-) -> fps::net::TcpBridgeZeroRttOptions {
+) -> fps::net::TlsTcpCarrierZeroRttOptions {
     const auto& local = role == fps::ZeroRttUpgradeRole::client ? client : server;
     const auto& peer_or_allowed = role == fps::ZeroRttUpgradeRole::client ? server.public_key : client.public_key;
-    return fps::net::TcpBridgeZeroRttOptions{
+    return fps::net::TlsTcpCarrierZeroRttOptions{
         .controller_config = zero_rtt_controller_config(role, local, peer_or_allowed),
         .client_upgrade_padding = bytes({0xa5}),
         .client_ephemeral_key_pair = ephemeral,
@@ -115,19 +115,19 @@ struct BridgeFixture {
     ConnectedPair origin_pair;
     std::vector<fps::DecodedFrame> frames;
     std::vector<fps::CodecError> codec_errors;
-    std::vector<fps::net::TcpBridgeShaperEvent> shaper_events;
-    std::optional<fps::net::TcpBridgeSessionStats> closed_stats;
-    std::shared_ptr<fps::net::TcpBridgeSession> session;
+    std::vector<fps::net::TlsTcpCarrierShaperEvent> shaper_events;
+    std::optional<fps::net::TlsTcpCarrierSessionStats> closed_stats;
+    std::shared_ptr<fps::net::TlsTcpCarrierSession> session;
 
     explicit BridgeFixture(std::size_t max_write_queue_bytes = 1024U * 1024U, std::optional<fps::ShaperProfile> shaper = std::nullopt)
         : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
-        fps::net::TcpBridgeSessionHandlers handlers;
+        fps::net::TlsTcpCarrierSessionHandlers handlers;
         handlers.on_covert_frame = [&](fps::Direction, const fps::DecodedFrame& frame) { frames.push_back(frame); };
         handlers.on_codec_error = [&](fps::Direction, fps::CodecError error) { codec_errors.push_back(error); };
-        handlers.on_shaper_event = [&](const fps::net::TcpBridgeShaperEvent& event) { shaper_events.push_back(event); };
-        handlers.on_closed = [&](const fps::net::TcpBridgeSessionStats& stats) { closed_stats = stats; };
+        handlers.on_shaper_event = [&](const fps::net::TlsTcpCarrierShaperEvent& event) { shaper_events.push_back(event); };
+        handlers.on_closed = [&](const fps::net::TlsTcpCarrierSessionStats& stats) { closed_stats = stats; };
 
-        session = fps::net::TcpBridgeSession::create(
+        session = fps::net::TlsTcpCarrierSession::create(
             std::move(client_pair.bridge), std::move(origin_pair.bridge), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper_profile = std::move(shaper), .zero_rtt = std::nullopt}
         );
@@ -152,14 +152,14 @@ struct ZeroRttBridgeFixture {
     std::vector<fps::FpsClassifiedRecordError> classified_errors;
     std::vector<fps::FpsClassifiedRecordPipelineEncodeError> classified_encode_errors;
     std::optional<fps::SessionKeys> authenticated_keys;
-    std::optional<fps::net::TcpBridgeSessionStats> closed_stats;
-    std::shared_ptr<fps::net::TcpBridgeSession> session;
+    std::optional<fps::net::TlsTcpCarrierSessionStats> closed_stats;
+    std::shared_ptr<fps::net::TlsTcpCarrierSession> session;
 
     explicit ZeroRttBridgeFixture(
-        fps::net::TcpBridgeZeroRttOptions zero_rtt_options, std::size_t read_buffer_size = 7U, std::size_t max_write_queue_bytes = 1024U * 1024U
+        fps::net::TlsTcpCarrierZeroRttOptions zero_rtt_options, std::size_t read_buffer_size = 7U, std::size_t max_write_queue_bytes = 1024U * 1024U
     )
         : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
-        fps::net::TcpBridgeSessionHandlers handlers;
+        fps::net::TlsTcpCarrierSessionHandlers handlers;
         handlers.on_covert_frame = [&](fps::Direction, const fps::DecodedFrame& frame) {
             frame_seen_after_auth.push_back(authenticated_keys.has_value());
             frames.push_back(frame);
@@ -169,9 +169,9 @@ struct ZeroRttBridgeFixture {
             classified_encode_errors.push_back(error);
         };
         handlers.on_zero_rtt_authenticated = [&](const fps::SessionKeys& keys, const std::optional<fps::X25519PublicKey>&) { authenticated_keys = keys; };
-        handlers.on_closed = [&](const fps::net::TcpBridgeSessionStats& stats) { closed_stats = stats; };
+        handlers.on_closed = [&](const fps::net::TlsTcpCarrierSessionStats& stats) { closed_stats = stats; };
 
-        session = fps::net::TcpBridgeSession::create(
+        session = fps::net::TlsTcpCarrierSession::create(
             std::move(client_pair.bridge), std::move(origin_pair.bridge), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = read_buffer_size,
              .max_write_queue_bytes = max_write_queue_bytes,
@@ -251,7 +251,7 @@ auto authenticate_server_fixture(ZeroRttBridgeFixture& fixture, const fps::X2551
 
 } // namespace
 
-BOOST_AUTO_TEST_SUITE(tcp_bridge_session)
+BOOST_AUTO_TEST_SUITE(tls_tcp_carrier_session)
 
 BOOST_AUTO_TEST_CASE(forwards_real_tls_record_client_to_origin) {
     BridgeFixture fixture;
@@ -329,8 +329,8 @@ BOOST_AUTO_TEST_CASE(close_reports_tcp_traffic_stats) {
     BOOST_TEST(fixture.closed_stats->client_to_server.tcp_written_bytes == record.size());
     BOOST_TEST(fixture.closed_stats->client_to_server.covert_frames_in == 0U);
     BOOST_TEST(fixture.closed_stats->client_to_server.datagram_frames_in == 0U);
-    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TcpBridgeCloseReason::normal_stop);
-    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TcpBridgeCloseComponent::session);
+    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TlsTcpCarrierCloseReason::normal_stop);
+    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TlsTcpCarrierCloseComponent::session);
 }
 
 BOOST_AUTO_TEST_CASE(peer_eof_reports_close_reason) {
@@ -341,9 +341,9 @@ BOOST_AUTO_TEST_CASE(peer_eof_reports_close_reason) {
     run_until(fixture.io, [&] { return fixture.closed_stats.has_value(); });
 
     BOOST_REQUIRE(fixture.closed_stats.has_value());
-    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TcpBridgeCloseReason::peer_eof);
+    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TlsTcpCarrierCloseReason::peer_eof);
     BOOST_CHECK(fixture.closed_stats->close.direction.has_value());
-    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TcpBridgeCloseComponent::tcp);
+    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TlsTcpCarrierCloseComponent::tcp);
     BOOST_TEST(fixture.closed_stats->close.error == "eof");
 }
 
@@ -355,7 +355,7 @@ BOOST_AUTO_TEST_CASE(enqueue_after_stop_returns_session_closed) {
     auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::ping, payload);
 
     BOOST_REQUIRE(!queued);
-    BOOST_CHECK(queued.error() == fps::net::TcpBridgeEnqueueError::session_closed);
+    BOOST_CHECK(queued.error() == fps::net::TlsTcpCarrierEnqueueError::session_closed);
 }
 
 BOOST_AUTO_TEST_CASE(enqueue_without_authenticated_pipeline_returns_codec_error) {
@@ -365,7 +365,7 @@ BOOST_AUTO_TEST_CASE(enqueue_without_authenticated_pipeline_returns_codec_error)
     auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::ping, payload);
 
     BOOST_REQUIRE(!queued);
-    BOOST_CHECK(queued.error() == fps::net::TcpBridgeEnqueueError::codec_error);
+    BOOST_CHECK(queued.error() == fps::net::TlsTcpCarrierEnqueueError::codec_error);
 }
 
 BOOST_AUTO_TEST_CASE(server_role_strips_zero_rtt_upgrade_and_decodes_classified_records) {
@@ -701,9 +701,9 @@ BOOST_AUTO_TEST_CASE(authenticated_invalid_classified_record_reports_decode_clos
 
     BOOST_REQUIRE(fixture.closed_stats.has_value());
     BOOST_CHECK(fixture.closed_stats->zero_rtt_authenticated);
-    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TcpBridgeCloseReason::classified_record_error);
+    BOOST_CHECK(fixture.closed_stats->close.reason == fps::net::TlsTcpCarrierCloseReason::classified_record_error);
     BOOST_CHECK(fixture.closed_stats->close.direction == fps::Direction::client_to_server);
-    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TcpBridgeCloseComponent::classified_record);
+    BOOST_CHECK(fixture.closed_stats->close.component == fps::net::TlsTcpCarrierCloseComponent::classified_record);
     BOOST_TEST(!fixture.closed_stats->close.error.empty());
     BOOST_TEST(!fixture.classified_errors.empty());
 }
@@ -755,7 +755,7 @@ BOOST_AUTO_TEST_CASE(authenticated_classified_frame_preflight_avoids_partial_enq
     auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::opaque_datagram, payload);
 
     BOOST_REQUIRE(!queued);
-    BOOST_CHECK(queued.error() == fps::net::TcpBridgeEnqueueError::write_queue_full);
+    BOOST_CHECK(queued.error() == fps::net::TlsTcpCarrierEnqueueError::write_queue_full);
     boost::system::error_code available_error;
     const auto available = fixture.client_pair.external.available(available_error);
     BOOST_TEST(!available_error);
@@ -776,7 +776,7 @@ BOOST_AUTO_TEST_CASE(authenticated_classified_encode_failure_reports_error) {
     auto queued = fixture.session->enqueue_covert_frame(fps::Direction::server_to_client, fps::FrameType::ping, payload);
 
     BOOST_REQUIRE(!queued);
-    BOOST_CHECK(queued.error() == fps::net::TcpBridgeEnqueueError::codec_error);
+    BOOST_CHECK(queued.error() == fps::net::TlsTcpCarrierEnqueueError::codec_error);
     BOOST_REQUIRE_EQUAL(fixture.classified_encode_errors.size(), 1U);
     BOOST_CHECK(fixture.classified_encode_errors[0].classified_error == fps::FpsClassifiedRecordError::oversized_payload);
 }

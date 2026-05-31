@@ -31,7 +31,7 @@
 #include "fps/log/describe.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
-#include "fps/net/tcp_bridge_session.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
 #include "fps/net/tun_tunnel_adapter.hpp"
 #include "fps/platform/linux/tun_runtime.hpp"
@@ -54,7 +54,7 @@ using detail::endpoint_to_string;
 using detail::role_name;
 using detail::tun_tunnel_error_message;
 using detail::tun_tunnel_event_message;
-using detail::tcp_bridge_enqueue_error_message;
+using detail::tls_tcp_carrier_enqueue_error_message;
 using detail::tls_parse_error_message;
 using detail::tls_record_error_message;
 using detail::tun_lease_error_message;
@@ -82,8 +82,8 @@ using detail::zero_rtt_upgrade_error_message;
     return results.begin()->endpoint();
 }
 
-[[nodiscard]] auto passthrough_pipelines() -> TcpBridgeSessionPipelines {
-    return TcpBridgeSessionPipelines{
+[[nodiscard]] auto passthrough_pipelines() -> TlsTcpCarrierSessionPipelines {
+    return TlsTcpCarrierSessionPipelines{
         .inbound_client_to_server = CoverSessionPipeline::passthrough(),
         .inbound_server_to_client = CoverSessionPipeline::passthrough(),
         .outbound_client_to_server = CoverSessionPipeline::passthrough(),
@@ -155,7 +155,7 @@ struct RelayClassifiedRecordStats {
 struct ClosedSessionSnapshot {
     std::uint64_t session_id = 0;
     bool authenticated = false;
-    TcpBridgeCloseInfo close;
+    TlsTcpCarrierCloseInfo close;
 };
 
 template <typename Array, typename NameFn>
@@ -175,8 +175,8 @@ template <typename Array, typename NameFn>
     return out;
 }
 
-[[nodiscard]] auto relay_close_info(TcpBridgeCloseReason reason, TcpBridgeCloseComponent component, std::string error) -> TcpBridgeCloseInfo {
-    return TcpBridgeCloseInfo{
+[[nodiscard]] auto relay_close_info(TlsTcpCarrierCloseReason reason, TlsTcpCarrierCloseComponent component, std::string error) -> TlsTcpCarrierCloseInfo {
+    return TlsTcpCarrierCloseInfo{
         .reason = reason,
         .direction = std::nullopt,
         .component = component,
@@ -315,8 +315,8 @@ private:
         return observe_repeated_log(tun_write_error_log_limits_[tun_packet_pump_error_index(error)]);
     }
 
-    void record_closed_session(std::uint64_t session_id, bool authenticated, TcpBridgeCloseInfo close) {
-        if(close.component == TcpBridgeCloseComponent::zero_rtt && close.error.find("server_accept") != std::string::npos) {
+    void record_closed_session(std::uint64_t session_id, bool authenticated, TlsTcpCarrierCloseInfo close) {
+        if(close.component == TlsTcpCarrierCloseComponent::zero_rtt && close.error.find("server_accept") != std::string::npos) {
             ++auth_stats_.server_accept_failed;
         }
         recent_closed_sessions_.push_back(
@@ -353,7 +353,7 @@ private:
     }
 
     [[nodiscard]] auto register_authenticated_carrier(
-        std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session, BridgeSessionRuntimeState& state,
+        std::uint64_t session_id, const std::shared_ptr<TlsTcpCarrierSession>& session, BridgeSessionRuntimeState& state,
         std::optional<ClientInstanceId> client_instance_id, bool send_lease_control
     ) -> CarrierRegistrationResult {
         if(!tun_tunnel_ || !session || state.carrier_registered) {
@@ -408,7 +408,7 @@ private:
                 auto queued = session->enqueue_covert_frame(Direction::server_to_client, FrameType::control, payload);
                 if(!queued) {
                     FPS_LOG_WARNING("tun") << "event=tun_lease_send_failed session_id=" << session_id
-                                           << " error=" << tcp_bridge_enqueue_error_message(queued.error());
+                                           << " error=" << tls_tcp_carrier_enqueue_error_message(queued.error());
                 }
             }
         }
@@ -422,7 +422,7 @@ private:
     }
 
     [[nodiscard]] auto try_handle_pre_registration_control(
-        std::uint64_t session_id, const std::shared_ptr<TcpBridgeSession>& session, BridgeSessionRuntimeState& state, Direction direction,
+        std::uint64_t session_id, const std::shared_ptr<TlsTcpCarrierSession>& session, BridgeSessionRuntimeState& state, Direction direction,
         const DecodedFrame& frame
     ) -> bool {
         if(state.carrier_registered || !server_requires_client_instance_metadata() || frame.frame_type != FrameType::control ||
@@ -832,7 +832,7 @@ private:
                 if(error) {
                     ++self->stats_.sessions_closed;
                     self->record_closed_session(
-                        session_id, false, relay_close_info(TcpBridgeCloseReason::tcp_error, TcpBridgeCloseComponent::tcp, "target_resolve_failed")
+                        session_id, false, relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_resolve_failed")
                     );
                     FPS_LOG_WARNING("relay") << "event=target_resolve_failed session_id=" << session_id
                                              << " target=" << endpoint_to_string(self->config_.target) << " error=" << error.message();
@@ -844,7 +844,8 @@ private:
                         if(connect_error) {
                             ++self->stats_.sessions_closed;
                             self->record_closed_session(
-                                session_id, false, relay_close_info(TcpBridgeCloseReason::tcp_error, TcpBridgeCloseComponent::tcp, "target_connect_failed")
+                                session_id, false,
+                                relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_connect_failed")
                             );
                             FPS_LOG_WARNING("relay") << "event=target_connect_failed session_id=" << session_id
                                                      << " target=" << endpoint_to_string(self->config_.target) << " error=" << connect_error.message();
@@ -860,9 +861,9 @@ private:
 
     void start_bridge(const std::shared_ptr<tcp::socket>& client_socket, const std::shared_ptr<tcp::socket>& origin_socket, std::uint64_t session_id) {
         ++stats_.sessions_active;
-        TcpBridgeSessionHandlers handlers;
+        TlsTcpCarrierSessionHandlers handlers;
         const std::weak_ptr<TcpRelayServer> weak_self = weak_from_this();
-        auto session_slot = std::make_shared<std::weak_ptr<TcpBridgeSession>>();
+        auto session_slot = std::make_shared<std::weak_ptr<TlsTcpCarrierSession>>();
         auto runtime_state = std::make_shared<BridgeSessionRuntimeState>();
         handlers.on_covert_frame = [weak_self, session_slot, runtime_state, session_id](Direction direction, const DecodedFrame& frame) {
             if(const auto self = weak_self.lock()) {
@@ -887,7 +888,7 @@ private:
                 self->tun_tunnel_->handle_covert_frame(session, direction, frame);
             }
         };
-        handlers.on_closed = [weak_self, session_slot, session_id](const TcpBridgeSessionStats& stats) {
+        handlers.on_closed = [weak_self, session_slot, session_id](const TlsTcpCarrierSessionStats& stats) {
             if(const auto self = weak_self.lock()) {
                 if(self->stats_.sessions_active > 0U) {
                     --self->stats_.sessions_active;
@@ -1020,16 +1021,16 @@ private:
             }
             return ByteVector{};
         };
-        handlers.on_shaper_event = [weak_self, session_id](const TcpBridgeShaperEvent& event) {
+        handlers.on_shaper_event = [weak_self, session_id](const TlsTcpCarrierShaperEvent& event) {
             if(const auto self = weak_self.lock()) {
                 switch(event.decision) {
-                case TcpBridgeShaperDecision::queued:
+                case TlsTcpCarrierShaperDecision::queued:
                     ++self->stats_.shaper_queued;
                     break;
-                case TcpBridgeShaperDecision::scheduled:
+                case TlsTcpCarrierShaperDecision::scheduled:
                     ++self->stats_.shaper_scheduled;
                     break;
-                case TcpBridgeShaperDecision::blocked:
+                case TlsTcpCarrierShaperDecision::blocked:
                     ++self->stats_.shaper_blocked;
                     break;
                 }
@@ -1038,9 +1039,9 @@ private:
                                     << " detail=" << ::fps::log::as_json(event);
         };
 
-        std::optional<TcpBridgeZeroRttOptions> zero_rtt_options;
+        std::optional<TlsTcpCarrierZeroRttOptions> zero_rtt_options;
         if(config_.zero_rtt.has_value()) {
-            TcpBridgeZeroRttOptions options;
+            TlsTcpCarrierZeroRttOptions options;
             options.controller_config = config_.zero_rtt->controller_config;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
@@ -1050,7 +1051,7 @@ private:
             zero_rtt_options = std::move(options);
         }
 
-        auto session = TcpBridgeSession::create(
+        auto session = TlsTcpCarrierSession::create(
             std::move(*client_socket), std::move(*origin_socket), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = config_.read_buffer_size,
              .max_write_queue_bytes = config_.max_session_write_queue_bytes,

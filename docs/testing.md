@@ -313,7 +313,7 @@ Unit tests cover:
   implicit sequence, tamper rejection and no-plaintext-metadata smoke.
 - Shaper deterministic plans, CDF validation, ratio budget, burst limit,
   backpressure clear/block, direction isolation and profile exhaustion.
-- `TcpBridgeSession` passthrough, Zero-RTT client-auth/server-accept/classify,
+- `TlsTcpCarrierSession` passthrough, Zero-RTT client-auth/server-accept/classify,
   client late upgrade, race-safe server-accept wait with cover-record fallback,
   fragmented server-accept wait, post-accept carrier passthrough plus classified
   record insertion and unauthenticated enqueue
@@ -383,7 +383,7 @@ and function thresholds through `FPS_COVERAGE_MIN_LINES` and
 `FPS_COVERAGE_MIN_FUNCTIONS`; treat a threshold miss as a quality gate failure
 unless the threshold or exclusion policy is deliberately changed. Expected low
 zones: Linux TUN device open in non-sudo mode, plus operational/error branches
-in `tcp_relay_app.cpp` and `tcp_bridge_session.cpp`.
+in `tcp_relay_app.cpp` and `tls_tcp_carrier_session.cpp`.
 
 Fuzz artifacts live in `cmake-build-fuzz`; seed corpora live in
 `tests/fuzz/corpus`. The quality script copies seeds into the build directory so
