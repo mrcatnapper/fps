@@ -23,16 +23,7 @@ using Nonce32 = std::array<std::byte, kNonceSize>;
 using X25519PrivateKey = std::array<std::byte, kX25519KeySize>;
 using X25519PublicKey = std::array<std::byte, kX25519KeySize>;
 
-enum class CryptoError {
-    invalid_input,
-    random_failed,
-    digest_failed,
-    hkdf_failed,
-    aead_encrypt_failed,
-    aead_decrypt_failed,
-    x25519_failed,
-};
-BOOST_DESCRIBE_ENUM(CryptoError, invalid_input, random_failed, digest_failed, hkdf_failed, aead_encrypt_failed, aead_decrypt_failed, x25519_failed)
+BOOST_DEFINE_ENUM_CLASS(CryptoError, invalid_input, random_failed, digest_failed, hkdf_failed, aead_encrypt_failed, aead_decrypt_failed, x25519_failed)
 
 template <typename T>
 using CryptoResult = Result<T, CryptoError>;

@@ -25,35 +25,12 @@ struct TunTunnelConfig {
     std::size_t max_fragment_reassembly_states = 64;
 };
 
-enum class TunTunnelError {
-    no_carrier_session,
-    session_closed,
-    empty_packet,
-    packet_too_large,
-    codec_error,
-    tls_record_error,
-    write_queue_full,
-    non_ipv4_tun_destination,
-    unassigned_tun_destination,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     TunTunnelError, no_carrier_session, session_closed, empty_packet, packet_too_large, codec_error, tls_record_error, write_queue_full,
     non_ipv4_tun_destination, unassigned_tun_destination
 )
 
-enum class TunTunnelEvent {
-    ignored_non_datagram_frame,
-    ignored_wrong_direction,
-    ignored_malformed_fragment,
-    ignored_out_of_order_fragment,
-    ignored_mismatched_fragment,
-    ignored_oversized_fragment,
-    ignored_reassembly_limit,
-    ignored_non_ipv4_tun_packet,
-    ignored_unassigned_tun_source,
-    ignored_spoofed_tun_source,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     TunTunnelEvent, ignored_non_datagram_frame, ignored_wrong_direction, ignored_malformed_fragment, ignored_out_of_order_fragment, ignored_mismatched_fragment,
     ignored_oversized_fragment, ignored_reassembly_limit, ignored_non_ipv4_tun_packet, ignored_unassigned_tun_source, ignored_spoofed_tun_source
 )

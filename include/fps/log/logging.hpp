@@ -11,16 +11,7 @@
 
 namespace fps::log {
 
-enum class Severity {
-    trace = 0,
-    debug,
-    info,
-    warning,
-    error,
-    fatal,
-    off,
-};
-BOOST_DESCRIBE_ENUM(Severity, trace, debug, info, warning, error, fatal, off)
+BOOST_DEFINE_ENUM_CLASS(Severity, trace, debug, info, warning, error, fatal, off)
 
 struct LoggingConfig {
     Severity level = Severity::info;

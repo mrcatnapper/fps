@@ -14,22 +14,9 @@
 
 namespace fps {
 
-enum class FpsUpgradeState {
-    cover_passthrough,
-    client_auth_sent_wait_accept,
-    server_accept_ready,
-    authenticated,
-    closed,
-};
-BOOST_DESCRIBE_ENUM(FpsUpgradeState, cover_passthrough, client_auth_sent_wait_accept, server_accept_ready, authenticated, closed)
+BOOST_DEFINE_ENUM_CLASS(FpsUpgradeState, cover_passthrough, client_auth_sent_wait_accept, server_accept_ready, authenticated, closed)
 
-enum class FpsUpgradeBuildError {
-    invalid_role,
-    no_channel_binding,
-    zero_rtt_error,
-    tls_record_error,
-};
-BOOST_DESCRIBE_ENUM(FpsUpgradeBuildError, invalid_role, no_channel_binding, zero_rtt_error, tls_record_error)
+BOOST_DEFINE_ENUM_CLASS(FpsUpgradeBuildError, invalid_role, no_channel_binding, zero_rtt_error, tls_record_error)
 
 using FpsUpgradeBuildResult = Result<ByteVector, FpsUpgradeBuildError>;
 

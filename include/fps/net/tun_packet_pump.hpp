@@ -19,15 +19,7 @@ struct TunPacketPumpConfig {
     std::size_t max_write_queue_packets = 64;
 };
 
-enum class TunPacketPumpError {
-    closed,
-    empty_packet,
-    packet_too_large,
-    write_queue_full,
-    read_failed,
-    write_failed,
-};
-BOOST_DESCRIBE_ENUM(TunPacketPumpError, closed, empty_packet, packet_too_large, write_queue_full, read_failed, write_failed)
+BOOST_DEFINE_ENUM_CLASS(TunPacketPumpError, closed, empty_packet, packet_too_large, write_queue_full, read_failed, write_failed)
 
 using TunPacketPumpWriteResult = Result<std::size_t, TunPacketPumpError>;
 

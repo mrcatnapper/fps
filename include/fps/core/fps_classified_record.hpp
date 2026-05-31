@@ -15,38 +15,14 @@
 
 namespace fps {
 
-enum class FpsClassifiedRecordError {
-    invalid_config,
-    invalid_wire,
-    inner_tls_not_supported,
-    oversized_payload,
-    oversized_padding,
-    too_many_frames,
-    sequence_overflow,
-    unsupported_version,
-    invalid_sequence,
-    invalid_frame_type,
-    client_hint_mismatch,
-    encrypt_failed,
-    decrypt_failed,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     FpsClassifiedRecordError, invalid_config, invalid_wire, inner_tls_not_supported, oversized_payload, oversized_padding, too_many_frames, sequence_overflow,
     unsupported_version, invalid_sequence, invalid_frame_type, client_hint_mismatch, encrypt_failed, decrypt_failed
 )
 
-enum class FpsClassifiedRecordClassification {
-    carrier,
-    fps_record,
-    invalid_fps_record,
-};
-BOOST_DESCRIBE_ENUM(FpsClassifiedRecordClassification, carrier, fps_record, invalid_fps_record)
+BOOST_DEFINE_ENUM_CLASS(FpsClassifiedRecordClassification, carrier, fps_record, invalid_fps_record)
 
-enum class FpsClassifiedRecordPipelineEncodeStage {
-    classified_record,
-    tls_record,
-};
-BOOST_DESCRIBE_ENUM(FpsClassifiedRecordPipelineEncodeStage, classified_record, tls_record)
+BOOST_DEFINE_ENUM_CLASS(FpsClassifiedRecordPipelineEncodeStage, classified_record, tls_record)
 
 template <typename T>
 using FpsClassifiedRecordResult = Result<T, FpsClassifiedRecordError>;

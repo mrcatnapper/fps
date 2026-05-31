@@ -20,18 +20,7 @@ enum class FrameType : std::uint8_t {
 };
 BOOST_DESCRIBE_ENUM(FrameType, opaque_datagram, ping, pong, flow_control, close, opaque_datagram_fragment, control)
 
-enum class CodecError {
-    invalid_config,
-    invalid_wire,
-    invalid_frame_type,
-    oversized_payload,
-    oversized_padding,
-    sequence_overflow,
-    replay_or_old_sequence,
-    decrypt_failed,
-    encrypt_failed,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     CodecError, invalid_config, invalid_wire, invalid_frame_type, oversized_payload, oversized_padding, sequence_overflow, replay_or_old_sequence,
     decrypt_failed, encrypt_failed
 )

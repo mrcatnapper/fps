@@ -13,11 +13,7 @@
 
 namespace fps {
 
-enum class CoverSessionEncodeError {
-    codec_error,
-    tls_record_error,
-};
-BOOST_DESCRIBE_ENUM(CoverSessionEncodeError, codec_error, tls_record_error)
+BOOST_DEFINE_ENUM_CLASS(CoverSessionEncodeError, codec_error, tls_record_error)
 
 using CoverSessionBytesResult = Result<ByteVector, CoverSessionEncodeError>;
 

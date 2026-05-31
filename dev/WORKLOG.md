@@ -4,6 +4,33 @@
 
 ## 2026-05-31
 
+### Collapse described enum boilerplate
+
+Goal:
+
+- Reduce duplicated enum declarations by replacing the common
+  `enum class` + `BOOST_DESCRIBE_ENUM` pattern with Boost.Describe definition
+  macros.
+
+Changes:
+
+- Replaced described enum declarations across core, logging and net headers
+  with `BOOST_DEFINE_ENUM_CLASS`.
+- Replaced fixed-underlying enums in `types.hpp` with
+  `BOOST_DEFINE_FIXED_ENUM_CLASS`, preserving `std::uint8_t` underlying types.
+- Kept `FrameType` in explicit `enum class : std::uint8_t` form with
+  `BOOST_DESCRIBE_ENUM` because its wire values start at `1`; Boost's define
+  macros forward enumerator initializers into `BOOST_DESCRIBE_ENUM`, which
+  breaks generated descriptors for explicit-valued entries.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `rg -n "BOOST_DESCRIBE_ENUM|\\benum class\\b|BOOST_DEFINE_FIXED_ENUM_CLASS|BOOST_DEFINE_ENUM_CLASS" include/fps`
+- `git diff --check`
+
 ### Document datagram core and TUN adapter architecture
 
 Goal:

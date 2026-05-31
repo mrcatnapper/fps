@@ -20,15 +20,7 @@ constexpr std::size_t kClientInstanceIdSize = 16;
 constexpr std::size_t kClientInstanceControlPayloadSize = 2U + kClientInstanceIdSize;
 using ClientInstanceId = std::array<std::byte, kClientInstanceIdSize>;
 
-enum class TunLeaseError {
-    invalid_config,
-    invalid_payload,
-    unsupported_version,
-    unsupported_family,
-    pool_exhausted,
-    io_error,
-};
-BOOST_DESCRIBE_ENUM(TunLeaseError, invalid_config, invalid_payload, unsupported_version, unsupported_family, pool_exhausted, io_error)
+BOOST_DEFINE_ENUM_CLASS(TunLeaseError, invalid_config, invalid_payload, unsupported_version, unsupported_family, pool_exhausted, io_error)
 
 template <typename T>
 using TunLeaseResult = Result<T, TunLeaseError>;

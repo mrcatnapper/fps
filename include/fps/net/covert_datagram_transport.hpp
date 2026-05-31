@@ -21,29 +21,11 @@ struct CovertDatagramTransportConfig {
     std::size_t max_fragment_reassembly_states = 64;
 };
 
-enum class CovertDatagramError {
-    no_carrier_session,
-    session_closed,
-    empty_datagram,
-    datagram_too_large,
-    codec_error,
-    tls_record_error,
-    write_queue_full,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     CovertDatagramError, no_carrier_session, session_closed, empty_datagram, datagram_too_large, codec_error, tls_record_error, write_queue_full
 )
 
-enum class CovertDatagramEvent {
-    ignored_non_datagram_frame,
-    ignored_wrong_direction,
-    ignored_malformed_fragment,
-    ignored_out_of_order_fragment,
-    ignored_mismatched_fragment,
-    ignored_oversized_fragment,
-    ignored_reassembly_limit,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     CovertDatagramEvent, ignored_non_datagram_frame, ignored_wrong_direction, ignored_malformed_fragment, ignored_out_of_order_fragment,
     ignored_mismatched_fragment, ignored_oversized_fragment, ignored_reassembly_limit
 )

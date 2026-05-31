@@ -10,20 +10,7 @@
 
 namespace fps {
 
-enum class FpsEnvelopeError {
-    invalid_config,
-    invalid_wire,
-    invalid_frame_type,
-    oversized_inner_tls,
-    oversized_payload,
-    oversized_padding,
-    too_many_frames,
-    sequence_overflow,
-    replay_or_old_sequence,
-    encrypt_failed,
-    decrypt_failed,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     FpsEnvelopeError, invalid_config, invalid_wire, invalid_frame_type, oversized_inner_tls, oversized_payload, oversized_padding, too_many_frames,
     sequence_overflow, replay_or_old_sequence, encrypt_failed, decrypt_failed
 )

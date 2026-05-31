@@ -23,15 +23,7 @@ struct EndpointAddress {
     std::uint16_t port{};
 };
 
-enum class EndpointParseError {
-    empty,
-    missing_host,
-    missing_port,
-    invalid_port,
-    port_out_of_range,
-    unsupported_ipv6_literal,
-};
-BOOST_DESCRIBE_ENUM(EndpointParseError, empty, missing_host, missing_port, invalid_port, port_out_of_range, unsupported_ipv6_literal)
+BOOST_DEFINE_ENUM_CLASS(EndpointParseError, empty, missing_host, missing_port, invalid_port, port_out_of_range, unsupported_ipv6_literal)
 
 using EndpointAddressResult = Result<EndpointAddress, EndpointParseError>;
 
@@ -74,20 +66,7 @@ using TcpRelayConfigResult = Result<TcpRelayConfig, std::string>;
 [[nodiscard]] auto endpoint_parse_error_message(EndpointParseError error) -> std::string_view;
 [[nodiscard]] auto load_tcp_relay_config(std::string_view path, std::string_view target_name, RelayRole role) -> TcpRelayConfigResult;
 
-enum class TcpRelayCliCommand {
-    run,
-    check_config,
-    generate_server_keypair,
-    generate_client_uuid,
-    generate_client_profile,
-    print_config_from_uri,
-    write_config_from_uri,
-    status,
-    lease_list,
-    lease_revoke_client_uuid,
-    lease_prune,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     TcpRelayCliCommand, run, check_config, generate_server_keypair, generate_client_uuid, generate_client_profile, print_config_from_uri, write_config_from_uri,
     status, lease_list, lease_revoke_client_uuid, lease_prune
 )
