@@ -113,8 +113,11 @@ without claiming resistance to advanced timing/size traffic analysis.
   bidirectional transcript plus server-accept replay assumptions.
 - [x] Add first adversarial local tests for no-upgrade passthrough,
   unknown-client, transcript-prefix mismatch and post-auth carrier tamper.
-- Expand negative integration tests into longer tamper/drop/transcript-mismatch
-  and unknown-client storms plus CPU-budget behavior without logging secrets.
+- [x] Expand negative integration tests into unknown-client storms,
+  transcript-mismatch bursts, recovery after failed auth and post-auth tamper
+  checks without logging secrets.
+- Keep active CPU DoS review as a protocol-review item; current tests cover
+  bounded storm regressions, not a formal CPU budget guarantee.
 
 ## Phase 6: Platform And CI
 

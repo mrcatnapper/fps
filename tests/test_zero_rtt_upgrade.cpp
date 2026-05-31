@@ -170,6 +170,45 @@ BOOST_AUTO_TEST_CASE(malformed_candidate_is_invalid_size) {
     BOOST_CHECK(verified.error() == fps::ZeroRttUpgradeError::invalid_size);
 }
 
+BOOST_AUTO_TEST_CASE(candidate_error_storm_does_not_poison_future_valid_upgrade) {
+    const auto client = key_pair(15);
+    const auto server = key_pair(85);
+    const auto wrong_client = key_pair(35);
+    fps::ZeroRttUpgradeEngine client_engine{client_config(client, server)};
+    fps::ZeroRttUpgradeEngine wrong_client_engine{client_config(wrong_client, server)};
+    fps::ZeroRttUpgradeEngine server_engine{server_config(server, {client.public_key})};
+
+    for(std::size_t i = 0; i < 16U; ++i) {
+        const auto malformed = bytes({0x01, 0x02, static_cast<unsigned int>(i)});
+        auto verified = server_engine.verify_client_upgrade(malformed, binding());
+        BOOST_REQUIRE(!verified);
+        BOOST_CHECK(verified.error() == fps::ZeroRttUpgradeError::invalid_size);
+    }
+
+    for(std::uint8_t seed = 2; seed < 10; ++seed) {
+        auto built = client_engine.build_client_upgrade(binding(seed), {}, key_pair(static_cast<std::uint8_t>(120U + seed)));
+        BOOST_REQUIRE(built);
+        auto verified = server_engine.verify_client_upgrade(built.value().wire, binding());
+        BOOST_REQUIRE(!verified);
+        BOOST_CHECK(verified.error() == fps::ZeroRttUpgradeError::precheck_failed);
+    }
+
+    for(std::uint8_t seed = 10; seed < 18; ++seed) {
+        auto built = wrong_client_engine.build_client_upgrade(binding(), {}, key_pair(static_cast<std::uint8_t>(120U + seed)));
+        BOOST_REQUIRE(built);
+        auto verified = server_engine.verify_client_upgrade(built.value().wire, binding());
+        BOOST_REQUIRE(!verified);
+        BOOST_CHECK(verified.error() == fps::ZeroRttUpgradeError::unknown_client_id);
+    }
+
+    auto valid = client_engine.build_client_upgrade(binding(), bytes({0x42}), key_pair(150));
+    BOOST_REQUIRE(valid);
+    auto verified = server_engine.verify_client_upgrade(valid.value().wire, binding());
+    BOOST_REQUIRE(verified);
+    BOOST_CHECK(verified.value().client_public_key == client.public_key);
+    BOOST_CHECK(verified.value().payload == bytes({0x42}));
+}
+
 BOOST_AUTO_TEST_CASE(client_hint_finds_late_allowlist_entry) {
     const auto client = key_pair(17);
     const auto server = key_pair(87);

@@ -4,6 +4,70 @@
 
 ## 2026-05-31
 
+### Expand adversarial Zero-RTT regression coverage
+
+Goal:
+
+- Strengthen the local adversarial signal around transcript-bound Zero-RTT and
+  classified-record carrier behavior before adding more product features.
+
+Changes:
+
+- Added Zero-RTT engine unit coverage for repeated malformed candidates,
+  wrong transcript bindings, unknown clients and recovery to a valid candidate.
+- Added upgrade-controller coverage for repeated non-upgrade Application Data
+  passthrough and client-side fallback while waiting for a server accept record.
+- Expanded the live HTTPS adversarial integration test with direct passthrough
+  candidate pressure, unknown-client storms, recovery with a valid client after
+  failed auth, transcript-prefix mismatch bursts and post-auth carrier tamper.
+- Tightened status assertions so adversarial scenarios continue checking
+  metadata-only status output without UUIDs, keys, ClientID, session keys or raw
+  payload markers.
+- Updated beta/testing/review docs to mark storm-style adversarial regression
+  coverage as implemented while keeping CPU DoS as a protocol-review risk.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/https_zero_rtt_adversarial.py`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=zero_rtt_upgrade,fps_upgrade_controller --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build -R fps_https_zero_rtt_adversarial --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local build/tests passed;
+  - ASan+UBSan local tests passed;
+  - Valgrind unit pass: 0 errors, no leaks;
+  - coverage: `72.57%` total lines, `80.59%` total functions;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_IMAGE=fps:local FPS_DOCKER_SOAK_BUILD=0 FPS_DOCKER_SOAK_DURATION=60 FPS_DOCKER_SOAK_BANDWIDTH=500K FPS_DOCKER_SOAK_LENGTH=512 tools/run_quality_checks.sh --soak-smoke`
+  - main mixed UDP: `60.05s`, `7,325` packets, `0%` loss, about
+    `0.500 Mbit/s`, plus `113` HTTP probes;
+  - server-to-client UDP to both leases: `1,221` packets each, `0%` loss;
+  - spoofed source dropped once and valid post-spoof UDP remained healthy;
+  - carrier restart/recovery passed with `1,221` recovered packets, `0%` loss;
+  - all six services still running after soak;
+  - Docker-level pressure phase sent about `5 Mbit/s`, `0%` loss, and did not
+    observe `write_queue_full`, which remains a diagnostic condition rather
+    than a required soak gate.
+- `git diff --check`
+
+Notes:
+
+- A deliberately over-strong unit assertion around accepting a server accept
+  after arbitrary racing server-to-client cover records was removed from this
+  increment. Current hardening keeps the documented fallback behavior for
+  non-accept records while avoiding a new protocol decision about delayed
+  accept transcript binding.
+
 ### Rename TLS/TCP carrier session boundary
 
 Goal:

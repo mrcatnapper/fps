@@ -56,12 +56,13 @@ Date: 2026-05-29
    `recent_closed` list. UUID generation is now raw-only through
    `fps_client --generate-client-uuid`, which keeps scripts and docs simpler.
 
-8. **Auth and envelope failures now have operator-visible counters.** Status
-   JSON no longer keeps auth under `sessions`; it exposes `auth` and `envelope`
-   groups for candidates, authenticated sessions, precheck/unknown/decrypt
-   misses and envelope encode/decode/tamper counters. A new local adversarial
-   integration test exercises no-upgrade passthrough, unknown clients,
-   transcript-prefix mismatch and post-auth tampering against live daemons.
+8. **Auth and classified-record failures now have operator-visible counters.**
+   Status JSON no longer keeps auth under `sessions`; it exposes `auth` and
+   `classified_record` groups for candidates, authenticated sessions,
+   precheck/unknown/decrypt misses and classified-record encode/decode/tamper
+   counters. The local adversarial integration test now exercises no-upgrade
+   passthrough, unknown-client storms, transcript-prefix mismatch bursts,
+   recovery after failed auth and post-auth tampering against live daemons.
 
 9. **Replay state is now transcript-bound rather than cache-bound.** Active v5
    Zero-RTT has no timestamp or replay-cache fields. Replaying a client-auth
