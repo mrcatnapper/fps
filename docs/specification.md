@@ -23,8 +23,10 @@ unprepared users or classifiers less useful. The protocol and implementation
 documents should still use the short name, FPS, for technical clarity.
 
 Linux is the active target platform for both client and server. Android remains
-future work through `VpnService`; the current code separates reusable protocol
-core from Linux TUN and `ip` runtime boundaries.
+future work through `VpnService`; the current build separates protocol core,
+carrier/datagram core, TUN adapter and Linux runtime targets so future adapters
+can reuse authenticated carriers without inheriting Linux TUN or `ip`
+orchestration.
 
 ## 2. Architecture Baseline
 

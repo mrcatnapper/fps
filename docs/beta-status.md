@@ -31,7 +31,8 @@ deliberately deferred until the private release policy is settled.
 - The carrier/data path is split into a reusable `CovertDatagramTransport` and
   the current `TunTunnelAdapter`. TUN is the first and most important product
   adapter for VPN service, but the core no longer assumes that every covert
-  payload is an IP packet.
+  payload is an IP packet. Build targets now reflect that split: protocol core,
+  carrier/datagram core, TUN adapter and Linux runtime can be linked separately.
 - Docker is the primary Linux runtime path. The base image contains FPS binaries,
   `fps_carrier`, route/debug tooling and the operator entrypoint, but no embedded
   SOCKS/HTTP proxy daemon.

@@ -71,6 +71,7 @@ public:
 
 private:
     struct CarrierEntry {
+        CarrierId id{kNoCarrierId};
         std::weak_ptr<TcpBridgeSession> session;
         std::optional<std::uint32_t> assigned_client_ipv4;
         std::optional<ClientInstanceId> client_instance_id;
@@ -86,10 +87,13 @@ private:
     [[nodiscard]] auto handle_tun_packet_round_robin(std::span<const std::byte> packet) -> TunTunnelResult;
     [[nodiscard]] auto handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> TunTunnelResult;
     void prune_expired_carriers();
+    [[nodiscard]] auto allocate_carrier_id() -> CarrierId;
     [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TcpBridgeSession>& session) -> CarrierEntry*;
     [[nodiscard]] auto find_carrier_entry(const std::shared_ptr<TcpBridgeSession>& session) const -> const CarrierEntry*;
-    [[nodiscard]] auto should_accept_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> packet) const -> bool;
-    void deliver_inbound_packet(const std::shared_ptr<TcpBridgeSession>& session, ByteVector packet);
+    [[nodiscard]] auto find_carrier_entry(CarrierId carrier_id) -> CarrierEntry*;
+    [[nodiscard]] auto find_carrier_entry(CarrierId carrier_id) const -> const CarrierEntry*;
+    [[nodiscard]] auto should_accept_inbound_packet(CarrierId carrier_id, std::span<const std::byte> packet) const -> bool;
+    void deliver_inbound_packet(CarrierId carrier_id, ByteVector packet);
     [[nodiscard]] static auto map_transport_error(CovertDatagramError error) -> TunTunnelError;
     [[nodiscard]] static auto map_transport_event(CovertDatagramEvent event) -> TunTunnelEvent;
     void emit_event(TunTunnelEvent event) const;
@@ -99,6 +103,7 @@ private:
     CovertDatagramTransport transport_;
     std::vector<CarrierEntry> carrier_sessions_;
     std::size_t next_carrier_index_ = 0;
+    CarrierId next_carrier_id_ = 1;
 };
 
 } // namespace fps::net

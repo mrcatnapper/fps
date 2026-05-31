@@ -44,7 +44,22 @@ find_package(Boost 1.83 REQUIRED COMPONENTS
 find_package(OpenSSL REQUIRED)
 find_package(Python3 COMPONENTS Interpreter)
 
-add_library(fps_core
+function(fps_configure_library target_name)
+  target_include_directories(${target_name}
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:include>)
+  target_compile_features(${target_name} PUBLIC cxx_std_20)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(${target_name} PRIVATE
+      -Wall
+      -Wextra
+      -Wpedantic
+      -Wconversion)
+  endif()
+endfunction()
+
+add_library(fps_protocol_core
   src/core/cover_session_pipeline.cpp
   src/core/covert_codec.cpp
   src/core/crypto.cpp
@@ -57,43 +72,51 @@ add_library(fps_core
   src/core/tls_record_layer.cpp
   src/core/tls_record_parser.cpp
   src/core/zero_rtt_upgrade.cpp
-  src/log/logging.cpp
-  src/net/covert_datagram_transport.cpp
-  src/net/tcp_bridge_session.cpp
-  src/net/tcp_bridge_session_io.cpp
-  src/net/tun_lease.cpp
-  src/net/tun_runtime.cpp
-  src/net/tun_tunnel_adapter.cpp
-  src/net/tun_packet_pump.cpp)
+  src/log/logging.cpp)
 
-target_include_directories(fps_core
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
+fps_configure_library(fps_protocol_core)
 
-target_link_libraries(fps_core
+target_link_libraries(fps_protocol_core
   PUBLIC
     Boost::boost
-    Boost::system
   PRIVATE
-    Boost::filesystem
-    Boost::json
     Boost::log
     Boost::log_setup
     Boost::thread
     OpenSSL::Crypto)
 
-target_compile_definitions(fps_core PUBLIC BOOST_LOG_DYN_LINK)
+target_compile_definitions(fps_protocol_core PUBLIC BOOST_LOG_DYN_LINK)
 
-target_compile_features(fps_core PUBLIC cxx_std_20)
+add_library(fps_carrier_core
+  src/net/covert_datagram_transport.cpp
+  src/net/tcp_bridge_carrier.cpp
+  src/net/tcp_bridge_session.cpp
+  src/net/tcp_bridge_session_io.cpp)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(fps_core PRIVATE
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wconversion)
-endif()
+fps_configure_library(fps_carrier_core)
+
+target_link_libraries(fps_carrier_core
+  PUBLIC
+    fps_protocol_core
+    Boost::system)
+
+add_library(fps_tun_adapter
+  src/net/tun_lease.cpp
+  src/net/tun_runtime.cpp
+  src/net/tun_tunnel_adapter.cpp
+  src/net/tun_packet_pump.cpp)
+
+fps_configure_library(fps_tun_adapter)
+
+target_link_libraries(fps_tun_adapter
+  PUBLIC
+    fps_carrier_core
+  PRIVATE
+    Boost::filesystem
+    Boost::json)
+
+add_library(fps_core INTERFACE)
+target_link_libraries(fps_core INTERFACE fps_protocol_core fps_carrier_core fps_tun_adapter)
 
 if(FPS_BUILD_FUZZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -102,7 +125,7 @@ if(FPS_BUILD_FUZZERS)
 
   function(fps_add_fuzzer target_name source_file)
     add_executable(${target_name} ${source_file})
-    target_link_libraries(${target_name} PRIVATE fps_core)
+    target_link_libraries(${target_name} PRIVATE ${ARGN})
     target_compile_options(${target_name} PRIVATE
       -Wall
       -Wextra
@@ -112,11 +135,11 @@ if(FPS_BUILD_FUZZERS)
       -fsanitize=fuzzer,address,undefined)
   endfunction()
 
-  fps_add_fuzzer(fps_fuzz_tls_records tests/fuzz/fuzz_tls_records.cpp)
-  fps_add_fuzzer(fps_fuzz_covert_codec tests/fuzz/fuzz_covert_codec.cpp)
-  fps_add_fuzzer(fps_fuzz_envelope tests/fuzz/fuzz_envelope.cpp)
-  fps_add_fuzzer(fps_fuzz_zero_rtt tests/fuzz/fuzz_zero_rtt.cpp)
-  fps_add_fuzzer(fps_fuzz_tun_frames tests/fuzz/fuzz_tun_frames.cpp)
+  fps_add_fuzzer(fps_fuzz_tls_records tests/fuzz/fuzz_tls_records.cpp fps_protocol_core)
+  fps_add_fuzzer(fps_fuzz_covert_codec tests/fuzz/fuzz_covert_codec.cpp fps_protocol_core)
+  fps_add_fuzzer(fps_fuzz_envelope tests/fuzz/fuzz_envelope.cpp fps_protocol_core)
+  fps_add_fuzzer(fps_fuzz_zero_rtt tests/fuzz/fuzz_zero_rtt.cpp fps_protocol_core)
+  fps_add_fuzzer(fps_fuzz_tun_frames tests/fuzz/fuzz_tun_frames.cpp fps_tun_adapter)
 endif()
 
 add_library(fps_linux_runtime
@@ -134,7 +157,7 @@ target_include_directories(fps_linux_runtime
 
 target_link_libraries(fps_linux_runtime
   PUBLIC
-    fps_core
+    fps_tun_adapter
   PRIVATE
     Boost::filesystem
     Boost::json

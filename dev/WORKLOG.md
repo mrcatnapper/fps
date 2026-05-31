@@ -4,6 +4,41 @@
 
 ## 2026-05-31
 
+### Split carrier abstraction and build targets
+
+Goal:
+
+- Continue the FPS core/TUN adapter refactor by removing the concrete
+  `TcpBridgeSession` dependency from `CovertDatagramTransport`.
+- Reflect the architecture split in CMake targets without changing wire format,
+  config schema or Docker/runtime behavior.
+
+Changes:
+
+- Introduced `CarrierId`, `CovertCarrier` and `CovertCarrierFrame` as the
+  generic authenticated carrier contract for opaque datagram transport.
+- Converted `CovertDatagramTransport` to use carrier ids and enqueue callbacks;
+  direct transport tests now use fake carriers without TCP sockets.
+- Added a thin `make_tcp_bridge_carrier(...)` adapter for `TcpBridgeSession`.
+- Updated `TunTunnelAdapter` to keep lease/client-instance metadata keyed by
+  carrier id while preserving the relay-facing session convenience API.
+- Split CMake libraries into `fps_protocol_core`, `fps_carrier_core`,
+  `fps_tun_adapter`, aggregate `fps_core` and `fps_linux_runtime`.
+- Updated architecture docs/review/roadmap for the target split.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R fps_unit_tests --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake -S . -B cmake-build-fuzz-smoke -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++-20 -DFPS_BUILD_TESTS=OFF -DFPS_BUILD_FUZZERS=ON`
+- `cmake --build cmake-build-fuzz-smoke -j 2 --target fps_fuzz_tls_records fps_fuzz_tun_frames`
+- `git diff --check`
+
 ### Collapse described enum boilerplate
 
 Goal:

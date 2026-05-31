@@ -18,10 +18,6 @@ constexpr std::size_t kDatagramFragmentHeaderSize = sizeof(std::uint32_t) + size
 
 [[nodiscard]] auto fits_u32(std::size_t value) noexcept -> bool { return value <= std::numeric_limits<std::uint32_t>::max(); }
 
-[[nodiscard]] auto same_session(const std::weak_ptr<TcpBridgeSession>& lhs, const std::shared_ptr<TcpBridgeSession>& rhs) noexcept -> bool {
-    return lhs.lock() == rhs;
-}
-
 } // namespace
 
 CovertDatagramTransport::CovertDatagramTransport(CovertDatagramTransportConfig config, CovertDatagramHandlers handlers)
@@ -40,49 +36,50 @@ CovertDatagramTransport::CovertDatagramTransport(CovertDatagramTransportConfig c
     }
 }
 
-auto CovertDatagramTransport::add_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) -> bool {
-    if(!session) {
+auto CovertDatagramTransport::add_carrier(CovertCarrier carrier) -> bool {
+    if(carrier.id == kNoCarrierId || !carrier.enqueue_frames) {
         return false;
     }
 
     prune_expired_carriers();
-    for(const auto& carrier : carrier_sessions_) {
-        if(carrier.session.lock() == session) {
+    for(const auto& existing : carrier_sessions_) {
+        if(existing.carrier.id == carrier.id) {
             return false;
         }
     }
 
-    carrier_sessions_.push_back(CarrierEntry{.session = session});
+    carrier_sessions_.push_back(CarrierEntry{.carrier = std::move(carrier)});
     return true;
 }
 
-auto CovertDatagramTransport::is_carrier_session(const std::shared_ptr<TcpBridgeSession>& session) const noexcept -> bool {
-    if(!session) {
+auto CovertDatagramTransport::is_carrier(CarrierId carrier_id) const noexcept -> bool {
+    if(carrier_id == kNoCarrierId) {
         return false;
     }
     for(const auto& carrier : carrier_sessions_) {
-        if(carrier.session.lock() == session) {
+        if(carrier.carrier.id == carrier_id && (!carrier.carrier.is_alive || carrier.carrier.is_alive())) {
             return true;
         }
     }
     return false;
 }
 
-auto CovertDatagramTransport::remove_carrier_session_if(const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool {
-    if(!session) {
+auto CovertDatagramTransport::remove_carrier_if(CarrierId carrier_id) noexcept -> bool {
+    if(carrier_id == kNoCarrierId) {
         return false;
     }
 
     auto removed = false;
+    std::vector<CarrierId> expired_ids;
     carrier_sessions_.erase(
         std::remove_if(
             carrier_sessions_.begin(), carrier_sessions_.end(),
             [&](const CarrierEntry& carrier) {
-                const auto locked = carrier.session.lock();
-                if(!locked) {
+                if(carrier.carrier.is_alive && !carrier.carrier.is_alive()) {
+                    expired_ids.push_back(carrier.carrier.id);
                     return true;
                 }
-                if(locked == session) {
+                if(carrier.carrier.id == carrier_id) {
                     removed = true;
                     return true;
                 }
@@ -97,7 +94,10 @@ auto CovertDatagramTransport::remove_carrier_session_if(const std::shared_ptr<Tc
         next_carrier_index_ %= carrier_sessions_.size();
     }
     if(removed) {
-        remove_fragment_reassemblies_for_session(session);
+        remove_fragment_reassemblies_for_carrier(carrier_id);
+    }
+    for(const auto id : expired_ids) {
+        remove_fragment_reassemblies_for_carrier(id);
     }
     return removed;
 }
@@ -110,7 +110,7 @@ void CovertDatagramTransport::clear_carrier_sessions() noexcept {
 
 auto CovertDatagramTransport::carrier_count() const noexcept -> std::size_t {
     return static_cast<std::size_t>(std::count_if(carrier_sessions_.begin(), carrier_sessions_.end(), [](const CarrierEntry& carrier) {
-        return !carrier.session.expired();
+        return !carrier.carrier.is_alive || carrier.carrier.is_alive();
     }));
 }
 
@@ -132,8 +132,8 @@ auto CovertDatagramTransport::try_write(std::span<const std::byte> datagram) -> 
     return attempt.result;
 }
 
-auto CovertDatagramTransport::try_write_to(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram) -> CovertDatagramResult {
-    if(!session || !is_carrier_session(session)) {
+auto CovertDatagramTransport::try_write_to(CarrierId carrier_id, std::span<const std::byte> datagram) -> CovertDatagramResult {
+    if(carrier_id == kNoCarrierId) {
         return CovertDatagramResult::failure(CovertDatagramError::no_carrier_session);
     }
     if(datagram.empty()) {
@@ -142,9 +142,16 @@ auto CovertDatagramTransport::try_write_to(const std::shared_ptr<TcpBridgeSessio
     if(datagram.size() > config_.max_datagram_size) {
         return CovertDatagramResult::failure(CovertDatagramError::datagram_too_large);
     }
-    auto result = enqueue_datagram_on_session(session, datagram);
+    auto carrier_it =
+        std::find_if(carrier_sessions_.begin(), carrier_sessions_.end(), [&](const CarrierEntry& entry) { return entry.carrier.id == carrier_id; });
+    if(carrier_it == carrier_sessions_.end() || (carrier_it->carrier.is_alive && !carrier_it->carrier.is_alive())) {
+        (void)remove_carrier_if(carrier_id);
+        return CovertDatagramResult::failure(CovertDatagramError::no_carrier_session);
+    }
+
+    auto result = enqueue_datagram_on_carrier(carrier_it->carrier, datagram);
     if(!result && result.error() == CovertDatagramError::session_closed) {
-        (void)remove_carrier_session_if(session);
+        (void)remove_carrier_if(carrier_id);
     }
     return result;
 }
@@ -159,13 +166,13 @@ auto CovertDatagramTransport::try_enqueue_on_carriers(std::span<const std::byte>
         next_carrier_index_ %= carrier_sessions_.size();
         const auto index = next_carrier_index_;
         auto& carrier = carrier_sessions_[index];
-        auto session = carrier.session.lock();
-        if(!session) {
+        if(carrier.carrier.is_alive && !carrier.carrier.is_alive()) {
+            remove_fragment_reassemblies_for_carrier(carrier.carrier.id);
             carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
         }
 
-        auto queued = enqueue_datagram_on_session(session, datagram);
+        auto queued = enqueue_datagram_on_carrier(carrier.carrier, datagram);
         if(queued) {
             next_carrier_index_ = carrier_sessions_.empty() ? 0 : (index + 1U) % carrier_sessions_.size();
             attempt.result = queued;
@@ -173,6 +180,7 @@ auto CovertDatagramTransport::try_enqueue_on_carriers(std::span<const std::byte>
         }
 
         if(queued.error() == CovertDatagramError::session_closed) {
+            remove_fragment_reassemblies_for_carrier(carrier.carrier.id);
             carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
         }
@@ -193,10 +201,10 @@ auto CovertDatagramTransport::try_enqueue_on_carriers(std::span<const std::byte>
     return attempt;
 }
 
-void CovertDatagramTransport::handle_covert_frame(Direction direction, const DecodedFrame& frame) { handle_covert_frame(nullptr, direction, frame); }
+void CovertDatagramTransport::handle_covert_frame(Direction direction, const DecodedFrame& frame) { handle_covert_frame(kNoCarrierId, direction, frame); }
 
-void CovertDatagramTransport::handle_covert_frame(const std::shared_ptr<TcpBridgeSession>& session, Direction direction, const DecodedFrame& frame) {
-    if(session && !is_carrier_session(session)) {
+void CovertDatagramTransport::handle_covert_frame(CarrierId carrier_id, Direction direction, const DecodedFrame& frame) {
+    if(carrier_id != kNoCarrierId && !is_carrier(carrier_id)) {
         return;
     }
     if(frame.frame_type != FrameType::opaque_datagram && frame.frame_type != FrameType::opaque_datagram_fragment) {
@@ -208,10 +216,10 @@ void CovertDatagramTransport::handle_covert_frame(const std::shared_ptr<TcpBridg
         return;
     }
     if(frame.frame_type == FrameType::opaque_datagram_fragment) {
-        handle_datagram_fragment(session, frame.payload);
+        handle_datagram_fragment(carrier_id, frame.payload);
         return;
     }
-    deliver_inbound_datagram(session, frame.payload);
+    deliver_inbound_datagram(carrier_id, frame.payload);
 }
 
 auto CovertDatagramTransport::outbound_direction() const noexcept -> Direction {
@@ -222,24 +230,22 @@ auto CovertDatagramTransport::inbound_direction() const noexcept -> Direction { 
 
 auto CovertDatagramTransport::max_datagram_size() const noexcept -> std::size_t { return config_.max_datagram_size; }
 
-auto CovertDatagramTransport::enqueue_datagram_on_session(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram)
-    -> CovertDatagramResult {
+auto CovertDatagramTransport::enqueue_datagram_on_carrier(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult {
     if(datagram.size() > config_.max_frame_payload_size) {
         if(!config_.allow_fragmentation || !fits_u32(datagram.size())) {
             return CovertDatagramResult::failure(CovertDatagramError::datagram_too_large);
         }
-        return enqueue_fragmented_datagram(session, datagram);
+        return enqueue_fragmented_datagram(carrier, datagram);
     }
 
-    auto queued = session->enqueue_covert_frame(outbound_direction(), FrameType::opaque_datagram, datagram);
-    if(!queued) {
-        return CovertDatagramResult::failure(map_enqueue_error(queued.error()));
-    }
-    return CovertDatagramResult::success(queued.value());
+    CovertCarrierFrame frame{
+        .frame_type = FrameType::opaque_datagram,
+        .payload = datagram,
+    };
+    return carrier.enqueue_frames(outbound_direction(), std::span<const CovertCarrierFrame>{&frame, 1U});
 }
 
-auto CovertDatagramTransport::enqueue_fragmented_datagram(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> datagram)
-    -> CovertDatagramResult {
+auto CovertDatagramTransport::enqueue_fragmented_datagram(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult {
     const auto chunk_size = config_.max_frame_payload_size - kDatagramFragmentHeaderSize;
     const auto fragment_count = (datagram.size() + chunk_size - 1U) / chunk_size;
     if(!fits_u16(fragment_count) || !fits_u32(datagram.size())) {
@@ -266,30 +272,38 @@ auto CovertDatagramTransport::enqueue_fragmented_datagram(const std::shared_ptr<
         offset += chunk_bytes;
     }
 
-    std::vector<TcpBridgeCovertFrame> frames;
+    std::vector<CovertCarrierFrame> frames;
     frames.reserve(payloads.size());
     for(const auto& payload : payloads) {
         frames.push_back(
-            TcpBridgeCovertFrame{
+            CovertCarrierFrame{
                 .frame_type = FrameType::opaque_datagram_fragment,
                 .payload = payload,
             }
         );
     }
 
-    auto queued = session->enqueue_covert_frames(outbound_direction(), frames);
-    if(!queued) {
-        return CovertDatagramResult::failure(map_enqueue_error(queued.error()));
-    }
-    return CovertDatagramResult::success(queued.value());
+    return carrier.enqueue_frames(outbound_direction(), frames);
 }
 
 void CovertDatagramTransport::prune_expired_carriers() {
+    std::vector<CarrierId> expired_ids;
     carrier_sessions_.erase(
-        std::remove_if(carrier_sessions_.begin(), carrier_sessions_.end(), [](const CarrierEntry& carrier) { return carrier.session.expired(); }),
+        std::remove_if(
+            carrier_sessions_.begin(), carrier_sessions_.end(),
+            [&](const CarrierEntry& carrier) {
+                const auto expired = carrier.carrier.is_alive && !carrier.carrier.is_alive();
+                if(expired) {
+                    expired_ids.push_back(carrier.carrier.id);
+                }
+                return expired;
+            }
+        ),
         carrier_sessions_.end()
     );
-    prune_expired_fragment_reassemblies();
+    for(const auto id : expired_ids) {
+        remove_fragment_reassemblies_for_carrier(id);
+    }
     if(carrier_sessions_.empty()) {
         next_carrier_index_ = 0;
     } else {
@@ -297,13 +311,13 @@ void CovertDatagramTransport::prune_expired_carriers() {
     }
 }
 
-void CovertDatagramTransport::deliver_inbound_datagram(const std::shared_ptr<TcpBridgeSession>& session, ByteVector datagram) {
+void CovertDatagramTransport::deliver_inbound_datagram(CarrierId carrier_id, ByteVector datagram) {
     if(handlers_.on_datagram) {
-        handlers_.on_datagram(session, std::move(datagram));
+        handlers_.on_datagram(carrier_id, std::move(datagram));
     }
 }
 
-void CovertDatagramTransport::handle_datagram_fragment(const std::shared_ptr<TcpBridgeSession>& session, std::span<const std::byte> payload) {
+void CovertDatagramTransport::handle_datagram_fragment(CarrierId carrier_id, std::span<const std::byte> payload) {
     if(payload.size() <= kDatagramFragmentHeaderSize) {
         emit_event(CovertDatagramEvent::ignored_malformed_fragment);
         return;
@@ -316,13 +330,12 @@ void CovertDatagramTransport::handle_datagram_fragment(const std::shared_ptr<Tcp
     const auto chunk = payload.subspan(kDatagramFragmentHeaderSize);
 
     if(fragment_count == 0U || fragment_index >= fragment_count || total_size == 0U || total_size > config_.max_datagram_size) {
-        reset_fragment_reassembly(session, packet_id);
+        reset_fragment_reassembly(carrier_id, packet_id);
         emit_event(total_size > config_.max_datagram_size ? CovertDatagramEvent::ignored_oversized_fragment : CovertDatagramEvent::ignored_malformed_fragment);
         return;
     }
 
-    prune_expired_fragment_reassemblies();
-    auto state_it = find_fragment_reassembly(session, packet_id);
+    auto state_it = find_fragment_reassembly(carrier_id, packet_id);
     if(state_it == fragment_reassemblies_.end()) {
         if(fragment_index != 0U) {
             emit_event(CovertDatagramEvent::ignored_out_of_order_fragment);
@@ -339,8 +352,7 @@ void CovertDatagramTransport::handle_datagram_fragment(const std::shared_ptr<Tcp
                 .fragment_count = fragment_count,
                 .total_size = total_size,
                 .packet = {},
-                .has_source_session = static_cast<bool>(session),
-                .source_session = session,
+                .source_carrier_id = carrier_id,
             }
         );
         state_it = std::prev(fragment_reassemblies_.end());
@@ -348,7 +360,7 @@ void CovertDatagramTransport::handle_datagram_fragment(const std::shared_ptr<Tcp
     }
 
     auto& state = *state_it;
-    if(state.fragment_count != fragment_count || state.total_size != total_size || !same_fragment_source(state, session)) {
+    if(state.fragment_count != fragment_count || state.total_size != total_size || state.source_carrier_id != carrier_id) {
         fragment_reassemblies_.erase(state_it);
         emit_event(CovertDatagramEvent::ignored_mismatched_fragment);
         return;
@@ -378,62 +390,30 @@ void CovertDatagramTransport::handle_datagram_fragment(const std::shared_ptr<Tcp
 
     auto packet = std::move(state.packet);
     fragment_reassemblies_.erase(state_it);
-    deliver_inbound_datagram(session, std::move(packet));
+    deliver_inbound_datagram(carrier_id, std::move(packet));
 }
 
-auto CovertDatagramTransport::same_fragment_source(const FragmentReassemblyState& state, const std::shared_ptr<TcpBridgeSession>& session) noexcept -> bool {
-    if(!state.has_source_session) {
-        return !session;
-    }
-    return same_session(state.source_session, session);
-}
-
-auto CovertDatagramTransport::fragment_source_expired(const FragmentReassemblyState& state) noexcept -> bool {
-    return state.has_source_session && state.source_session.expired();
-}
-
-auto CovertDatagramTransport::find_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id)
-    -> FragmentReassemblyIterator {
+auto CovertDatagramTransport::find_fragment_reassembly(CarrierId carrier_id, std::uint32_t packet_id) -> FragmentReassemblyIterator {
     return std::find_if(fragment_reassemblies_.begin(), fragment_reassemblies_.end(), [&](const FragmentReassemblyState& state) {
-        return state.packet_id == packet_id && same_fragment_source(state, session);
+        return state.packet_id == packet_id && state.source_carrier_id == carrier_id;
     });
 }
 
-void CovertDatagramTransport::reset_fragment_reassembly(const std::shared_ptr<TcpBridgeSession>& session, std::uint32_t packet_id) {
-    auto state = find_fragment_reassembly(session, packet_id);
+void CovertDatagramTransport::reset_fragment_reassembly(CarrierId carrier_id, std::uint32_t packet_id) {
+    auto state = find_fragment_reassembly(carrier_id, packet_id);
     if(state != fragment_reassemblies_.end()) {
         fragment_reassemblies_.erase(state);
     }
 }
 
-void CovertDatagramTransport::remove_fragment_reassemblies_for_session(const std::shared_ptr<TcpBridgeSession>& session) {
+void CovertDatagramTransport::remove_fragment_reassemblies_for_carrier(CarrierId carrier_id) {
     fragment_reassemblies_.erase(
         std::remove_if(
             fragment_reassemblies_.begin(), fragment_reassemblies_.end(),
-            [&](const FragmentReassemblyState& state) { return same_fragment_source(state, session); }
+            [&](const FragmentReassemblyState& state) { return state.source_carrier_id == carrier_id; }
         ),
         fragment_reassemblies_.end()
     );
-}
-
-void CovertDatagramTransport::prune_expired_fragment_reassemblies() {
-    fragment_reassemblies_.erase(
-        std::remove_if(
-            fragment_reassemblies_.begin(), fragment_reassemblies_.end(), [](const FragmentReassemblyState& state) { return fragment_source_expired(state); }
-        ),
-        fragment_reassemblies_.end()
-    );
-}
-
-auto CovertDatagramTransport::map_enqueue_error(TcpBridgeEnqueueError error) -> CovertDatagramError {
-    const auto name = enum_name(error);
-    if(name.has_value()) {
-        const auto mapped = enum_from_name<CovertDatagramError>(*name);
-        if(mapped.has_value()) {
-            return *mapped;
-        }
-    }
-    return CovertDatagramError::session_closed;
 }
 
 void CovertDatagramTransport::emit_event(CovertDatagramEvent event) const {
