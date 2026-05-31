@@ -35,7 +35,7 @@ BOOST_AUTO_TEST_CASE(encodes_frame_as_tls_record_and_peer_extracts_it) {
     auto server = server_pipeline();
     const auto payload = bytes({0xde, 0xad, 0xbe, 0xef});
 
-    auto encoded = client.encode_covert_frame(fps::FrameType::tun_packet, payload, 5, 0x42);
+    auto encoded = client.encode_covert_frame(fps::FrameType::opaque_datagram, payload, 5, 0x42);
     BOOST_REQUIRE(encoded);
 
     const auto result = server.process_inbound_tls(encoded.value());
@@ -46,7 +46,7 @@ BOOST_AUTO_TEST_CASE(encodes_frame_as_tls_record_and_peer_extracts_it) {
     BOOST_TEST(result.forward_bytes.empty());
     BOOST_REQUIRE_EQUAL(result.covert_frames.size(), 1U);
     BOOST_TEST(result.covert_frames[0].sequence == 0U);
-    BOOST_CHECK(result.covert_frames[0].frame_type == fps::FrameType::tun_packet);
+    BOOST_CHECK(result.covert_frames[0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_TEST(result.covert_frames[0].flags == 0x42U);
     BOOST_TEST(result.covert_frames[0].padding_size == 5U);
     BOOST_CHECK(result.covert_frames[0].payload == payload);
@@ -162,7 +162,7 @@ BOOST_AUTO_TEST_CASE(encode_reports_codec_failure_for_oversized_payload) {
     fps::CoverSessionPipeline pipeline{fps::CovertCodec{config}};
     const auto payload = payload_of_size(5);
 
-    auto encoded = pipeline.encode_covert_frame(fps::FrameType::tun_packet, payload);
+    auto encoded = pipeline.encode_covert_frame(fps::FrameType::opaque_datagram, payload);
 
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error() == fps::CoverSessionEncodeError::codec_error);

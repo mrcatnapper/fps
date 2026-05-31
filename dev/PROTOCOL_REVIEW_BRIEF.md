@@ -23,17 +23,18 @@ Primary references:
 - Testing workflow: `docs/testing.md`
 - Beta risk register: `docs/beta-status.md`
 - Core tests: `tests/test_zero_rtt.cpp`, `tests/test_fps_envelope.cpp`,
-  `tests/test_session_manager.cpp`
+  `tests/test_covert_datagram_transport.cpp`, `tests/test_tun_tunnel_adapter.cpp`
 - Fuzz targets: `tests/fuzz/`
 
 ## Threat Model Summary
 
-FPS is a Linux-first hidden L3 TUN tunnel carried inside live TLS cover
-sessions. On the `fps_client <-> fps_server` link, an observer should see a TCP
-stream of TLS Application Data records. FPS does not terminate the real
+FPS is a Linux-first covert datagram transport carried inside live TLS cover
+sessions, with the current product adapter exposing those datagrams as an L3
+TUN tunnel. On the `fps_client <-> fps_server` link, an observer should see a
+TCP stream of TLS Application Data records. FPS does not terminate the real
 browser/origin TLS session; ordinary carrier TLS records remain byte-for-byte
 visible after upgrade while FPS inserts separate classified records for
-TUN/control data.
+datagram/control data.
 
 The current beta target is controlled operator deployment, not resistance to a
 state-level traffic-analysis adversary. Advanced timing/size shaping remains
@@ -83,7 +84,7 @@ After authentication, ordinary carrier TLS records continue to be forwarded
 byte-for-byte. FPS inserts separate TLS Application Data records whose payload
 is an AEAD-encrypted classified FPS record. Encrypted plaintext includes:
 
-- covert TUN/control frames;
+- covert datagram/control frames;
 - padding size and frame metadata.
 
 Sequence numbers are implicit per direction and are used for AEAD nonce
@@ -155,7 +156,7 @@ Reviewer questions:
 - One 30-minute two-host Docker/TUN soak over a real published `:443` carrier
   path on 2026-05-17.
 - Bounded libFuzzer smoke for TLS record parsing, covert frames, FPS envelope
-  decode, Zero-RTT candidates and TUN/control parsing.
+  decode, Zero-RTT candidates and TUN/control payload parsing.
 
 ## Known Non-Blocking Beta Risks
 

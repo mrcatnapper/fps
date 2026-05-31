@@ -11,24 +11,11 @@
 
 namespace fps {
 
-enum class Direction : std::uint8_t {
-    client_to_server,
-    server_to_client,
-};
-BOOST_DESCRIBE_ENUM(Direction, client_to_server, server_to_client)
+BOOST_DEFINE_FIXED_ENUM_CLASS(Direction, std::uint8_t, client_to_server, server_to_client)
 
-enum class RelayRole : std::uint8_t {
-    client,
-    server,
-};
-BOOST_DESCRIBE_ENUM(RelayRole, client, server)
+BOOST_DEFINE_FIXED_ENUM_CLASS(RelayRole, std::uint8_t, client, server)
 
-enum class Priority : std::uint8_t {
-    bulk,
-    normal,
-    control,
-};
-BOOST_DESCRIBE_ENUM(Priority, bulk, normal, control)
+BOOST_DEFINE_FIXED_ENUM_CLASS(Priority, std::uint8_t, bulk, normal, control)
 
 using ByteVector = std::vector<std::byte>;
 

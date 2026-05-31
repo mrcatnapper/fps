@@ -44,12 +44,7 @@ struct TcpBridgeSessionConfig {
     std::optional<TcpBridgeZeroRttOptions> zero_rtt;
 };
 
-enum class TcpBridgeShaperDecision {
-    queued,
-    scheduled,
-    blocked,
-};
-BOOST_DESCRIBE_ENUM(TcpBridgeShaperDecision, queued, scheduled, blocked)
+BOOST_DEFINE_ENUM_CLASS(TcpBridgeShaperDecision, queued, scheduled, blocked)
 
 struct TcpBridgeShaperEvent {
     Direction direction{};
@@ -69,54 +64,25 @@ struct TcpBridgeDirectionStats {
     std::uint64_t covert_frame_bytes_in = 0;
     std::uint64_t covert_frames_out = 0;
     std::uint64_t covert_frame_bytes_out = 0;
-    std::uint64_t tun_frames_in = 0;
-    std::uint64_t tun_frame_bytes_in = 0;
-    std::uint64_t tun_frames_out = 0;
-    std::uint64_t tun_frame_bytes_out = 0;
+    std::uint64_t datagram_frames_in = 0;
+    std::uint64_t datagram_frame_bytes_in = 0;
+    std::uint64_t datagram_frames_out = 0;
+    std::uint64_t datagram_frame_bytes_out = 0;
 };
 BOOST_DESCRIBE_STRUCT(
     TcpBridgeDirectionStats, (),
-    (tcp_read_bytes, tcp_written_bytes, covert_frames_in, covert_frame_bytes_in, covert_frames_out, covert_frame_bytes_out, tun_frames_in, tun_frame_bytes_in,
-     tun_frames_out, tun_frame_bytes_out)
+    (tcp_read_bytes, tcp_written_bytes, covert_frames_in, covert_frame_bytes_in, covert_frames_out, covert_frame_bytes_out, datagram_frames_in,
+     datagram_frame_bytes_in, datagram_frames_out, datagram_frame_bytes_out)
 )
 
-enum class TcpBridgeCloseReason {
-    normal_stop,
-    peer_eof,
-    tcp_error,
-    codec_error,
-    tls_parse_error,
-    tls_record_error,
-    classified_record_error,
-    classified_record_encode_error,
-    write_queue_full,
-    internal_error,
-    shaper_error,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     TcpBridgeCloseReason, normal_stop, peer_eof, tcp_error, codec_error, tls_parse_error, tls_record_error, classified_record_error,
     classified_record_encode_error, write_queue_full, internal_error, shaper_error
 )
 
-enum class TcpBridgeCloseComponent {
-    tcp,
-    codec,
-    tls_parser,
-    tls_record,
-    classified_record,
-    classified_record_encode,
-    queue,
-    zero_rtt,
-    shaper,
-    session,
-};
-BOOST_DESCRIBE_ENUM(TcpBridgeCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session)
+BOOST_DEFINE_ENUM_CLASS(TcpBridgeCloseComponent, tcp, codec, tls_parser, tls_record, classified_record, classified_record_encode, queue, zero_rtt, shaper, session)
 
-enum class TcpBridgeCloseStage {
-    tls_record,
-    classified_record,
-};
-BOOST_DESCRIBE_ENUM(TcpBridgeCloseStage, tls_record, classified_record)
+BOOST_DEFINE_ENUM_CLASS(TcpBridgeCloseStage, tls_record, classified_record)
 
 struct TcpBridgeCloseInfo {
     TcpBridgeCloseReason reason{TcpBridgeCloseReason::normal_stop};
@@ -173,13 +139,7 @@ struct TcpBridgeOwnedCovertFrame {
     std::uint8_t flags = 0;
 };
 
-enum class TcpBridgeEnqueueError {
-    session_closed,
-    codec_error,
-    tls_record_error,
-    write_queue_full,
-};
-BOOST_DESCRIBE_ENUM(TcpBridgeEnqueueError, session_closed, codec_error, tls_record_error, write_queue_full)
+BOOST_DEFINE_ENUM_CLASS(TcpBridgeEnqueueError, session_closed, codec_error, tls_record_error, write_queue_full)
 
 using TcpBridgeEnqueueResult = Result<std::size_t, TcpBridgeEnqueueError>;
 

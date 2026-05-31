@@ -3,8 +3,8 @@
 #include "fps/net/tcp_relay_app.hpp"
 
 #include "fps/log/describe.hpp"
-#include "fps/net/session_manager.hpp"
 #include "fps/net/tun_packet_pump.hpp"
+#include "fps/net/tun_tunnel_adapter.hpp"
 
 #include <string>
 #include <string_view>
@@ -15,13 +15,9 @@ namespace fps::net::detail {
 
 [[nodiscard]] inline auto role_name(RelayRole role) -> std::string_view { return enum_name_or(role); }
 
-[[nodiscard]] inline auto session_manager_error_message(SessionManagerError error) -> std::string_view {
-    return enum_name_or(error, "unknown_session_manager_error");
-}
+[[nodiscard]] inline auto tun_tunnel_error_message(TunTunnelError error) -> std::string_view { return enum_name_or(error, "unknown_tun_tunnel_error"); }
 
-[[nodiscard]] inline auto session_manager_event_message(SessionManagerEvent event) -> std::string_view {
-    return enum_name_or(event, "unknown_session_manager_event");
-}
+[[nodiscard]] inline auto tun_tunnel_event_message(TunTunnelEvent event) -> std::string_view { return enum_name_or(event, "unknown_tun_tunnel_event"); }
 
 [[nodiscard]] inline auto tun_packet_pump_error_message(TunPacketPumpError error) -> std::string_view {
     return enum_name_or(error, "unknown_tun_packet_pump_error");

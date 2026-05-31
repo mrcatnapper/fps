@@ -4,6 +4,204 @@
 
 ## 2026-05-31
 
+### Collapse described enum boilerplate
+
+Goal:
+
+- Reduce duplicated enum declarations by replacing the common
+  `enum class` + `BOOST_DESCRIBE_ENUM` pattern with Boost.Describe definition
+  macros.
+
+Changes:
+
+- Replaced described enum declarations across core, logging and net headers
+  with `BOOST_DEFINE_ENUM_CLASS`.
+- Replaced fixed-underlying enums in `types.hpp` with
+  `BOOST_DEFINE_FIXED_ENUM_CLASS`, preserving `std::uint8_t` underlying types.
+- Kept `FrameType` in explicit `enum class : std::uint8_t` form with
+  `BOOST_DESCRIBE_ENUM` because its wire values start at `1`; Boost's define
+  macros forward enumerator initializers into `BOOST_DESCRIBE_ENUM`, which
+  breaks generated descriptors for explicit-valued entries.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `rg -n "BOOST_DESCRIBE_ENUM|\\benum class\\b|BOOST_DEFINE_FIXED_ENUM_CLASS|BOOST_DEFINE_ENUM_CLASS" include/fps`
+- `git diff --check`
+
+### Document datagram core and TUN adapter architecture
+
+Goal:
+
+- Make public docs and article drafts reflect the current architecture: FPS core
+  is a covert best-effort datagram transport, while Linux TUN is the first and
+  most important product adapter for VPN service.
+
+Changes:
+
+- Updated root and public docs to describe the current split:
+  `CovertDatagramTransport` as reusable core and `TunTunnelAdapter` as the
+  Linux leased L3 VPN adapter.
+- Clarified Docker, routing, profile, proxy-overlay, beta-status, pcap-analysis
+  and testing docs so TUN is not presented as the whole protocol.
+- Updated both article drafts to remove stale wording that post-auth carrier
+  TLS bytes are packed into FPS envelopes. Current wording says ordinary
+  carrier TLS records are forwarded byte-for-byte and FPS inserts separate
+  classified records containing opaque datagrams/control payloads.
+- Updated article diagrams:
+  - architecture diagram now shows `datagram core` plus `TUN adapter`;
+  - TLS record stream diagram now shows interleaved carrier TLS records and
+    classified FPS records carrying opaque datagrams/control.
+
+Verification:
+
+- `rg -n "real carrier TLS bytes inside envelopes|keeping the real carrier|carries that stream|TUN/control frames|TUN frames|TUN-кадры|transparent relay \\+ TUN|pre-reverse-proxy \\+ TUN|hidden L3 TUN tunnel|tun_packet|tun_packet_fragment" README.md docs articles`
+- `dot -Tsvg articles/assets/fps-architecture.dot -o articles/assets/fps-architecture.svg`
+- `dot -Tsvg articles/assets/fps-tls-record-stream.dot -o articles/assets/fps-tls-record-stream.svg`
+- `git diff --check`
+
+### Run 5-minute fpshop soak for datagram/TUN split PR
+
+Goal:
+
+- Validate the datagram/TUN split on the remote low-power `fpshop` host before
+  opening the review PR.
+
+Setup:
+
+- Shipped the current `develop` snapshot and local Docker image
+  `fps:soak-4757a1d` to `/tmp/fps-soak-4757a1d` on `fpshop`.
+- Ran the existing Docker resilience harness remotely with two leased clients:
+  `python3 tools/docker_resilience_soak.py --sudo --image fps:soak-4757a1d
+  --duration 300 --bandwidth 500K --length 1200 --clients 2 --log-level debug`.
+
+Results:
+
+- Soak window: 300 seconds.
+- All six services remained running after the test:
+  `fps-server`, two `fps-client` instances, two carrier clients and one carrier
+  origin.
+- Initial authenticated carriers: 2; final active carriers: 2.
+- Main client-to-server UDP flow: 0.500 Mbit/s, 15,625 packets, 0 lost.
+- Server-to-client UDP probes to both clients: 0 lost.
+- Carrier-loss recovery probe: 0.500 Mbit/s, 521 packets, 0 lost after carrier
+  restoration.
+- Spoofed-source negative path produced one `ignored_spoofed_tun_source` event;
+  post-spoof valid UDP stayed healthy with 0 lost packets.
+- TUN status showed non-zero packet/byte counters and zero write queue, codec,
+  TLS record, packet-too-large and write failures.
+- Expected noisy counters only: a few `non_ipv4_tun_destination` and
+  `ignored_non_ipv4_tun_packet` events from harness probes/background traffic.
+
+Conclusion:
+
+- No soak blocker found for opening the PR. Remote validation covered leased
+  multi-client TUN routing, generic datagram traffic, carrier loss/recovery and
+  strict source-IP drop behavior on a separate host.
+
+Verification:
+
+- `ssh fpshop "cd /tmp/fps-soak-4757a1d && FPS_DOCKER_SUDO=1 python3
+  tools/docker_resilience_soak.py --sudo --image fps:soak-4757a1d --duration
+  300 --bandwidth 500K --length 1200 --clients 2 --log-level debug"`
+
+### Review datagram/TUN split and run full non-soak validation
+
+Goal:
+
+- Self-review whether the latest architecture refactor actually separates the
+  reusable FPS covert datagram core from the Linux TUN tunnel adapter.
+- Run the full validation set available locally, excluding long/remote soak.
+
+Review:
+
+- `CovertDatagramTransport` is now the generic carrier-pool/datagram layer:
+  it owns authenticated carrier registration, round-robin and targeted writes,
+  opaque datagram fragmentation/reassembly, queue preflight and generic
+  datagram delivery with optional source carrier metadata.
+- `TunTunnelAdapter` is the Linux VPN-specific adapter over that transport:
+  it owns IPv4 lease routing, strict server-side source-IP checks, duplicate
+  client instance replacement and TUN-specific error/event mapping.
+- `TunPacketPump` depends on `TunTunnelAdapter`, not on the generic datagram
+  transport directly, which keeps Linux fd/TUN behavior outside the reusable
+  transport contract.
+- Relay/status/log counters use generic `datagram_*` names where the transport
+  is being counted and TUN-specific `tun_tunnel_*` names where adapter policy is
+  being counted.
+
+Risks:
+
+- The relay runtime still composes the TUN adapter directly because TUN is the
+  only product adapter today. A future non-TUN consumer will still need a small
+  app-level adapter around `CovertDatagramTransport`.
+- `TunTunnelAdapter` intentionally mirrors carrier metadata beside the generic
+  transport to keep lease policy out of the core. Tests cover replacement,
+  targeted routing and source enforcement; future refactors should preserve
+  that invariant.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 tools/docker_tun_iperf_sim.py --image fps:local --duration 10 --bandwidth 5M --length 1200`
+- `FPS_DOCKER_SUDO=1 tools/docker_multi_client_sim.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 tools/docker_duplicate_uuid_sim.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 tools/docker_socks_smoke.py --image fps:local`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 tools/docker_tun_iperf_sim.py --image fps:alpine --duration 10 --bandwidth 5M --length 1200`
+- `git diff --check`
+
+### Split covert datagram core from TUN adapter
+
+Goal:
+
+- Refactor the carrier core so FPS can carry generic best-effort opaque
+  datagrams, with the current Linux VPN behavior implemented as a TUN adapter
+  rather than being hard-wired into the frame protocol.
+
+Changes:
+
+- Replaced wire frame names `tun_packet`/`tun_packet_fragment` with
+  `opaque_datagram`/`opaque_datagram_fragment`, preserving numeric frame values.
+- Added `fps::net::CovertDatagramTransport` for authenticated carrier
+  registration, round-robin/targeted writes, bounded fragmentation/reassembly
+  and generic datagram delivery with source carrier metadata.
+- Added `fps::net::TunTunnelAdapter` on top of the generic transport for Linux
+  TUN-specific IPv4 lease routing, strict source-IP enforcement and duplicate
+  client instance replacement policy.
+- Updated `TunPacketPump`, relay runtime status/log counters and Docker helper
+  scripts to use the TUN adapter and generic `datagram_*` frame stats.
+- Added focused unit coverage for generic datagram scheduling, targeted carrier
+  writes, fragmentation/reassembly, queue preflight and non-datagram frame
+  rejection.
+- Updated `docs/specification.md`, `docs/testing.md`, `dev/ROADMAP.md`,
+  `dev/REVIEW.md` and `dev/PROTOCOL_REVIEW_BRIEF.md` to record the split.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `git diff --check`
+
+Commit:
+
+- `df97547` (`Split covert datagram core from TUN adapter`)
+
 ### Add article UPDATE sections for classified records and pcap experiment
 
 Goal:

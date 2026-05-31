@@ -12,24 +12,9 @@
 
 namespace fps {
 
-enum class ZeroRttUpgradeRole {
-    client,
-    server,
-};
-BOOST_DESCRIBE_ENUM(ZeroRttUpgradeRole, client, server)
+BOOST_DEFINE_ENUM_CLASS(ZeroRttUpgradeRole, client, server)
 
-enum class ZeroRttUpgradeError {
-    invalid_config,
-    invalid_role,
-    invalid_size,
-    oversized_padding,
-    unsupported_version,
-    precheck_failed,
-    unknown_client_id,
-    decrypt_failed,
-    crypto_error,
-};
-BOOST_DESCRIBE_ENUM(
+BOOST_DEFINE_ENUM_CLASS(
     ZeroRttUpgradeError, invalid_config, invalid_role, invalid_size, oversized_padding, unsupported_version, precheck_failed, unknown_client_id, decrypt_failed,
     crypto_error
 )

@@ -58,17 +58,17 @@ BOOST_AUTO_TEST_CASE(described_structs_serialize_to_json_without_manual_fields) 
     fps::net::TcpBridgeSessionStats stats;
     stats.zero_rtt_authenticated = true;
     stats.client_to_server.tcp_read_bytes = 42;
-    stats.client_to_server.tun_frames_in = 3;
-    stats.server_to_client.tun_frame_bytes_out = 1200;
+    stats.client_to_server.datagram_frames_in = 3;
+    stats.server_to_client.datagram_frame_bytes_out = 1200;
 
     const auto json = fps::log::described_to_json(stats);
 
     BOOST_TEST(json.at("zero_rtt_authenticated").as_bool());
     const auto& c2s = json.at("client_to_server").as_object();
     BOOST_TEST(c2s.at("tcp_read_bytes").as_uint64() == 42);
-    BOOST_TEST(c2s.at("tun_frames_in").as_uint64() == 3);
+    BOOST_TEST(c2s.at("datagram_frames_in").as_uint64() == 3);
     const auto& s2c = json.at("server_to_client").as_object();
-    BOOST_TEST(s2c.at("tun_frame_bytes_out").as_uint64() == 1200);
+    BOOST_TEST(s2c.at("datagram_frame_bytes_out").as_uint64() == 1200);
 }
 
 BOOST_AUTO_TEST_CASE(described_log_value_handles_enums_and_durations) {

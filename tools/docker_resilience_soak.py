@@ -481,7 +481,7 @@ def run_spoof_drop_liveness(
         length,
     )
     server_status = query_status(base, compose_file, project, "fps-server")
-    spoof_drops = tun_counter(server_status, "session_manager_events", "ignored_spoofed_tun_source")
+    spoof_drops = tun_counter(server_status, "tun_tunnel_events", "ignored_spoofed_tun_source")
     if spoof_drops <= 0:
         raise RuntimeError(f"server status did not report spoof drop: {server_status!r}")
     return {"spoof_drops": spoof_drops, "post_spoof_udp": valid}

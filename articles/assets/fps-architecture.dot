@@ -35,7 +35,7 @@ digraph fps_architecture {
       fontname="Inter,Arial,sans-serif";
       fontsize=11;
       browser [label="Browser / carrier app\nreal HTTPS or WSS session"];
-      client [label="fps_client\ntransparent relay + TUN"];
+      client [label="fps_client\nrelay + datagram core"];
       client_tun [label="client TUN\nleased IPv4"];
       { rank=same; browser; client_tun; client; }
     }
@@ -50,7 +50,7 @@ digraph fps_architecture {
       style="rounded,dashed";
       fontname="Inter,Arial,sans-serif";
       fontsize=11;
-      server [label="fps_server\npre-reverse-proxy + TUN"];
+      server [label="fps_server\npre-reverse-proxy + datagram core"];
       server_tun [label="server TUN\nlease router"];
       tcp_proxy [label="optional L4 / TCP proxy\nTLS passthrough / SNI router"];
       reverse_proxy [label="real reverse proxy\nTLS terminates here"];
@@ -66,7 +66,7 @@ digraph fps_architecture {
   ];
   client -> server [
     dir=both,
-    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>TLS Application Data shaped FPS link</TD></TR><TR><TD>late upgrade, encrypted envelopes</TD></TR></TABLE>>,
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>TLS Application Data shaped FPS link</TD></TR><TR><TD>encrypted opaque datagrams + control</TD></TR></TABLE>>,
     color="#0b6bcb",
     penwidth=1.7
   ];
@@ -86,11 +86,11 @@ digraph fps_architecture {
 
   client -> client_tun [
     dir=both,
-    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>IP packets</TD></TR></TABLE>>
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>TUN adapter</TD></TR><TR><TD>IP packets ⇄ opaque datagrams</TD></TR></TABLE>>
   ];
   server -> server_tun [
     dir=both,
-    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>IP packets</TD></TR></TABLE>>
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" BGCOLOR="white"><TR><TD>TUN adapter</TD></TR><TR><TD>lease routing + IP packets</TD></TR></TABLE>>
   ];
 
   #browser -> reverse_proxy [

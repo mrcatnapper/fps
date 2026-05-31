@@ -1,9 +1,11 @@
 # Linux Routing And DNS Workflow
 
-This document describes the explicit Linux operator workflow around an FPS TUN
-interface. `fps_client` and `fps_server` open TUN devices and move IP packets,
-but they do not silently change host routes, DNS, forwarding, NAT or firewall
-policy. Those actions remain visible and reviewable.
+This document describes the explicit Linux operator workflow around the current
+FPS TUN adapter. The reusable FPS core carries opaque datagrams over
+authenticated carrier sessions; the Linux VPN adapter maps those datagrams to
+IP packets from TUN devices. `fps_client` and `fps_server` open TUN devices and
+move IP packets, but they do not silently change host routes, DNS, forwarding,
+NAT or firewall policy. Those actions remain visible and reviewable.
 
 For the full Docker-first deployment path, start with
 [public-beta-quickstart.md](./public-beta-quickstart.md). This document focuses

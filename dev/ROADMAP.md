@@ -16,8 +16,9 @@ without claiming resistance to advanced timing/size traffic analysis.
   user-facing config.
 - [x] Remove pre-production config/log migration adapters before public release
   promises exist.
-- [x] Split platform-neutral core from Linux runtime seams so Android can later
-  reuse crypto/session/TUN framing without Linux `ip` or TUN wrapper code.
+- [x] Split the covert datagram carrier core from the Linux TUN adapter so
+  Android or future non-TUN adapters can reuse authenticated carriers and
+  opaque datagram framing without inheriting IPv4 lease enforcement.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -91,8 +92,9 @@ without claiming resistance to advanced timing/size traffic analysis.
   transcript hash, removing visible public-key-shaped handshake material and
   reducing replay surface.
 - [x] Replace post-auth carrier wrapping with classified FPS records: ordinary
-  carrier TLS records are forwarded byte-for-byte, while TUN/control data is
-  inserted as separate hint-classified TLS Application Data records.
+  carrier TLS records are forwarded byte-for-byte, while opaque
+  datagram/control data is inserted as separate hint-classified TLS Application
+  Data records.
 - After review, decide whether transcript-bound one-time hints can evolve into
   a handshake-less FPS record classifier inspired by stream-transcript covert
   channels, or whether explicit upgrade plus classified-record insertion remains
@@ -128,8 +130,9 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Document minimal kernel capabilities and deployment topology.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
-- Split reusable protocol core from Asio/Linux transport targets before Android
-  implementation work.
+- Continue target isolation before Android implementation work: keep
+  `CovertDatagramTransport` reusable, then move more TCP relay and Linux TUN
+  runtime code behind platform interfaces.
 
 ## Phase 7: Fuzzing And Soak
 

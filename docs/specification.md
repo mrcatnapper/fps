@@ -7,13 +7,15 @@ and OpenSSL.
 
 ## 1. Purpose
 
-FPS is an experimental hidden L3 TUN tunnel carried over live TLS cover
-sessions. On the `fps_client <-> fps_server` link an observer should see a TCP
-stream made of TLS Application Data records. Real browser/origin TLS bytes are
-not terminated by FPS. After upgrade, ordinary carrier TLS records continue to
-be forwarded byte-for-byte; FPS inserts separate classified TLS Application Data
-records for TUN/control payloads and consumes them before they reach the real
-TLS endpoints.
+FPS is an experimental covert datagram transport carried over live TLS cover
+sessions. The current product adapter, and the first production-facing use case,
+maps those datagrams to a leased L3 TUN VPN service.
+On the `fps_client <-> fps_server` link an observer should see a TCP stream
+made of TLS Application Data records. Real browser/origin TLS bytes are not
+terminated by FPS. After upgrade, ordinary carrier TLS records continue to be
+forwarded byte-for-byte; FPS inserts separate classified TLS Application Data
+records for opaque datagram/control payloads and consumes them before they
+reach the real TLS endpoints.
 
 The expanded project name, Free Porn Storage, is a deliberate misdirection. It
 is not descriptive branding; it is meant to make casual discovery and search by
@@ -42,13 +44,14 @@ Key v5 properties:
 - After a successful Zero-RTT upgrade, ordinary carrier TLS records remain
   byte-for-byte visible on the FPS link.
 - FPS records are inserted as separate TLS Application Data records with
-  transcript-bound hints, AEAD-encrypted TUN/control frames and padding. Frame
-  metadata is not visible at plaintext offsets.
+  transcript-bound hints, AEAD-encrypted opaque datagram/control frames and
+  padding. Frame metadata is not visible at plaintext offsets.
 - Authenticated sessions do not downgrade. Until TCP is closed by the browser,
   origin or FPS endpoint, the session stays authenticated even when no covert
   payload is available.
-- TUN packets are scheduled through a carrier pool. Any authenticated Zero-RTT
-  TLS session can carry TUN frames.
+- Opaque datagrams are scheduled through a carrier pool. The Linux TUN adapter
+  maps IP packets to those datagrams; any authenticated Zero-RTT TLS session can
+  carry them.
 - There is no primary-session ownership model in the target architecture.
 
 Carrier origin resolution is an operator concern. For browser-created carrier
@@ -233,9 +236,9 @@ keys, session keys, the per-direction carrier transcript snapshot, visible
 record index and implicit FPS sequence. The AEAD associated data binds the same
 metadata plus the visible payload length.
 
-Encrypted plaintext contains protocol version, flags, implicit sequence, a
-TUN/control frame bundle and padding. It does not contain real carrier TLS
-bytes.
+Encrypted plaintext contains protocol version, flags, implicit sequence, an
+opaque datagram/control frame bundle and padding. It does not contain real
+carrier TLS bytes.
 
 Sequence and nonce discipline:
 
@@ -247,23 +250,35 @@ Sequence and nonce discipline:
 - hint miss means ordinary carrier record and is forwarded; hint match with
   failed AEAD/sequence/version/frame validation closes the carrier.
 
-## 6. Carrier Pool And TUN
+## 6. Covert Datagram Transport And TUN Adapter
 
-`SessionManager` maintains a carrier pool:
+The protocol core exposes a best-effort opaque datagram transport over
+authenticated carrier sessions. The transport does not know whether the payload
+is an IP packet, a control message for a higher-level adapter or a future
+application-specific payload.
+
+`CovertDatagramTransport` maintains the generic carrier pool:
 
 - `add_carrier_session` is called only after Zero-RTT authentication;
-- client-side outbound TUN packets select carriers round-robin while respecting
+- outbound opaque datagrams select carriers round-robin while respecting
   closed/full queues;
+- if one carrier write queue is full, the transport tries another carrier;
+- if no carriers exist or all are saturated, the datagram is rejected with a
+  typed error and log/metric event;
+- inbound `opaque_datagram` frames from registered carriers are reassembled when
+  needed and delivered with their source carrier handle.
+
+The Linux VPN runtime is implemented as `TunTunnelAdapter` on top of that
+generic transport:
+
+- client-side outbound TUN packets are submitted as opaque datagrams;
 - server-side outbound TUN packets with an active lease pool select carriers by
   IPv4 destination: packets for a leased client address are sent only through a
   carrier owned by that client;
 - multiple carriers for one client are used round-robin;
-- if one carrier write queue is full, the manager tries another carrier;
-- if no carriers exist or all are saturated, the packet is rejected/dropped with
-  a typed error and log/metric event;
-- inbound TUN frames from registered carriers are accepted only after lease
-  checks. With an active server lease pool, IPv4 source must match the lease
-  assigned to that carrier.
+- inbound datagrams from registered carriers are accepted as TUN packets only
+  after lease checks. With an active server lease pool, IPv4 source must match
+  the lease assigned to that carrier.
 
 Duplicate UUID policy:
 
@@ -286,15 +301,15 @@ Duplicate UUID policy:
   joins the pool; a new carrier with the same lease and a different instance id
   removes/closes older carriers before it becomes active.
 
-TUN fragmentation:
+Opaque datagram fragmentation:
 
-- logical `tun_packet` remains for packets `<= codec.max_frame_payload`;
-- larger packets are split into `tun_packet_fragment`;
+- logical `opaque_datagram` is used for datagrams `<= codec.max_frame_payload`;
+- larger datagrams are split into `opaque_datagram_fragment`;
 - fragment header inside encrypted frame payload contains `packet_id`,
   `fragment_index`, `fragment_count` and `total_size`;
-- all fragments of one packet stay on one carrier in the current increment;
+- all fragments of one datagram stay on one carrier in the current increment;
 - inbound reassembly is keyed by source carrier and `packet_id`, so fragments
-  from different carriers or different packets can be interleaved without
+  from different carriers or different datagrams can be interleaved without
   sharing state;
 - active reassembly state is bounded; excess new fragmented packets are dropped
   with metadata-only counters/log events;
@@ -326,7 +341,7 @@ Server-assigned IPv4 leases:
 
 Current implemented scope:
 
-- deterministic profile-driven budget for externally injected TUN/control
+- deterministic profile-driven budget for externally injected datagram/control
   frames;
 - backpressure accounting and bounded write queues;
 - fragmentation lets near-MTU TUN packets be sent as smaller covert frames.
@@ -510,7 +525,8 @@ Forbidden logs:
 Ordinary non-sudo `ctest` should cover:
 
 - unit tests: TLS parser/layer, Zero-RTT, classified-record/frame-bundle codec,
-  shaper, carrier pool, TUN fragmentation, config/CLI/logging;
+  shaper, generic datagram transport, TUN adapter enforcement/framing,
+  config/CLI/logging;
 - local integration: HTTPS passthrough, HTTPS Zero-RTT chain, concurrent
   Zero-RTT sessions, reusable HTTPS/WSS carrier passthrough and WSS Zero-RTT.
 
@@ -523,7 +539,7 @@ Opt-in sudo/TUN suite should cover:
 Quality/safety checks also include clang-20 warning build, ASan/UBSan, Valgrind
 unit pass, llvm-cov gate and bounded libFuzzer smoke for TLS record parsing,
 covert frame-bundle/classified-record decode, Zero-RTT candidates and
-TUN/control frame parsing.
+TUN/control payload parsing.
 Product-level Docker simulations cover one-client UDP `iperf3`, two-client lease
 routing/spoof-drop, duplicate UUID `replace_old` behavior and the official Dante
 SOCKS5 overlay example smoke.
@@ -557,9 +573,13 @@ See [beta-status.md](./beta-status.md) and
   byte-for-byte before and after upgrade.
 - **Zero-RTT upgrade**: one encrypted auth record that authenticates a carrier
   and enables classified FPS record insertion.
-- **Classified FPS record**: encrypted FPS control/TUN record inserted as a TLS
-  Application Data record and consumed by the FPS peer before reaching the real
-  TLS endpoint.
-- **Carrier**: authenticated TLS session available for TUN/control frames.
+- **Classified FPS record**: encrypted FPS datagram/control record inserted as a
+  TLS Application Data record and consumed by the FPS peer before reaching the
+  real TLS endpoint.
+- **Carrier**: authenticated TLS session available for opaque datagram/control
+  frames.
 - **Carrier pool**: set of authenticated carriers without primary ownership.
+- **Opaque datagram**: best-effort payload carried by FPS. The current Linux
+  runtime maps one TUN packet to one opaque datagram before any internal
+  fragmentation.
 - **TUN packet**: IP packet from a Linux TUN device.

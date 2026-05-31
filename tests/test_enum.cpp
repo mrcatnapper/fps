@@ -13,23 +13,23 @@
 #include "fps/core/tls_record_parser.hpp"
 #include "fps/core/types.hpp"
 #include "fps/core/zero_rtt_upgrade.hpp"
-#include "fps/net/session_manager.hpp"
 #include "fps/net/tcp_bridge_session.hpp"
 #include "fps/net/tcp_relay_app.hpp"
 #include "fps/net/tun_lease.hpp"
 #include "fps/net/tun_packet_pump.hpp"
+#include "fps/net/tun_tunnel_adapter.hpp"
 
 BOOST_AUTO_TEST_SUITE(enum_helpers)
 
 BOOST_AUTO_TEST_CASE(names_and_indexes_described_enums) {
     BOOST_TEST(fps::enum_name_or(fps::Direction::client_to_server) == "client_to_server");
     BOOST_TEST(fps::enum_name_or(fps::RelayRole::server) == "server");
-    BOOST_TEST(fps::enum_count<fps::net::SessionManagerEvent>() == 10U);
-    BOOST_REQUIRE(fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source));
-    BOOST_TEST(*fps::enum_index(fps::net::SessionManagerEvent::ignored_spoofed_tun_source) == 9U);
-    BOOST_REQUIRE(fps::enum_name_at<fps::net::SessionManagerEvent>(9U));
-    BOOST_TEST(*fps::enum_name_at<fps::net::SessionManagerEvent>(9U) == "ignored_spoofed_tun_source");
-    BOOST_TEST(!fps::enum_name_at<fps::net::SessionManagerEvent>(10U).has_value());
+    BOOST_TEST(fps::enum_count<fps::net::TunTunnelEvent>() == 10U);
+    BOOST_REQUIRE(fps::enum_index(fps::net::TunTunnelEvent::ignored_spoofed_tun_source));
+    BOOST_TEST(*fps::enum_index(fps::net::TunTunnelEvent::ignored_spoofed_tun_source) == 9U);
+    BOOST_REQUIRE(fps::enum_name_at<fps::net::TunTunnelEvent>(9U));
+    BOOST_TEST(*fps::enum_name_at<fps::net::TunTunnelEvent>(9U) == "ignored_spoofed_tun_source");
+    BOOST_TEST(!fps::enum_name_at<fps::net::TunTunnelEvent>(10U).has_value());
 }
 
 BOOST_AUTO_TEST_CASE(parses_enum_names_and_underlying_values) {
@@ -45,11 +45,11 @@ BOOST_AUTO_TEST_CASE(parses_enum_names_and_underlying_values) {
 }
 
 BOOST_AUTO_TEST_CASE(case_insensitive_name_parser_is_ascii_only) {
-    const auto parsed = fps::enum_from_name_case_insensitive<fps::FrameType>("TuN_PaCkEt");
+    const auto parsed = fps::enum_from_name_case_insensitive<fps::FrameType>("OpAqUe_DaTaGrAm");
 
     BOOST_REQUIRE(parsed);
-    BOOST_CHECK(*parsed == fps::FrameType::tun_packet);
-    BOOST_CHECK(!fps::enum_from_name_case_insensitive<fps::FrameType>("tun packet").has_value());
+    BOOST_CHECK(*parsed == fps::FrameType::opaque_datagram);
+    BOOST_CHECK(!fps::enum_from_name_case_insensitive<fps::FrameType>("opaque datagram").has_value());
 }
 
 BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
@@ -70,8 +70,8 @@ BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeError, unknown_client_id);
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeRole, server);
     FPS_CHECK_ENUM_NAME(fps::net::EndpointParseError, unsupported_ipv6_literal);
-    FPS_CHECK_ENUM_NAME(fps::net::SessionManagerError, unassigned_tun_destination);
-    FPS_CHECK_ENUM_NAME(fps::net::SessionManagerEvent, ignored_reassembly_limit);
+    FPS_CHECK_ENUM_NAME(fps::net::TunTunnelError, unassigned_tun_destination);
+    FPS_CHECK_ENUM_NAME(fps::net::TunTunnelEvent, ignored_reassembly_limit);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseComponent, classified_record_encode);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseReason, write_queue_full);
     FPS_CHECK_ENUM_NAME(fps::net::TcpBridgeCloseStage, classified_record);

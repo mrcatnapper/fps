@@ -58,11 +58,12 @@ add_library(fps_core
   src/core/tls_record_parser.cpp
   src/core/zero_rtt_upgrade.cpp
   src/log/logging.cpp
-  src/net/session_manager.cpp
+  src/net/covert_datagram_transport.cpp
   src/net/tcp_bridge_session.cpp
   src/net/tcp_bridge_session_io.cpp
   src/net/tun_lease.cpp
   src/net/tun_runtime.cpp
+  src/net/tun_tunnel_adapter.cpp
   src/net/tun_packet_pump.cpp)
 
 target_include_directories(fps_core
@@ -187,7 +188,8 @@ if(FPS_BUILD_TESTS)
     tests/test_fps_upgrade_controller.cpp
     tests/test_identity.cpp
     tests/test_logging.cpp
-    tests/test_session_manager.cpp
+    tests/test_covert_datagram_transport.cpp
+    tests/test_tun_tunnel_adapter.cpp
     tests/test_shaper.cpp
     tests/test_tcp_bridge_session.cpp
     tests/test_tcp_relay_app.cpp

@@ -45,8 +45,8 @@ BOOST_AUTO_TEST_CASE(aead_roundtrip_for_all_frame_types) {
     fps::CovertCodec client{client_config()};
     fps::CovertCodec server{server_config()};
     const std::array frame_types{
-        fps::FrameType::tun_packet,   fps::FrameType::ping,  fps::FrameType::pong,
-        fps::FrameType::flow_control, fps::FrameType::close, fps::FrameType::tun_packet_fragment,
+        fps::FrameType::opaque_datagram, fps::FrameType::ping,  fps::FrameType::pong,
+        fps::FrameType::flow_control,    fps::FrameType::close, fps::FrameType::opaque_datagram_fragment,
     };
 
     for(const auto frame_type : frame_types) {
@@ -68,7 +68,7 @@ BOOST_AUTO_TEST_CASE(tampered_ciphertext_or_tag_fails) {
     fps::CovertCodec server{server_config()};
     const auto data = bytes({0xaa, 0xbb, 0xcc});
 
-    auto encoded = client.encode(fps::FrameType::tun_packet, data, 4);
+    auto encoded = client.encode(fps::FrameType::opaque_datagram, data, 4);
     BOOST_REQUIRE(encoded);
     auto tampered = encoded.value();
     tampered[tampered.size() - 2U] ^= std::byte{0x55};
@@ -117,7 +117,7 @@ BOOST_AUTO_TEST_CASE(padding_is_stripped_and_reported) {
     fps::CovertCodec server{server_config()};
     const auto data = bytes({0x11, 0x22});
 
-    auto encoded = client.encode(fps::FrameType::tun_packet, data, 17);
+    auto encoded = client.encode(fps::FrameType::opaque_datagram, data, 17);
     BOOST_REQUIRE(encoded);
     auto decoded = server.decode(encoded.value());
     BOOST_REQUIRE(decoded);
@@ -132,7 +132,7 @@ BOOST_AUTO_TEST_CASE(oversized_payload_returns_typed_error) {
     fps::CovertCodec client{config};
     const auto data = payload_of_size(5);
 
-    auto encoded = client.encode(fps::FrameType::tun_packet, data);
+    auto encoded = client.encode(fps::FrameType::opaque_datagram, data);
 
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error() == fps::CodecError::oversized_payload);
@@ -142,7 +142,7 @@ BOOST_AUTO_TEST_CASE(oversized_padding_returns_typed_error) {
     fps::CovertCodec client{client_config()};
     const auto data = bytes({1});
 
-    auto encoded = client.encode(fps::FrameType::tun_packet, data, 65);
+    auto encoded = client.encode(fps::FrameType::opaque_datagram, data, 65);
 
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error() == fps::CodecError::oversized_padding);

@@ -43,7 +43,7 @@ BOOST_AUTO_TEST_CASE(roundtrip_preserves_inner_tls_frames_and_padding_metadata) 
         .frames =
             {
                 fps::FpsEnvelopeFrame{
-                    .frame_type = fps::FrameType::tun_packet,
+                    .frame_type = fps::FrameType::opaque_datagram,
                     .flags = 0x11,
                     .payload = tun_packet,
                     .padding_size = 3,
@@ -65,7 +65,7 @@ BOOST_AUTO_TEST_CASE(roundtrip_preserves_inner_tls_frames_and_padding_metadata) 
 
     BOOST_CHECK(decoded.value().inner_tls_bytes == inner_tls);
     BOOST_REQUIRE_EQUAL(decoded.value().frames.size(), 2U);
-    BOOST_CHECK(decoded.value().frames[0].frame_type == fps::FrameType::tun_packet);
+    BOOST_CHECK(decoded.value().frames[0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_TEST(decoded.value().frames[0].flags == 0x11U);
     BOOST_CHECK(decoded.value().frames[0].payload == tun_packet);
     BOOST_TEST(decoded.value().frames[0].padding_size == 3U);

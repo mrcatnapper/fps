@@ -12,11 +12,7 @@
 
 namespace fps {
 
-enum class TlsRecordLayerError {
-    payload_too_large,
-    malformed_record,
-};
-BOOST_DESCRIBE_ENUM(TlsRecordLayerError, payload_too_large, malformed_record)
+BOOST_DEFINE_ENUM_CLASS(TlsRecordLayerError, payload_too_large, malformed_record)
 
 using TlsRecordLayerResult = Result<ByteVector, TlsRecordLayerError>;
 using CovertRecordClassifier = std::function<bool(const TlsRecord&)>;

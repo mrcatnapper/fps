@@ -132,7 +132,7 @@ auto decode_tun_record(fps::Direction wire_direction, const fps::ByteVector& rec
     BOOST_TEST(result.codec_errors.empty());
     BOOST_TEST(result.record_errors.empty());
     BOOST_REQUIRE_EQUAL(result.covert_frames.size(), 1U);
-    BOOST_CHECK(result.covert_frames[0].frame_type == fps::FrameType::tun_packet);
+    BOOST_CHECK(result.covert_frames[0].frame_type == fps::FrameType::opaque_datagram);
     return result.covert_frames[0];
 }
 
@@ -166,7 +166,7 @@ BOOST_AUTO_TEST_SUITE(tun_packet_pump)
 BOOST_AUTO_TEST_CASE(write_packet_writes_exact_packet_to_fd) {
     boost::asio::io_context io;
     auto fds = socket_pair();
-    fps::net::SessionManager manager{fps::net::SessionManagerConfig{.role = fps::RelayRole::client}};
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client}};
     auto pump = fps::net::TunPacketPump::create(io, fds[0].release(), manager);
     boost::asio::posix::stream_descriptor peer{io, fds[1].release()};
     const auto packet = bytes({0x45, 0x00, 0x00, 0x14, 0xaa});
@@ -187,7 +187,7 @@ BOOST_AUTO_TEST_CASE(write_packet_writes_exact_packet_to_fd) {
 BOOST_AUTO_TEST_CASE(write_packet_rejects_invalid_packets_and_full_queue) {
     boost::asio::io_context io;
     auto fds = socket_pair();
-    fps::net::SessionManager manager{fps::net::SessionManagerConfig{.role = fps::RelayRole::client}};
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client}};
     auto pump = fps::net::TunPacketPump::create(io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{.mtu = 4, .max_write_queue_packets = 1});
 
     auto empty = pump->write_packet({});
@@ -211,7 +211,7 @@ BOOST_AUTO_TEST_CASE(stop_is_idempotent_and_reports_closed_once) {
     boost::asio::io_context io;
     auto fds = socket_pair();
     std::size_t closed_count = 0;
-    fps::net::SessionManager manager{fps::net::SessionManagerConfig{.role = fps::RelayRole::client}};
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client}};
     auto pump = fps::net::TunPacketPump::create(
         io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{},
         fps::net::TunPacketPumpHandlers{
@@ -233,10 +233,10 @@ BOOST_AUTO_TEST_CASE(stop_is_idempotent_and_reports_closed_once) {
     BOOST_CHECK(closed_write.error() == fps::net::TunPacketPumpError::closed);
 }
 
-BOOST_AUTO_TEST_CASE(read_packet_from_fd_enqueues_tun_frame_to_carrier_session) {
+BOOST_AUTO_TEST_CASE(read_packet_from_fd_enqueues_datagram_frame_to_carrier_session) {
     CodecSessionFixture fixture;
     auto fds = socket_pair();
-    fps::net::SessionManager manager{fps::net::SessionManagerConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
     BOOST_CHECK(manager.add_carrier_session(fixture.session));
     auto pump = fps::net::TunPacketPump::create(fixture.io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{.mtu = 64});
     const auto packet = bytes({0x45, 0x00, 0x00, 0x14, 0xbb});
@@ -266,12 +266,12 @@ BOOST_AUTO_TEST_CASE(read_packet_from_fd_enqueues_tun_frame_to_carrier_session) 
 BOOST_AUTO_TEST_CASE(read_packet_without_carrier_reports_session_error_and_continues) {
     boost::asio::io_context io;
     auto fds = socket_pair();
-    std::vector<fps::net::SessionManagerError> session_errors;
-    fps::net::SessionManager manager{fps::net::SessionManagerConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
+    std::vector<fps::net::TunTunnelError> session_errors;
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
     auto pump = fps::net::TunPacketPump::create(
         io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{.mtu = 64},
         fps::net::TunPacketPumpHandlers{
-            .on_session_error = [&](fps::net::SessionManagerError error) { session_errors.push_back(error); },
+            .on_session_error = [&](fps::net::TunTunnelError error) { session_errors.push_back(error); },
             .on_error = {},
             .on_read_packet = {},
             .on_write_packet = {},
@@ -285,32 +285,31 @@ BOOST_AUTO_TEST_CASE(read_packet_without_carrier_reports_session_error_and_conti
     run_until(io, [&] { return session_errors.size() == 2U; });
 
     BOOST_REQUIRE_EQUAL(session_errors.size(), 2U);
-    BOOST_CHECK(session_errors[0] == fps::net::SessionManagerError::no_carrier_session);
-    BOOST_CHECK(session_errors[1] == fps::net::SessionManagerError::no_carrier_session);
+    BOOST_CHECK(session_errors[0] == fps::net::TunTunnelError::no_carrier_session);
+    BOOST_CHECK(session_errors[1] == fps::net::TunTunnelError::no_carrier_session);
     BOOST_TEST(!pump->is_stopped());
     pump->stop();
 }
 
-BOOST_AUTO_TEST_CASE(session_manager_sink_can_write_inbound_packet_to_fd) {
+BOOST_AUTO_TEST_CASE(tun_tunnel_sink_can_write_inbound_packet_to_fd) {
     boost::asio::io_context io;
     auto fds = socket_pair();
     std::shared_ptr<fps::net::TunPacketPump> pump;
-    fps::net::SessionManager manager{
-        fps::net::SessionManagerConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}, fps::net::SessionManagerHandlers{
-                                                                                                       .on_tun_packet =
-                                                                                                           [&](fps::ByteVector packet) {
-                                                                                                               auto written =
-                                                                                                                   pump->write_packet(std::move(packet));
-                                                                                                               BOOST_REQUIRE(written);
-                                                                                                           },
-                                                                                                       .on_event = {},
-                                                                                                   }
+    fps::net::TunTunnelAdapter manager{
+        fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}, fps::net::TunTunnelHandlers{
+                                                                                                  .on_tun_packet =
+                                                                                                      [&](fps::ByteVector packet) {
+                                                                                                          auto written = pump->write_packet(std::move(packet));
+                                                                                                          BOOST_REQUIRE(written);
+                                                                                                      },
+                                                                                                  .on_event = {},
+                                                                                              }
     };
     pump = fps::net::TunPacketPump::create(io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{.mtu = 64});
     boost::asio::posix::stream_descriptor peer{io, fds[1].release()};
     const auto packet = bytes({0x45, 0x00, 0x00, 0x1c, 0xcc});
     fps::DecodedFrame frame;
-    frame.frame_type = fps::FrameType::tun_packet;
+    frame.frame_type = fps::FrameType::opaque_datagram;
     frame.payload = packet;
 
     manager.handle_covert_frame(fps::Direction::server_to_client, frame);

@@ -18,7 +18,8 @@ porn, why not use it properly and store the porn in the traffic itself?
 That joke is where the project name comes from. Free Porn Storage, or FPS, is
 not a porn product. It is a deliberately misleading code name, and a
 search-hostile one. The serious description is less meme-friendly: FPS is an
-experimental framework for building a hidden L3 tunnel inside live TLS traffic.
+experimental framework for carrying hidden datagrams inside live TLS traffic,
+with a Linux TUN VPN adapter as its first product use case.
 
 This article, and FPS as a project, are meant as a technical investigation into
 a specific direction in the censorship-circumvention arms race: after censors
@@ -139,7 +140,9 @@ relay continues. If it succeeds, both sides start classifying later TLS
 Application Data records with transcript-bound hints and AEAD verification.
 Ordinary carrier records remain visible and are forwarded byte-for-byte; FPS
 records are separate TLS-like Application Data records whose opaque payloads
-carry encrypted TUN/control frames and padding.
+carry encrypted datagram/control frames and padding. The Linux VPN adapter maps
+TUN packets to those opaque datagrams, but the wire layer is no longer tied to
+IP packets.
 
 ![TLS record stream after FPS upgrade](assets/fps-tls-record-stream.svg)
 
@@ -159,15 +162,19 @@ FPS has two Linux daemons:
 - `fps_client`, running near the user;
 - `fps_server`, running near the operator-controlled origin side.
 
-Both sides create TUN interfaces. Applications send IP packets into the TUN
-device. FPS fragments, encrypts and schedules those packets over one or more
-authenticated carrier sessions.
+Architecturally, FPS has a reusable covert datagram core and one primary Linux
+adapter. The core registers authenticated carrier sessions, fragments and
+reassembles best-effort opaque datagrams, and schedules them over one or more
+carriers. The Linux adapter creates TUN interfaces on both sides; applications
+send IP packets into the TUN device, and the adapter maps those packets to
+opaque FPS datagrams.
 
 On the wire between client and server, an observer should see TCP streams made
 of TLS Application Data records. The real browser/origin TLS stream is not
 terminated by FPS. Before upgrade, FPS is a transparent relay. After upgrade,
-real TLS bytes are packed into encrypted FPS envelopes and restored before they
-reach the real endpoints.
+ordinary carrier TLS records continue to be forwarded byte-for-byte, while FPS
+inserts separate classified TLS Application Data records for encrypted
+datagram/control payloads.
 
 ![FPS architecture](assets/fps-architecture.svg)
 
@@ -179,9 +186,10 @@ pool. If another active process uses the same UUID, the newer instance replaces
 the older one.
 
 The implementation is Linux/Docker first. Android is planned, but not built
-yet. The core code is split so the protocol, envelope and session logic can
-eventually sit behind Android `VpnService` instead of Linux TUN and `ip`
-commands.
+yet. The core code is split so authentication, record classification, carrier
+pooling and opaque datagram framing can be reused behind Android `VpnService`
+or another future adapter instead of inheriting Linux TUN, IPv4 lease policy and
+`ip` commands.
 
 ## Hosting: FPS As A Pre-Reverse-Proxy
 
@@ -230,25 +238,27 @@ review.
 
 ### Carrier Pooling
 
-Any authenticated carrier session can carry TUN frames. FPS no longer has a
-single "primary session" concept, so multiple browser tabs or application flows
-can become part of the carrier pool, which is useful for capacity, reconnects
-and future shaping and also makes FPS closer to a framework than a single fixed
-proxy protocol.
+Any authenticated carrier session can carry opaque FPS datagrams. FPS no longer
+has a single "primary session" concept, so multiple browser tabs or application
+flows can become part of the carrier pool. In the current VPN adapter, those
+datagrams are TUN packets; in a future adapter, the same core could carry a
+different unreliable payload without changing the carrier authentication layer.
 
 ### L3 TUN Instead Of Only SOCKS
 
-FPS carries IP packets. A SOCKS proxy can be layered on top for convenience,
-and the documentation includes a Dante overlay example, but the hidden channel
-itself is an L3 tunnel, which makes the system more complicated than a proxy but
-also more general.
+The current FPS product adapter carries IP packets through Linux TUN. A SOCKS
+proxy can be layered on top for convenience, and the documentation includes a
+Dante overlay example, but the hidden transport underneath is a generic
+best-effort datagram channel. TUN remains the first and most important adapter
+because it turns FPS into a VPN framework, but it is not the protocol core.
 
 ### Room For Shaping
 
-The beta already supports TUN fragmentation and envelope padding hooks. The
-future shaping layer can decide how many bytes to inject into a carrier, how to
-split packets, how to throttle hidden traffic and how to spread load across
-carriers.
+The beta already supports opaque datagram fragmentation and envelope padding
+hooks. For the current TUN adapter, that means near-MTU IP packets can be split
+before transmission. The future shaping layer can decide how many bytes to
+inject into a carrier, how to split payloads, how to throttle hidden traffic and
+how to spread load across carriers.
 
 Without shaping, FPS is a structural camouflage experiment. With shaping, it
 becomes a stronger traffic-analysis experiment.
@@ -293,10 +303,10 @@ transport/tunnel framework.
 
 Trojan runs inside TLS and uses fallback behavior for unauthenticated traffic,
 which makes it simpler to operate and easier to reason about. FPS differs by
-using late upgrade inside a live carrier byte stream and by keeping the real
-carrier TLS bytes inside envelopes after authentication, so Trojan is best seen
-as a practical proxy protocol while FPS is a more experimental carrier
-steganography framework.
+using late upgrade inside a live carrier byte stream and by inserting separate
+classified TLS records after authentication while ordinary carrier TLS records
+continue byte-for-byte, so Trojan is best seen as a practical proxy protocol
+while FPS is a more experimental carrier steganography framework.
 
 ### Xray / VLESS / XTLS Vision
 
@@ -304,8 +314,9 @@ VLESS uses UUID-style identity, and Vision/REALITY-oriented configurations are
 part of a mature anti-censorship proxy ecosystem. FPS borrowed the UUID UX
 lesson because distributing one client UUID is easier than distributing raw key
 files, but the scope is different: Xray is a broad proxy platform, while FPS is
-narrower and lower-level, a leased L3 TUN tunnel that tries to stay
-TLS-record-shaped inside real carrier sessions.
+narrower and lower-level, a covert datagram transport whose current Linux
+adapter is a leased L3 TUN VPN that tries to stay TLS-record-shaped inside real
+carrier sessions.
 
 ### NaïveProxy
 
@@ -330,12 +341,13 @@ to a pre-shared model. When used with TLS, its goal is to make application
 behavior equivalent to the application running without Balboa, modulo small
 timing differences.
 
-FPS differs in deployment and protocol shape. It is an endpoint VPN framework
-with TUN interfaces, leased client addresses, late Zero-RTT authentication and
-encrypted FPS envelopes over visible TLS Application Data records. It does not
-currently require a pre-shared content model for the carrier application; it
-relays the real carrier stream and, after upgrade, carries that stream inside
-FPS envelopes together with hidden TUN/control frames.
+FPS differs in deployment and protocol shape. It is an endpoint covert
+datagram framework whose current Linux adapter provides TUN interfaces, leased
+client addresses, late Zero-RTT authentication and encrypted FPS records over
+visible TLS Application Data records. It does not currently require a
+pre-shared content model for the carrier application; it relays the real
+carrier stream byte-for-byte and, after upgrade, inserts separate classified
+records carrying hidden datagrams/control frames.
 
 ### Tor Pluggable Transports
 
@@ -432,9 +444,11 @@ classified TLS Application Data records between them.
 
 That distinction matters for engineering reasons. A visible FPS record is still
 a syntactically normal TLS Application Data record on the `fps_client <->
-fps_server` link, but internally it carries an encrypted FPS bundle with TUN
-packets, control messages and padding. The real browser/origin TLS records stay
-in the same ordered TCP stream and are not terminated by FPS.
+fps_server` link, but internally it carries an encrypted FPS bundle with opaque
+datagrams, control messages and padding. The current Linux TUN adapter maps one
+VPN packet to one opaque datagram before any internal fragmentation. The real
+browser/origin TLS records stay in the same ordered TCP stream and are not
+terminated by FPS.
 
 This design is more convenient for shaping and throttling because the covert
 channel now has explicit record-sized scheduling units. A future shaper can

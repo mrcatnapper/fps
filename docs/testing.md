@@ -1,8 +1,9 @@
 # FPS Testing And Quality Workflow
 
 The regression baseline is meant to catch changes in TLS passthrough,
-Zero-RTT upgrade, classified FPS records, carrier-pool TUN scheduling,
-fragmentation, shaper budgeting, CLI/config behavior and logging safety.
+Zero-RTT upgrade, classified FPS records, the generic covert datagram transport,
+the Linux TUN adapter, carrier-pool scheduling, fragmentation, shaper budgeting,
+CLI/config behavior and logging safety.
 
 ## Quick Local Suite
 
@@ -317,11 +318,12 @@ Unit tests cover:
   fragmented server-accept wait, post-accept carrier passthrough plus classified
   record insertion and unauthenticated enqueue
   rejection.
-- `SessionManager` and `TunPacketPump` carrier registration/removal,
-  round-robin scheduling, lease-aware destination routing, strict source-IP
-  enforcement, saturated-carrier fallback, same-carrier fragment policy,
-  malformed fragment drops, packet boundaries, no-carrier errors, bounded TUN
-  write queue and idempotent stop.
+- `CovertDatagramTransport`, `TunTunnelAdapter` and `TunPacketPump` carrier
+  registration/removal, generic datagram round-robin and targeted writes,
+  lease-aware destination routing, strict source-IP enforcement,
+  saturated-carrier fallback, same-carrier fragment policy, malformed fragment
+  drops, packet boundaries, no-carrier errors, bounded TUN write queue and
+  idempotent stop.
 - `TunLeaseAllocator` stable persistent leases, pool exhaustion,
   list/remove/prune APIs, invalid lease-file rejection and control-frame
   encode/decode.

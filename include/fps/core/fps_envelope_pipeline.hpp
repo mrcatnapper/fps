@@ -10,11 +10,7 @@
 
 namespace fps {
 
-enum class FpsEnvelopePipelineEncodeStage {
-    envelope,
-    tls_record,
-};
-BOOST_DESCRIBE_ENUM(FpsEnvelopePipelineEncodeStage, envelope, tls_record)
+BOOST_DEFINE_ENUM_CLASS(FpsEnvelopePipelineEncodeStage, envelope, tls_record)
 
 struct FpsEnvelopePipelineEncodeError {
     FpsEnvelopePipelineEncodeStage stage{FpsEnvelopePipelineEncodeStage::envelope};

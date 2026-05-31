@@ -4,6 +4,10 @@ FPS can use ordinary browser or application TLS sessions as carriers. The debug
 `fps_carrier` utility is useful for deterministic tests, but beta operators also
 need to understand the real-origin flow.
 
+Carrier sessions feed the generic FPS covert datagram core. In the current Linux
+VPN adapter, those datagrams are TUN packets plus control metadata; carrier
+setup is therefore required before the TUN lease is useful for traffic.
+
 ## Core Rule
 
 The application must still believe it is connecting to the real carrier origin.

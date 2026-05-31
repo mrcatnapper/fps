@@ -10,12 +10,7 @@
 
 namespace fps {
 
-enum class TlsParseError {
-    invalid_header,
-    record_too_large,
-    pending_limit_exceeded,
-};
-BOOST_DESCRIBE_ENUM(TlsParseError, invalid_header, record_too_large, pending_limit_exceeded)
+BOOST_DEFINE_ENUM_CLASS(TlsParseError, invalid_header, record_too_large, pending_limit_exceeded)
 
 struct TlsRecord {
     std::uint8_t content_type{};
