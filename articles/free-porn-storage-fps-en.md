@@ -421,6 +421,65 @@ And if the name made the project harder to find, or if it made someone spend a
 perfectly good evening doing something more relaxing instead of studying network
 protocols, then at least one part of the design worked.
 
+## UPDATE: FPS Records Are Now Separate TLS Records
+
+The implementation has moved to a cleaner wire model since the first version of
+this draft. After the late authentication step, FPS no longer needs to wrap the
+carrier byte stream and covert payload into one monolithic encrypted envelope
+that replaces every observed carrier TLS record. Ordinary carrier TLS records
+continue to be forwarded byte-for-byte, while FPS inserts its own separate,
+classified TLS Application Data records between them.
+
+That distinction matters for engineering reasons. A visible FPS record is still
+a syntactically normal TLS Application Data record on the `fps_client <->
+fps_server` link, but internally it carries an encrypted FPS bundle with TUN
+packets, control messages and padding. The real browser/origin TLS records stay
+in the same ordered TCP stream and are not terminated by FPS.
+
+This design is more convenient for shaping and throttling because the covert
+channel now has explicit record-sized scheduling units. A future shaper can
+decide when to insert FPS records, how large they should be, how much padding to
+add and how aggressively to pace them against the observed carrier cadence. In
+other words, correctness and confidentiality no longer require FPS to transform
+every carrier record; the shaping layer can operate on additional TLS-shaped
+records instead.
+
+The tradeoff is clear: FPS is syntactically TLS-shaped, but it still has to be
+statistically shaped. Separate TLS records make that next layer easier to build,
+but they do not make it automatic.
+
+## UPDATE: Packet-Capture Flow Experiment
+
+I also ran a small pcap experiment to stop arguing from intuition alone. The
+test used a local Docker/TUN topology with one `fps_client`, one `fps_server`,
+the debug HTTPS/WSS carrier, and bidirectional UDP `iperf3` over the FPS TUN
+lease. Zero-RTT upgrade was intentionally delayed so the capture contained both
+a pre-upgrade window and a post-upgrade window.
+
+The full note lives in the repository as
+[`docs/pcap-flow-analysis.md`](../docs/pcap-flow-analysis.md). The short result:
+Wireshark/libpcap still see parseable TLS records on the FPS TCP link, but the
+packet-size and timing distributions visibly change after FPS starts carrying
+TUN traffic.
+
+![Visible FPS TCP-link packet size and timing overview](../docs/assets/pcap-flow/bidir-overview.png)
+
+![Packet-size and inter-packet quantiles by direction](../docs/assets/pcap-flow/bidir-quantiles.png)
+
+In that run, the bidirectional UDP probe completed at about 2 Mbit/s in each
+direction without packet loss. Before upgrade, the capture had a small carrier
+window with a median IP packet size around 119 bytes and a p95 inter-packet
+interval around 33 ms. After upgrade, the visible FPS link carried about 8.8
+Mbit/s of IP traffic, the median packet size moved to about 1321 bytes, and the
+p95 inter-packet interval dropped to about 4.3 ms.
+
+The conclusion is not that FPS is already indistinguishable from its carrier.
+It is the opposite and more useful conclusion: the current beta preserves TLS
+record syntax, but a traffic analyst can still see the extra load as a dense
+near-MTU band after upgrade. The next serious traffic-analysis work should
+therefore focus on classified-record scheduling, pacing and padding rather than
+on TLS record validity alone.
+
 ## References
 
 - Manfred Wolf, "Covert Channels in LAN Protocols", in Local Area Network

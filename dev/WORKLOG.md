@@ -2,7 +2,102 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-05-31
+
+### Add article UPDATE sections for classified records and pcap experiment
+
+Goal:
+
+- Update both article drafts with short tail sections about the current wire
+  model and the packet-capture flow experiment.
+
+Changes:
+
+- Added UPDATE sections to the English HackerNoon draft:
+  - FPS classified payloads are now inserted as separate TLS Application Data
+    records, which gives the future shaper explicit scheduling units;
+  - the pcap experiment confirms TLS record syntax but shows a visible
+    post-upgrade traffic-shape change.
+- Added the same update to the Russian Habr draft and extended its table of
+  contents.
+- Linked both drafts to `docs/pcap-flow-analysis.md` and the two generated
+  pcap-flow plots.
+
+Verification:
+
+- `git diff --check`
+- Manual diff review for both article drafts.
+
 ## 2026-05-29
+
+### Run extended fpshop 10-minute Docker soak
+
+Goal:
+
+- Validate the current Docker/TUN runtime on the remote `fpshop` host with a
+  longer, less friendly scenario than the regular smoke tests.
+- Exercise more than two carrier sessions, carrier stop/start churn, two leased
+  clients, bidirectional UDP, short-lived TCP application sessions, spoofed
+  source-IP drops and recovery after a full temporary carrier outage for one
+  client.
+
+Setup:
+
+- Built and transferred `fps:soak-bb88b2e-10m` from the current `develop`
+  commit.
+- Ran a transient remote-only harness based on existing Docker helper modules;
+  no repository script was added.
+- Topology: one `fps_server`, two `fps_client` containers, one
+  `fps_carrier` origin and four `fps_carrier` client processes.
+
+Results:
+
+- Main soak window: 600 seconds; total elapsed with setup/result collection:
+  634 seconds.
+- All eight compose services remained running until teardown.
+- Carrier churn: 26 stop/start actions; final server state had four active
+  carriers.
+- Zero-RTT/auth: 34 authenticated carrier sessions, no decrypt failures, no
+  unknown clients and no server-accept failures.
+- UDP over TUN:
+  - client A to server: 0.220 Mbit/s, 32,227 packets, 0 lost;
+  - client B to server: 0.180 Mbit/s, 26,368 packets, 722 lost (`2.74%`),
+    expected around the forced full carrier outage;
+  - server to client A: 0.120 Mbit/s, 17,579 packets, 6 lost (`0.034%`);
+  - server to client B: 0.120 Mbit/s, 17,579 packets, 483 lost (`2.75%`),
+    expected around the forced full carrier outage;
+  - 20 second burst: 1.999 Mbit/s, 4,167 packets, 0 lost.
+- Short-lived TCP echo sessions over TUN:
+  - client A to server: 1,542 successes, 0 errors;
+  - client B to server: 1,197 successes, 5 timeouts during outage/churn;
+  - server to client A: 1,117 successes, 0 errors;
+  - server to client B: 994 successes, 4 timeouts during outage/churn.
+
+Log review:
+
+- `level=error`/`fatal`: 0.
+- `write_queue_full`, `codec_error`, `tls_record_error`, `decrypt_failed`,
+  `server_accept_failed`, `unknown_client`: 0.
+- Spoofed source-IP negative check produced one
+  `ignored_spoofed_tun_source` event as expected.
+- Fragment reassembly error counters stayed at zero.
+- `unassigned_tun_destination` warnings were concentrated during the forced
+  full carrier outage for client B; this matches the test design.
+- Close reasons were limited to expected `peer_eof` and TCP read errors caused
+  by deliberate carrier stops.
+
+Decisions:
+
+- Treat the B-side packet loss and TCP timeouts as expected consequences of the
+  deliberate full carrier outage, not as daemon instability.
+- Keep this as an operational soak report for now; do not add the transient
+  two-machine harness to the repository unless this scenario becomes a regular
+  release gate.
+
+Verification artifacts:
+
+- Local copy: `/tmp/fps-soak-10m-bb88b2e-artifacts`.
+- Remote temporary files and images were removed after copying artifacts.
 
 ### Harden inbound TUN fragment reassembly
 
