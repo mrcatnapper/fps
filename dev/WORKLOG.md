@@ -4,6 +4,51 @@
 
 ## 2026-05-31
 
+### Run 5-minute fpshop soak for datagram/TUN split PR
+
+Goal:
+
+- Validate the datagram/TUN split on the remote low-power `fpshop` host before
+  opening the review PR.
+
+Setup:
+
+- Shipped the current `develop` snapshot and local Docker image
+  `fps:soak-4757a1d` to `/tmp/fps-soak-4757a1d` on `fpshop`.
+- Ran the existing Docker resilience harness remotely with two leased clients:
+  `python3 tools/docker_resilience_soak.py --sudo --image fps:soak-4757a1d
+  --duration 300 --bandwidth 500K --length 1200 --clients 2 --log-level debug`.
+
+Results:
+
+- Soak window: 300 seconds.
+- All six services remained running after the test:
+  `fps-server`, two `fps-client` instances, two carrier clients and one carrier
+  origin.
+- Initial authenticated carriers: 2; final active carriers: 2.
+- Main client-to-server UDP flow: 0.500 Mbit/s, 15,625 packets, 0 lost.
+- Server-to-client UDP probes to both clients: 0 lost.
+- Carrier-loss recovery probe: 0.500 Mbit/s, 521 packets, 0 lost after carrier
+  restoration.
+- Spoofed-source negative path produced one `ignored_spoofed_tun_source` event;
+  post-spoof valid UDP stayed healthy with 0 lost packets.
+- TUN status showed non-zero packet/byte counters and zero write queue, codec,
+  TLS record, packet-too-large and write failures.
+- Expected noisy counters only: a few `non_ipv4_tun_destination` and
+  `ignored_non_ipv4_tun_packet` events from harness probes/background traffic.
+
+Conclusion:
+
+- No soak blocker found for opening the PR. Remote validation covered leased
+  multi-client TUN routing, generic datagram traffic, carrier loss/recovery and
+  strict source-IP drop behavior on a separate host.
+
+Verification:
+
+- `ssh fpshop "cd /tmp/fps-soak-4757a1d && FPS_DOCKER_SUDO=1 python3
+  tools/docker_resilience_soak.py --sudo --image fps:soak-4757a1d --duration
+  300 --bandwidth 500K --length 1200 --clients 2 --log-level debug"`
+
 ### Review datagram/TUN split and run full non-soak validation
 
 Goal:
