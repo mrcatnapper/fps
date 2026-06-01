@@ -214,10 +214,10 @@ void TlsTcpCarrierSession::handle_read(Direction direction, const boost::system:
     }
 
     ByteVector forward_bytes;
-    std::size_t cover_bytes = 0;
+    std::vector<std::size_t> cover_record_sizes;
     bool pause_read = false;
     const auto append_output = [&](RecordProcessOutput output) {
-        cover_bytes += output.cover_bytes;
+        cover_record_sizes.insert(cover_record_sizes.end(), output.cover_record_sizes.begin(), output.cover_record_sizes.end());
         pause_read = pause_read || output.pause_read;
         append_bytes(forward_bytes, output.bytes);
     };
@@ -241,7 +241,9 @@ void TlsTcpCarrierSession::handle_read(Direction direction, const boost::system:
         return;
     }
     enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = !pause_read});
-    observe_cover_bytes(direction, cover_bytes);
+    for(const auto size : cover_record_sizes) {
+        observe_cover_record(direction, size);
+    }
 }
 
 auto TlsTcpCarrierSession::process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -254,9 +256,12 @@ auto TlsTcpCarrierSession::process_tls_record(Direction direction, const TlsReco
 auto TlsTcpCarrierSession::process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     auto result = inbound_pipeline(direction).process_inbound_record(record);
     auto forward_bytes = std::move(result.forward_bytes);
-    const auto cover_bytes = forward_bytes.size();
     emit_process_result(direction, result);
-    return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
+    const auto forwarded = !forward_bytes.empty();
+    return RecordProcessOutput{
+        .bytes = std::move(forward_bytes),
+        .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+    };
 }
 
 auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -278,7 +283,7 @@ auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const Tl
 
         auto result = zero_rtt_controller_->process_inbound_record(direction, record);
         auto forward_bytes = std::move(result.forward_bytes);
-        const auto cover_bytes = forward_bytes.size();
+        const auto forwarded = !forward_bytes.empty();
         if(result.client_auth_accepted && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
                 stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_client_public_key"));
@@ -304,7 +309,10 @@ auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const Tl
             }
         }
         emit_zero_rtt_process_result(direction, result);
-        return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
+        return RecordProcessOutput{
+            .bytes = std::move(forward_bytes),
+            .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+        };
     }
 
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction) {
@@ -327,7 +335,7 @@ auto TlsTcpCarrierSession::process_preconfirmed_client_record(Direction directio
 
     auto result = zero_rtt_controller_->process_inbound_record(direction, record);
     auto forward_tls = std::move(result.forward_bytes);
-    const auto cover_bytes = forward_tls.size();
+    const auto forwarded = !forward_tls.empty();
 
     if(!result.record_errors.empty()) {
         emit_zero_rtt_process_result(direction, result);
@@ -358,7 +366,10 @@ auto TlsTcpCarrierSession::process_preconfirmed_client_record(Direction directio
     }
 
     emit_zero_rtt_process_result(direction, result);
-    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+    return RecordProcessOutput{
+        .bytes = std::move(forward_tls),
+        .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+    };
 }
 
 auto TlsTcpCarrierSession::process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -366,21 +377,26 @@ auto TlsTcpCarrierSession::process_authenticated_record(Direction direction, con
         stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline"));
         return {};
     }
-    auto result = inbound_classified_pipeline(direction).process_inbound_record(
+    std::vector<std::size_t> cover_record_sizes;
+    auto observation_result = inbound_classified_pipeline(direction).process_inbound_record(
         direction, record, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-        [this](Direction record_direction, const TlsRecord& observed_record) {
+        [this, &cover_record_sizes](Direction record_direction, const TlsRecord& observed_record) {
             auto observed = zero_rtt_controller_->observe_tls_record(record_direction, observed_record);
             emit_zero_rtt_observe_result(record_direction, observed);
+            cover_record_sizes.push_back(observed_record.wire.size());
         }
     );
-    auto forward_tls = std::move(result.forward_tls_bytes);
-    const auto cover_bytes = forward_tls.size();
-    emit_classified_process_result(direction, result);
-    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
-        stop_with(close_info_from_classified_result(direction, result));
+    auto forward_tls = std::move(observation_result.forward_tls_bytes);
+    emit_classified_process_result(direction, observation_result);
+    if(observation_result.close_required || !observation_result.parse_errors.empty() || !observation_result.record_errors.empty() ||
+       !observation_result.classified_errors.empty()) {
+        stop_with(close_info_from_classified_result(direction, observation_result));
         return {};
     }
-    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+    if(forward_tls.empty()) {
+        cover_record_sizes.clear();
+    }
+    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_record_sizes = std::move(cover_record_sizes)};
 }
 
 auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput {
@@ -391,6 +407,13 @@ auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction dire
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction || zero_rtt_client_upgrade_sent_ ||
        zero_rtt_authenticated_ || !config_.zero_rtt->auto_start_client || tls_record_parser(direction).pending_bytes() != 0U ||
        !zero_rtt_controller_->has_channel_binding()) {
+        return {};
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if(!zero_rtt_client_channel_ready_at_.has_value()) {
+        zero_rtt_client_channel_ready_at_ = now;
+    }
+    if(now - *zero_rtt_client_channel_ready_at_ < config_.zero_rtt->client_upgrade_delay) {
         return {};
     }
 
@@ -408,7 +431,7 @@ auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction dire
         }
         auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
         emit_zero_rtt_observe_result(direction, observed);
-        return RecordProcessOutput{.bytes = std::move(upgrade_record), .pause_read = true};
+        return RecordProcessOutput{.bytes = std::move(upgrade_record), .cover_record_sizes = {}, .pause_read = true};
     }
 
     if(handlers_.on_zero_rtt_build_error) {
@@ -649,9 +672,9 @@ auto TlsTcpCarrierSession::encode_classified_write(
     return Result<WriteItem, TlsTcpCarrierEnqueueError>::success(WriteItem{.bytes = std::move(record)});
 }
 
-auto TlsTcpCarrierSession::shaper_enabled() const noexcept -> bool { return shaper_.has_value(); }
+auto TlsTcpCarrierSession::shaper_enabled() const noexcept -> bool { return static_cast<bool>(shaper_); }
 
-void TlsTcpCarrierSession::observe_cover_bytes(Direction direction, std::size_t bytes) {
+void TlsTcpCarrierSession::observe_cover_record(Direction direction, std::size_t bytes) {
     if(!shaper_enabled() || bytes == 0U) {
         return;
     }

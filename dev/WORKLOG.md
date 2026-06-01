@@ -4,6 +4,66 @@
 
 ## 2026-06-01
 
+### Add adaptive TLS-record shaper baseline
+
+Goal:
+
+- Move the shaper from static-only CDF scheduling toward robust traffic-shape
+  mimicry by learning from real carrier TLS records.
+- Keep the implementation simple: independent adaptive CDFs for record size and
+  inter-record delay, shared across local sessions, with pcap/correlation tests
+  deferred until the baseline is stable.
+
+Changes:
+
+- Added adaptive fields to `ShaperProfile`: enable flag, minimum warmup record
+  count, minimum observed warmup window, decay and snapshot interval.
+- Taught `Shaper` to observe parsed carrier TLS records, maintain decayed
+  record-size and delay buckets, switch from static CDF to adaptive CDF after
+  warmup and expose metadata snapshots.
+- Added encrypted shaper snapshot control payloads. The server sends snapshots
+  after authentication and periodically; clients apply matching-profile
+  snapshots as advisory bootstrap data.
+- Changed relay sessions to share one process-level `Shaper`, so all open
+  carriers train one adaptive model instead of isolated per-session models.
+- Added client-side Zero-RTT upgrade delay config. Client configs default to
+  `2000 ms`, server configs to `0 ms`, giving initial carrier traffic time to
+  warm the adaptive model before FPS records are inserted.
+- Ensured shaper observations happen at TLS-record granularity, not TCP read
+  chunk granularity, and excluded inserted classified FPS records from training.
+- Updated spec/testing/pcap/roadmap/review docs for the new adaptive baseline.
+
+Decisions:
+
+- Independent size and delay CDFs are the first robust baseline. A joint
+  size/time model such as a copula remains conditional on pcap evidence.
+- Snapshot control frames contain only model metadata and profile id, never
+  UUIDs, keys, nonces, raw TLS payloads or TUN/IP payload bytes.
+- The client upgrade delay is checked on later carrier TLS records; it is not a
+  timer that injects auth into an idle carrier.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=shaper,tls_tcp_carrier_session,tcp_relay_app,tun_lease --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build -R 'fps_https_zero_rtt_(chain|hint_precheck|large_response|multi_session|adversarial)' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -R 'fps_tun_zero_rtt_shaper|fps_tun_zero_rtt_loopback' --output-on-failure`
+- `git diff --check`
+
+Fixes during verification:
+
+- Initial full CTest failed short HTTPS Zero-RTT integrations because the new
+  product default client delay (`2000 ms`) intentionally waits for carrier
+  warmup, while those tests close quickly. Test fixtures now explicitly set
+  `client_upgrade_delay_ms=0`; product defaults remain unchanged.
+- Self-review also caught a silent snapshot `profile_id` truncation risk.
+  `Shaper` now rejects profile ids longer than the one-byte snapshot field.
+
 ### Add size-aware classified-record shaping
 
 Goal:

@@ -132,8 +132,11 @@ Current construction:
   are unsupported because one UUID maps to one client public key and one
   persistent TUN lease identity.
 - The client builds one encrypted auth record only after observing TLS
-  Application Data in both carrier directions and enough real carrier TLS
-  records to form a bidirectional transcript binding.
+  Application Data in both carrier directions, enough real carrier TLS records
+  to form a bidirectional transcript binding and the configured client-side
+  upgrade delay. The default client delay is two seconds. It lets a fresh relay
+  observe initial carrier record-size/timing behavior before inserting FPS
+  records.
 - Upgrade associated data binds the attempt to the bidirectional TLS record
   indices, transcript byte counts, transcript hashes and profile id.
 - The transcript is an incremental cryptographic hash of visible carrier TLS
@@ -365,6 +368,8 @@ Current implemented scope:
 
 - deterministic profile-driven budget for externally injected datagram/control
   frames;
+- adaptive record-size and inter-record-delay CDF training from observed
+  carrier TLS records;
 - size-aware classified-record encoding: when the shaper selects a target TLS
   Application Data record wire size, FPS pads the encrypted classified record to
   that exact outer TLS record size;
@@ -380,10 +385,28 @@ classified-record padding capacity, blocks injection until another scheduling
 attempt. `codec.max_frame_padding` also limits classified-record padding in the
 current Linux relay config.
 
+Adaptive behavior:
+
+- each relay process owns one shared `Shaper` instance when the shaper is
+  enabled; all authenticated and pre-auth carrier sessions in that process
+  train the same adaptive model;
+- observations are made after TCP bytes have been sliced into complete TLS
+  records, so `recv`/`read_some` chunk boundaries do not affect the model;
+- only ordinary forwarded carrier TLS records train the adaptive CDF. Inserted
+  classified FPS records are excluded from observations;
+- adaptive scheduling is used only after the configured minimum record count and
+  minimum observed time window are reached for a direction. Until then, the
+  static configured CDF remains the bootstrap/fallback model;
+- default warmup is 16 observed carrier records and 2000 ms per direction;
+- adaptive buckets are decayed with `adaptive.decay` to keep the model inertial
+  while still allowing it to follow long-running carrier changes;
+- the server periodically sends an encrypted shaper snapshot control frame to
+  authenticated clients. The snapshot contains CDF metadata and profile id only,
+  no payload bytes, keys, UUIDs or nonces. Clients treat it as advisory model
+  bootstrap data for faster convergence after authentication.
+
 Deferred work:
 
-- adaptive timing/size control of inserted classified FPS records against the
-  observed carrier profile;
 - statistical assertions for record size/delay distributions;
 - profile capture tooling and classifier regression lab.
 
@@ -409,7 +432,8 @@ Minimal server-side v5 shape:
       "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"],
       "version": 5,
       "min_records_before_trial": 1,
-      "upgrade_direction": "client_to_server"
+      "upgrade_direction": "client_to_server",
+      "client_upgrade_delay_ms": 0
     }
   },
   "codec": {
@@ -447,6 +471,33 @@ config uses only inline padded RFC4648 base64 fields
 `security.zero_rtt.version` is optional and defaults to `5`. When present it
 must be `5`; pre-production wire formats are intentionally not accepted as
 compatibility modes.
+`security.zero_rtt.client_upgrade_delay_ms` defaults to `2000` for client
+configs and `0` for server configs. The delay is checked when more carrier TLS
+records arrive after bidirectional Application Data is observed; it is intended
+for continuous carrier sessions, not as a wall-clock timer that injects FPS
+bytes into an idle carrier.
+
+Optional shaper adaptive fields live under `shaper.adaptive`:
+
+```json
+{
+  "shaper": {
+    "enabled": true,
+    "profile_id": "example-origin-v5",
+    "record_size_cdf_c2s": [{"le": 512, "p": 0.4}, {"le": 1500, "p": 1.0}],
+    "record_size_cdf_s2c": [{"le": 512, "p": 0.4}, {"le": 1500, "p": 1.0}],
+    "inter_record_delay_ms_cdf_c2s": [{"le": 20, "p": 0.5}, {"le": 100, "p": 1.0}],
+    "inter_record_delay_ms_cdf_s2c": [{"le": 20, "p": 0.5}, {"le": 100, "p": 1.0}],
+    "adaptive": {
+      "enabled": true,
+      "min_records": 16,
+      "min_observation_ms": 2000,
+      "decay": 0.98,
+      "snapshot_interval_ms": 30000
+    }
+  }
+}
+```
 
 Validation rules:
 

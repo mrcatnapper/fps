@@ -99,11 +99,23 @@ namespace fps::net::detail {
     auto burst_records = parse_positive_size_config(root, "burst_records_max", 1);
     auto jitter_min = optional_int64_config(root, "jitter_ms.min");
     auto jitter_max = optional_int64_config(root, "jitter_ms.max");
+    auto adaptive_enabled = optional_bool_config(root, "adaptive.enabled");
+    auto adaptive_min_records = parse_positive_size_config(root, "adaptive.min_records", 16);
+    auto adaptive_min_observation = optional_int64_config(root, "adaptive.min_observation_ms");
+    auto adaptive_decay = optional_double_config(root, "adaptive.decay");
+    auto snapshot_interval = optional_int64_config(root, "adaptive.snapshot_interval_ms");
     auto seed = parse_seed(root);
-    if(!covert_ratio || !burst_records || !jitter_min || !jitter_max || !seed) {
+    if(!covert_ratio || !burst_records || !jitter_min || !jitter_max || !adaptive_enabled || !adaptive_min_records || !adaptive_min_observation ||
+       !adaptive_decay || !snapshot_interval || !seed) {
         return Result<ShaperProfile, std::string>::failure(
-            !covert_ratio ? covert_ratio.error()
-                          : (!burst_records ? burst_records.error() : (!jitter_min ? jitter_min.error() : (!jitter_max ? jitter_max.error() : seed.error())))
+            !covert_ratio       ? covert_ratio.error()
+            : !burst_records    ? burst_records.error()
+            : !jitter_min       ? jitter_min.error()
+            : !jitter_max       ? jitter_max.error()
+            : !adaptive_enabled ? adaptive_enabled.error()
+            : !adaptive_min_records
+                ? adaptive_min_records.error()
+                : !adaptive_min_observation ? adaptive_min_observation.error() : (!adaptive_decay ? adaptive_decay.error() : (!snapshot_interval ? snapshot_interval.error() : seed.error()))
         );
     }
 
@@ -126,6 +138,11 @@ namespace fps::net::detail {
                 .min = std::chrono::milliseconds{jitter_min.value().value_or(0)},
                 .max = std::chrono::milliseconds{jitter_max.value().value_or(0)},
             },
+        .adaptive_enabled = adaptive_enabled.value().value_or(true),
+        .adaptive_min_records = adaptive_min_records.value(),
+        .adaptive_min_observation = std::chrono::milliseconds{adaptive_min_observation.value().value_or(2000)},
+        .adaptive_decay = adaptive_decay.value().value_or(0.98),
+        .snapshot_interval = std::chrono::milliseconds{snapshot_interval.value().value_or(30000)},
         .deterministic_seed = std::move(seed).value(),
     };
 

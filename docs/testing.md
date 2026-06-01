@@ -292,7 +292,8 @@ notes with the release-candidate record.
 - `wss`: WebSocket-over-TLS carrier generation and relay paths.
 - `zero_rtt`: transcript-bound Zero-RTT late upgrade and classified-record path.
 - `multi_carrier`: more than one authenticated carrier session.
-- `shaper`: shaper-gated injected writes.
+- `shaper`: shaper-gated injected writes, adaptive TLS-record CDF training and
+  snapshot bootstrap.
 - `fragmentation`: TUN packet splitting/reassembly.
 - `pcap`: opt-in tcpdump/libpcap wire-shape regression.
 - `tun`: real Linux TUN/netns checks.
@@ -313,12 +314,14 @@ Unit tests cover:
   implicit sequence, tamper rejection and no-plaintext-metadata smoke.
 - Shaper deterministic plans, CDF validation, ratio budget, proposal/commit
   scheduling, target TLS record size bounds, burst limit, backpressure
-  clear/block, direction isolation and profile exhaustion.
+  clear/block, direction isolation, profile exhaustion, adaptive warmup,
+  observed record-size/delay sampling and encrypted snapshot encode/decode.
 - `TlsTcpCarrierSession` passthrough, Zero-RTT client-auth/server-accept/classify,
   client late upgrade, race-safe server-accept wait with cover-record fallback,
   fragmented server-accept wait, post-accept carrier passthrough plus classified
-  record insertion, size-aware shaped classified records, shaper queue preflight
-  and unauthenticated enqueue rejection.
+  record insertion, size-aware shaped classified records, shared shaper
+  observation of coalesced TCP reads as complete TLS records, shaper queue
+  preflight and unauthenticated enqueue rejection.
 - `CovertDatagramTransport`, `TunTunnelAdapter` and `TunPacketPump` carrier
   registration/removal, generic datagram round-robin and targeted writes,
   lease-aware destination routing, strict source-IP enforcement,
@@ -477,7 +480,8 @@ example run, plots and conclusions.
 - There is no long-running soak/stress test for sustained TUN backpressure.
 - Fuzzing is bounded smoke, not a long corpus-minimization campaign.
 - Shaper unit/session tests assert exact inserted classified TLS record wire
-  sizes, but not yet full pcap-level timing/size distribution mimicry.
+  sizes and adaptive per-TLS-record model behavior, but not yet full pcap-level
+  timing/size distribution mimicry.
 - Production UUID/key rotation, hardened proxy overlay policy,
   lease-management UX beyond list/revoke/prune and realistic carrier traffic
   modeling workflows remain future work.

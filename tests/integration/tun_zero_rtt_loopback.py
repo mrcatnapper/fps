@@ -298,7 +298,8 @@ def zero_rtt_json(role):
       "capabilities": 1,
       "max_padding_size": 64,
       "min_records_before_trial": 1,
-      "upgrade_direction": "client_to_server"
+      "upgrade_direction": "client_to_server",
+      "client_upgrade_delay_ms": 0
     }
   },
 """ % key_config

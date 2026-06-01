@@ -75,9 +75,7 @@ TlsTcpCarrierSession::TlsTcpCarrierSession(
     if(config_.zero_rtt.has_value()) {
         zero_rtt_controller_.emplace(config_.zero_rtt->controller_config);
     }
-    if(config_.shaper_profile.has_value()) {
-        shaper_.emplace(*config_.shaper_profile);
-    }
+    shaper_ = config_.shaper;
 }
 
 void TlsTcpCarrierSession::start() {

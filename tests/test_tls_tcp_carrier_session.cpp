@@ -125,6 +125,10 @@ auto fixed_record_shaper_profile(std::size_t record_size) -> fps::ShaperProfile 
     };
 }
 
+auto shared_shaper(std::optional<fps::ShaperProfile> profile) -> std::shared_ptr<fps::Shaper> {
+    return profile.has_value() ? std::make_shared<fps::Shaper>(*profile) : nullptr;
+}
+
 struct BridgeFixture {
     boost::asio::io_context io;
     ConnectedPair client_pair;
@@ -135,7 +139,10 @@ struct BridgeFixture {
     std::optional<fps::net::TlsTcpCarrierSessionStats> closed_stats;
     std::shared_ptr<fps::net::TlsTcpCarrierSession> session;
 
-    explicit BridgeFixture(std::size_t max_write_queue_bytes = 1024U * 1024U, std::optional<fps::ShaperProfile> shaper = std::nullopt)
+    explicit BridgeFixture(
+        std::size_t max_write_queue_bytes = 1024U * 1024U, std::optional<fps::ShaperProfile> shaper = std::nullopt,
+        std::shared_ptr<fps::Shaper> shared_shaper_ptr = nullptr
+    )
         : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
         fps::net::TlsTcpCarrierSessionHandlers handlers;
         handlers.on_covert_frame = [&](fps::Direction, const fps::DecodedFrame& frame) { frames.push_back(frame); };
@@ -145,7 +152,10 @@ struct BridgeFixture {
 
         session = fps::net::TlsTcpCarrierSession::create(
             std::move(client_pair.bridge), std::move(origin_pair.bridge), passthrough_pipelines(), std::move(handlers),
-            {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper_profile = std::move(shaper), .zero_rtt = std::nullopt}
+            {.read_buffer_size = 7,
+             .max_write_queue_bytes = max_write_queue_bytes,
+             .shaper = shared_shaper_ptr ? std::move(shared_shaper_ptr) : shared_shaper(std::move(shaper)),
+             .zero_rtt = std::nullopt}
         );
         session->start();
     }
@@ -194,7 +204,7 @@ struct ZeroRttBridgeFixture {
             std::move(client_pair.bridge), std::move(origin_pair.bridge), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = read_buffer_size,
              .max_write_queue_bytes = max_write_queue_bytes,
-             .shaper_profile = std::move(shaper),
+             .shaper = shared_shaper(std::move(shaper)),
              .zero_rtt = std::move(zero_rtt_options)}
         );
         session->start();
@@ -320,6 +330,42 @@ BOOST_AUTO_TEST_CASE(forwards_real_tls_record_origin_to_client) {
     BOOST_CHECK(received == record);
     BOOST_TEST(fixture.frames.empty());
     BOOST_TEST(fixture.codec_errors.empty());
+}
+
+BOOST_AUTO_TEST_CASE(shared_shaper_observes_coalesced_tcp_bytes_as_tls_records) {
+    auto profile = fixed_record_shaper_profile(128);
+    profile.adaptive_min_records = 2;
+    profile.adaptive_min_observation = std::chrono::milliseconds{0};
+    auto shared = std::make_shared<fps::Shaper>(profile);
+    BridgeFixture fixture{1024U * 1024U, std::nullopt, shared};
+    const auto first = tls_app_record({0x21, 0x22, 0x23});
+    const auto second = tls_app_record({0x31, 0x32});
+    fps::ByteVector combined;
+    combined.insert(combined.end(), first.begin(), first.end());
+    combined.insert(combined.end(), second.begin(), second.end());
+    fps::ByteVector forwarded(combined.size());
+    bool done = false;
+    boost::system::error_code read_error;
+
+    boost::asio::async_read(
+        fixture.origin_pair.external, boost::asio::buffer(forwarded), boost::asio::transfer_exactly(forwarded.size()),
+        [&](const boost::system::error_code& error, std::size_t) {
+            read_error = error;
+            done = true;
+        }
+    );
+    boost::asio::write(fixture.client_pair.external, boost::asio::buffer(combined));
+    run_until(fixture.io, [&] { return done; });
+
+    BOOST_REQUIRE(done);
+    BOOST_REQUIRE(!read_error);
+    BOOST_CHECK(forwarded == combined);
+    BOOST_TEST(shared->cover_bytes(fps::Direction::client_to_server) == combined.size());
+    const auto snapshot = shared->snapshot();
+    const auto& c2s = snapshot.directions[fps::direction_index(fps::Direction::client_to_server)];
+    BOOST_TEST(c2s.observed_records == 2U);
+    BOOST_REQUIRE_EQUAL(c2s.record_size_cdf.size(), 1U);
+    BOOST_TEST(c2s.record_size_cdf[0].le == 64U);
 }
 
 BOOST_AUTO_TEST_CASE(close_reports_tcp_traffic_stats) {

@@ -118,15 +118,20 @@ traffic-shape mimicry.
 The next traffic-analysis work should focus on classified-record scheduling and
 shaping, not on TLS record syntactic validity alone. The first shaper increment
 now pads inserted classified FPS records to planner-selected full TLS record
-wire sizes; this is necessary, but not sufficient, for statistical mimicry.
+wire sizes. The current shaper baseline also trains an adaptive CDF from parsed
+carrier TLS records across sessions and can bootstrap clients with encrypted
+server snapshots. This is necessary, but not sufficient, for statistical
+mimicry.
 Useful next experiments:
 
 - compare a pure carrier capture against carrier-plus-FPS captures at several
   TUN rates;
 - cap or pace covert datagram frames so they do not create a separate near-MTU
   packet band;
-- schedule FPS envelopes against the carrier's observed cadence instead of
-  flushing immediately whenever TUN data is available;
+- evaluate whether adaptive CDF scheduling reduces the near-MTU packet band and
+  cadence shift visible in this baseline capture;
+- add a pcap-level check that compares observed post-upgrade record-size and
+  inter-packet distributions against the learned carrier model;
 - rerun the same pcap analysis over real browser/application carrier sessions,
   not only the deterministic debug carrier;
 - keep `is_pcap_looks_like_tls.py` as a basic wire-shape regression, but add a

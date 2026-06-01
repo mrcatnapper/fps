@@ -119,6 +119,13 @@ auto shaper_profile_json() -> std::string {
     "covert_ratio_max": 1.0,
     "burst_records_max": 2,
     "jitter_ms": {"min": 0, "max": 0},
+    "adaptive": {
+      "enabled": true,
+      "min_records": 3,
+      "min_observation_ms": 1234,
+      "decay": 0.75,
+      "snapshot_interval_ms": 4567
+    },
     "deterministic_seed": "7"
   )json";
 }
@@ -281,6 +288,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
                    "capabilities": 7,
                    "max_padding_size": 19,
                    "min_records_before_trial": 2,
+                   "client_upgrade_delay_ms": 3456,
                    "upgrade_direction": "client_to_server"
                  }
                }
@@ -301,6 +309,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
     BOOST_TEST(controller.zero_rtt.version == 5U);
     BOOST_TEST(controller.zero_rtt.capabilities == 7U);
     BOOST_TEST(controller.min_records_before_trial == 2U);
+    BOOST_TEST(loaded.value().zero_rtt->client_upgrade_delay.count() == 3456);
 }
 
 BOOST_AUTO_TEST_CASE(loads_zero_rtt_server_json_config_with_base64_keys_and_uuid_allowlist) {
@@ -408,6 +417,11 @@ BOOST_AUTO_TEST_CASE(loads_inline_and_file_shaper_json_config) {
     BOOST_REQUIRE(inline_loaded);
     BOOST_REQUIRE(inline_loaded.value().shaper_profile.has_value());
     BOOST_TEST(inline_loaded.value().shaper_profile->profile_id == "unit-profile");
+    BOOST_TEST(inline_loaded.value().shaper_profile->adaptive_enabled);
+    BOOST_TEST(inline_loaded.value().shaper_profile->adaptive_min_records == 3U);
+    BOOST_TEST(inline_loaded.value().shaper_profile->adaptive_min_observation.count() == 1234);
+    BOOST_TEST(inline_loaded.value().shaper_profile->adaptive_decay == 0.75);
+    BOOST_TEST(inline_loaded.value().shaper_profile->snapshot_interval.count() == 4567);
     BOOST_REQUIRE(inline_loaded.value().shaper_profile->deterministic_seed.has_value());
     BOOST_TEST(*inline_loaded.value().shaper_profile->deterministic_seed == 7U);
 

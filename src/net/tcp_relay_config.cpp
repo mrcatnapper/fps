@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -155,6 +156,11 @@ struct AllowedClientConfig {
     if(!min_records) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
+    auto client_upgrade_delay =
+        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_ms", role == RelayRole::client ? 2000U : 0U);
+    if(!client_upgrade_delay) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay.error());
+    }
 
     auto version = parse_u16_config(tree, "security.zero_rtt.version", kFpsWireVersion);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
@@ -254,6 +260,7 @@ struct AllowedClientConfig {
                 .upgrade_direction = upgrade_direction,
                 .min_records_before_trial = min_records.value(),
             },
+        .client_upgrade_delay = std::chrono::milliseconds{client_upgrade_delay.value()},
         .uses_client_uuid = role == RelayRole::client,
         .allowed_client_uuid_count = allowed_uuid_count,
     };

@@ -30,6 +30,7 @@ struct TlsTcpCarrierZeroRttOptions {
     ByteVector client_upgrade_padding;
     std::optional<X25519KeyPair> client_ephemeral_key_pair;
     bool auto_start_client = true;
+    std::chrono::milliseconds client_upgrade_delay{0};
     std::size_t max_inner_tls_bytes = 64U * 1024U;
     std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
@@ -40,7 +41,7 @@ struct TlsTcpCarrierZeroRttOptions {
 struct TlsTcpCarrierSessionConfig {
     std::size_t read_buffer_size = 64U * 1024U;
     std::size_t max_write_queue_bytes = 1024U * 1024U;
-    std::optional<ShaperProfile> shaper_profile;
+    std::shared_ptr<Shaper> shaper;
     std::optional<TlsTcpCarrierZeroRttOptions> zero_rtt;
 };
 
@@ -197,7 +198,7 @@ private:
 
     struct RecordProcessOutput {
         ByteVector bytes;
-        std::size_t cover_bytes = 0;
+        std::vector<std::size_t> cover_record_sizes;
         bool pause_read = false;
     };
 
@@ -226,7 +227,7 @@ private:
         Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t target_tls_record_size
     ) -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
     [[nodiscard]] auto shaper_enabled() const noexcept -> bool;
-    void observe_cover_bytes(Direction direction, std::size_t bytes);
+    void observe_cover_record(Direction direction, std::size_t bytes);
     void enqueue_counted_write(Direction direction, WriteItem item);
     void enqueue_write(Direction direction, WriteItem item);
     void enqueue_shaped_write(Direction direction, ShapedWriteItem item);
@@ -273,7 +274,7 @@ private:
     TlsTcpCarrierSessionPipelines pipelines_;
     std::optional<FpsUpgradeController> zero_rtt_controller_;
     std::unique_ptr<ClassifiedRecordPipelines> classified_pipelines_;
-    std::optional<Shaper> shaper_;
+    std::shared_ptr<Shaper> shaper_;
     TlsTcpCarrierSessionHandlers handlers_;
     TlsTcpCarrierSessionConfig config_;
     TlsRecordParser client_to_server_tls_parser_;
@@ -297,6 +298,7 @@ private:
     bool server_to_client_shutdown_done_ = false;
     bool zero_rtt_authenticated_ = false;
     bool zero_rtt_client_upgrade_sent_ = false;
+    std::optional<std::chrono::steady_clock::time_point> zero_rtt_client_channel_ready_at_;
     std::optional<TlsTcpCarrierCloseInfo> pending_close_info_;
     TlsTcpCarrierSessionStats stats_;
 };

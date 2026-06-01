@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -40,6 +41,7 @@ struct TunRelayConfig {
 
 struct ZeroRttRelayConfig {
     FpsUpgradeControllerConfig controller_config;
+    std::chrono::milliseconds client_upgrade_delay{0};
     bool uses_client_uuid = false;
     std::size_t allowed_client_uuid_count = 0;
 };

@@ -159,6 +159,10 @@ auto decode_tun_lease_control(std::span<const std::byte> payload) -> TunLeaseRes
     );
 }
 
+auto is_tun_lease_control(std::span<const std::byte> payload) noexcept -> bool {
+    return !payload.empty() && std::to_integer<unsigned int>(payload[0]) == kControlTypeTunLease;
+}
+
 auto encode_client_instance_control(const ClientInstanceId& client_instance_id) -> ByteVector {
     ByteVector out;
     out.reserve(kClientInstanceControlPayloadSize);
@@ -179,6 +183,10 @@ auto decode_client_instance_control(std::span<const std::byte> payload) -> TunLe
     ClientInstanceMetadata metadata;
     std::copy(payload.begin() + 2, payload.end(), metadata.client_instance_id.begin());
     return TunLeaseResult<ClientInstanceMetadata>::success(metadata);
+}
+
+auto is_client_instance_control(std::span<const std::byte> payload) noexcept -> bool {
+    return !payload.empty() && std::to_integer<unsigned int>(payload[0]) == kControlTypeClientInstance;
 }
 
 auto ipv4_packet_source(std::span<const std::byte> packet) -> std::optional<std::uint32_t> {
