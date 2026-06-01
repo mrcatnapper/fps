@@ -4,6 +4,67 @@
 
 ## 2026-06-01
 
+### Run remote market-data carrier pcap experiment
+
+Goal:
+
+- Capture and analyze the visible `fps_client <-> fps_server` TCP flow on a
+  real remote host, avoiding local Docker loopback and kernel bypass effects.
+- Use a dense automated HTTPS market-data carrier with a visible
+  `client_upgrade_delay_ms=10000` pre-upgrade window, then send bounded TUN/FPS
+  datagrams after upgrade.
+
+Changes:
+
+- Added two public report plots under `docs/assets/pcap-flow/`:
+  `market-data-remote-overview.png` and
+  `market-data-remote-quantiles.png`.
+- Updated `docs/pcap-flow-analysis.md` with an anonymized remote-host
+  market-data experiment section, measured packet/timing quantiles and
+  interpretation.
+
+Decisions:
+
+- Do not document the concrete external market-data service name; the relevant
+  shape is periodic HTTPS GET requests with roughly 32 KiB responses.
+- Treat this as a pcap/traffic-shape experiment, not a TUN application
+  throughput benchmark. Server-to-client UDP delivery was verified at the
+  application socket. Client-to-server frames were verified through FPS daemon
+  counters because the ad-hoc UDP socket bound to the server TUN address did
+  not receive locally delivered packets in this setup.
+- The experiment shows the important asymmetry of GET-response carriers:
+  server-to-client covert capacity is much larger than client-to-server
+  capacity. The adaptive shaper correctly blocked oversized client-to-server
+  datagrams instead of forcing unnatural large request-direction records.
+
+Verification:
+
+- Remote build on `fpshop`:
+  `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`
+  and `cmake --build build -j 2 --target fps_client fps_server`.
+- Remote tcpdump:
+  `tcpdump --immediate-mode -i <remote-iface> -s 0 -U -w fps-link.pcap 'host <client-public-ip> and tcp port 443'`.
+- Carrier workload: 150 persistent-connection HTTPS GET polls at about
+  0.5 second interval, about 4.81 MiB response bytes total.
+- `python3 tools/is_pcap_looks_like_tls.py captures/.../fps-link.pcap --port 443 --require-bidirectional --require-application-data --min-records 10 --summary captures/.../tls-shape.json`
+- `python3 tools/analyze_pcap_tcp_flow.py captures/.../fps-link.pcap --port 443 --split-time-epoch <epoch> --summary-json captures/.../flow-summary.json --packets-csv captures/.../flow-packets.csv --svg captures/.../flow-plot.svg`
+- `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/.../flow-packets.csv --summary-json captures/.../flow-summary.json --out-prefix captures/.../market-data-flow --sample-size 0`
+- `git diff --check`
+
+Results:
+
+- Capture duration: about 75.1 s, upgrade split about 10.5 s after capture
+  start, 4576 packets captured, 0 tcpdump kernel drops.
+- TLS wire-shape checker: 1033 TLS records total, all observed FPS-link payload
+  remained parseable as TLS records.
+- Post-upgrade visible link: about 1.02 Mbit/s IP throughput, IP size p50
+  261 B, IP size p95 5844 B, inter-packet p50 0.76 ms, p95 82.7 ms.
+- Directional post-upgrade shape is strongly asymmetric:
+  client-to-server about 0.021 Mbit/s, server-to-client about 1.00 Mbit/s.
+- FPS daemon counters in the refined run: client-to-server accepted 103
+  datagram frames / 6144 bytes; server-to-client delivered 240 datagram frames /
+  294720 bytes.
+
 ### Add adaptive TLS-record shaper baseline
 
 Goal:

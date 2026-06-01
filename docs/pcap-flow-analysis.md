@@ -139,3 +139,107 @@ Useful next experiments:
 
 For now, treat these plots as a diagnostic baseline. They show that FPS is
 syntactically TLS-shaped, but not yet statistically shaped.
+
+## Remote Market-Data Carrier Experiment
+
+The next experiment moved away from local Docker loopback and debug WSS traffic.
+It used a real remote Linux host for `fps_server`, captured the public
+`fps_client <-> fps_server` link on the remote host's Ethernet interface, and
+used periodic HTTPS GET requests to a public cryptocurrency exchange market-data
+API as the carrier. The exact external service is intentionally not part of the
+project documentation; the relevant traffic shape is a small client request
+followed by a response of roughly 32 KiB.
+
+Experiment parameters:
+
+- `fps_server` ran on the remote host and listened on TCP port `443`;
+- `fps_client` ran locally and connected to that public endpoint;
+- the capture filter selected only the client public IP and server TCP port
+  `443`, excluding the server's separate outbound connection to the origin;
+- the market-data poller used one persistent HTTPS connection, one GET about
+  every 0.5 seconds, and 150 total polls;
+- `security.zero_rtt.client_upgrade_delay_ms` was set to `10000`, so the plots
+  have a visible pre-upgrade learning window;
+- the shaper used adaptive record-size and inter-record-delay CDF learning with
+  encrypted server-to-client CDF snapshots;
+- after upgrade, bounded UDP probes produced opaque FPS datagrams over the TUN
+  adapter.
+
+Readable plots from the refined run:
+
+![Remote market-data carrier packet size and timing overview](./assets/pcap-flow/market-data-remote-overview.png)
+
+![Remote market-data carrier packet-size and inter-packet quantiles](./assets/pcap-flow/market-data-remote-quantiles.png)
+
+Wire-shape check:
+
+```text
+total TLS records: 1033
+client -> server Application Data records: 255
+server -> client Application Data records: 774
+content types observed: ChangeCipherSpec, Handshake, ApplicationData
+tcpdump kernel drops: 0
+```
+
+Carrier workload:
+
+| Metric | Value |
+| --- | ---: |
+| Capture duration | about 75.1 s |
+| Upgrade split | about 10.5 s after capture start |
+| Market-data polls | 150 |
+| Market-data response bytes | about 4.81 MiB total |
+| Captured packets | 4576 |
+
+Visible FPS TCP-link packet statistics:
+
+| Phase | Duration | Packets | IP throughput | IP size p50 | IP size p95 | inter-packet p50 | inter-packet p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before upgrade | about 10.1 s | 184 | about 0.56 Mbit/s | 261 B | 14532 B | 0.94 ms | 473 ms |
+| after upgrade | about 64.5 s | 4392 | about 1.02 Mbit/s | 261 B | 5844 B | 0.76 ms | 82.7 ms |
+
+Direction-specific post-upgrade statistics:
+
+| Direction | Packets | IP throughput | IP size p50 | IP size p95 | TCP payload p50 | TCP payload p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| client to server | 2189 | about 0.021 Mbit/s | 52 B | 261 B | 0 B | 209 B |
+| server to client | 2203 | about 1.00 Mbit/s | 3212 B | 5844 B | 3160 B | 5792 B |
+
+FPS/TUN signal from daemon counters:
+
+| Direction | Probe | FPS daemon result |
+| --- | --- | --- |
+| client to server | small UDP datagrams | 103 datagram frames, 6144 bytes accepted by the server-side FPS session |
+| server to client | 240 UDP datagrams, 1200-byte payloads | 240 datagram frames, 294720 bytes delivered to the client-side FPS session |
+
+An earlier diagnostic run attempted 256-byte client-to-server UDP payloads. The
+adaptive shaper learned that this carrier's client-to-server TLS records were
+small request records; it therefore blocked those larger covert payloads rather
+than emitting a larger, easier-to-fingerprint client-to-server TLS record. That
+is the right security-biased behavior for this shaper baseline, but it also
+shows that a GET-response carrier is naturally asymmetric: server-to-client
+capacity is much better than client-to-server capacity.
+
+The refined run used smaller client-to-server UDP payloads so FPS could insert
+classified records in both directions. The ad-hoc UDP socket bound to the
+server's own TUN address did not receive those local packets, so this experiment
+does not claim an application-level client-to-server UDP throughput number.
+The daemon counters are still useful for the pcap question: FPS did encode,
+send, classify and accept client-to-server datagram frames without breaking TLS
+record syntax.
+
+### Remote-Carrier Interpretation
+
+This capture is closer to a real automated carrier than the local WSS debug
+baseline. It shows three practical points:
+
+- the link remains syntactically TLS-shaped after upgrade;
+- the adaptive shaper respects directional carrier asymmetry instead of forcing
+  large records into the thin client-to-server request stream;
+- a dense response-heavy HTTPS polling carrier can provide useful
+  server-to-client covert capacity, but it is not a balanced full-duplex carrier
+  unless the application naturally sends larger client-to-server records too.
+
+The next useful research step is to repeat the same measurement with carriers
+whose application protocol is naturally full-duplex or client-upload-heavy, then
+compare post-upgrade CDF drift against the carrier-only baseline.
