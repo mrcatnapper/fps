@@ -166,6 +166,7 @@ void print_config_summary(std::ostream& out, const TcpRelayConfig& config, std::
         out << " zero_rtt_profile_id=" << controller.profile_id << " zero_rtt_direction=" << direction_name(controller.upgrade_direction)
             << " zero_rtt_min_records_before_trial=" << controller.min_records_before_trial
             << " zero_rtt_client_upgrade_delay_ms=" << config.zero_rtt->client_upgrade_delay.count()
+            << " zero_rtt_client_upgrade_delay_sigma_ms=" << config.zero_rtt->client_upgrade_delay_sigma.count()
             << " zero_rtt_client_uuid_mode=" << config.zero_rtt->uses_client_uuid;
         if(controller.zero_rtt.role == ZeroRttUpgradeRole::server) {
             out << " zero_rtt_server_base64_key_mode=1"

@@ -31,6 +31,7 @@ struct TlsTcpCarrierZeroRttOptions {
     std::optional<X25519KeyPair> client_ephemeral_key_pair;
     bool auto_start_client = true;
     std::chrono::milliseconds client_upgrade_delay{0};
+    std::chrono::milliseconds client_upgrade_delay_sigma{0};
     std::size_t max_inner_tls_bytes = 64U * 1024U;
     std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
@@ -301,6 +302,7 @@ private:
     bool zero_rtt_client_upgrade_sent_ = false;
     std::uint32_t next_shaped_fragment_packet_id_ = 0x80000000U;
     std::optional<std::chrono::steady_clock::time_point> zero_rtt_client_channel_ready_at_;
+    std::optional<std::chrono::milliseconds> zero_rtt_effective_client_upgrade_delay_;
     std::optional<TlsTcpCarrierCloseInfo> pending_close_info_;
     TlsTcpCarrierSessionStats stats_;
 };

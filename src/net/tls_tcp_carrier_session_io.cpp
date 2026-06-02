@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "fps/core/wire.hpp"
+#include "fps/net/client_upgrade_delay.hpp"
 #include "fps/net/datagram_fragment.hpp"
 
 namespace fps::net {
@@ -444,8 +445,10 @@ auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction dire
     const auto now = std::chrono::steady_clock::now();
     if(!zero_rtt_client_channel_ready_at_.has_value()) {
         zero_rtt_client_channel_ready_at_ = now;
+        zero_rtt_effective_client_upgrade_delay_ =
+            sample_client_upgrade_delay(config_.zero_rtt->client_upgrade_delay, config_.zero_rtt->client_upgrade_delay_sigma);
     }
-    if(now - *zero_rtt_client_channel_ready_at_ < config_.zero_rtt->client_upgrade_delay) {
+    if(now - *zero_rtt_client_channel_ready_at_ < zero_rtt_effective_client_upgrade_delay_.value_or(config_.zero_rtt->client_upgrade_delay)) {
         return {};
     }
 

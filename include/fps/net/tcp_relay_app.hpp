@@ -42,6 +42,7 @@ struct TunRelayConfig {
 struct ZeroRttRelayConfig {
     FpsUpgradeControllerConfig controller_config;
     std::chrono::milliseconds client_upgrade_delay{0};
+    std::chrono::milliseconds client_upgrade_delay_sigma{0};
     bool uses_client_uuid = false;
     std::size_t allowed_client_uuid_count = 0;
 };

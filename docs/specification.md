@@ -440,7 +440,8 @@ Minimal server-side v5 shape:
       "version": 5,
       "min_records_before_trial": 1,
       "upgrade_direction": "client_to_server",
-      "client_upgrade_delay_ms": 0
+      "client_upgrade_delay_ms": 0,
+      "client_upgrade_delay_sigma_ms": 0
     }
   },
   "codec": {
@@ -483,6 +484,14 @@ configs and `0` for server configs. The delay is checked when more carrier TLS
 records arrive after bidirectional Application Data is observed; it is intended
 for continuous carrier sessions, not as a wall-clock timer that injects FPS
 bytes into an idle carrier.
+`security.zero_rtt.client_upgrade_delay_sigma_ms` defaults to one third of
+`client_upgrade_delay_ms` for client configs and `0` for server configs. Each
+client carrier samples one effective delay when the bidirectional TLS
+Application Data channel first becomes eligible for upgrade:
+`clamp(client_upgrade_delay_ms + N(0, sigma_ms), 0, 2 * client_upgrade_delay_ms)`.
+Set the sigma field to `0` for reproducible tests and packet-capture
+experiments. FPS still never sends the client auth record before observing TLS
+Application Data in both carrier directions and the required transcript records.
 
 Optional shaper adaptive fields live under `shaper.adaptive`:
 

@@ -1167,6 +1167,7 @@ private:
             TlsTcpCarrierZeroRttOptions options;
             options.controller_config = config_.zero_rtt->controller_config;
             options.client_upgrade_delay = config_.zero_rtt->client_upgrade_delay;
+            options.client_upgrade_delay_sigma = config_.zero_rtt->client_upgrade_delay_sigma;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
             options.max_envelope_padding_size = config_.max_frame_padding_size;

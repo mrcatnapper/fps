@@ -4,6 +4,36 @@
 
 ## 2026-06-02
 
+### Randomize client Zero-RTT auth delay
+
+Goal:
+
+- Avoid a fixed, globally repeated client-auth timing offset after carrier
+  eligibility while preserving deterministic test and pcap modes.
+
+Changes:
+
+- Added `security.zero_rtt.client_upgrade_delay_sigma_ms`.
+- Default sigma is `client_upgrade_delay_ms / 3` for client configs and `0` for
+  server configs.
+- Each client-side TLS carrier samples one effective delay when bidirectional
+  Application Data and transcript requirements first become ready:
+  `clamp(client_upgrade_delay_ms + N(0, sigma_ms), 0, 2 * client_upgrade_delay_ms)`.
+- `sigma_ms=0` keeps deterministic old behavior for tests and measurements.
+- Updated protocol/testing/pcap docs and added unit coverage for clamp bounds,
+  zero-sigma behavior and config parsing.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_relay_app,tls_tcp_carrier_session --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
 ### Add TCP_NODELAY runtime policy
 
 Goal:

@@ -161,6 +161,12 @@ struct AllowedClientConfig {
     if(!client_upgrade_delay) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay.error());
     }
+    const auto default_upgrade_sigma = role == RelayRole::client ? client_upgrade_delay.value() / 3U : 0U;
+    auto client_upgrade_delay_sigma =
+        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_sigma_ms", default_upgrade_sigma);
+    if(!client_upgrade_delay_sigma) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay_sigma.error());
+    }
 
     auto version = parse_u16_config(tree, "security.zero_rtt.version", kFpsWireVersion);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
@@ -261,6 +267,7 @@ struct AllowedClientConfig {
                 .min_records_before_trial = min_records.value(),
             },
         .client_upgrade_delay = std::chrono::milliseconds{client_upgrade_delay.value()},
+        .client_upgrade_delay_sigma = std::chrono::milliseconds{client_upgrade_delay_sigma.value()},
         .uses_client_uuid = role == RelayRole::client,
         .allowed_client_uuid_count = allowed_uuid_count,
     };

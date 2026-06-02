@@ -160,6 +160,8 @@ Experiment parameters:
   every 0.5 seconds, and 150 total polls;
 - `security.zero_rtt.client_upgrade_delay_ms` was set to `10000`, so the plots
   have a visible pre-upgrade learning window;
+- `security.zero_rtt.client_upgrade_delay_sigma_ms` should be set to `0` when
+  reproducing this experiment so the upgrade split is deterministic;
 - the shaper used adaptive record-size and inter-record-delay CDF learning with
   encrypted server-to-client CDF snapshots;
 - after upgrade, bounded UDP probes produced opaque FPS datagrams over the TUN

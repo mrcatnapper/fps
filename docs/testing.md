@@ -466,6 +466,9 @@ sizes that are larger than physical Ethernet frames. Use these artifacts for TLS
 record syntax and coarse size/timing regressions. For physical wire-shape
 claims, capture from an external tap or disable relevant offloads for the
 measurement host and document that change.
+Set `security.zero_rtt.client_upgrade_delay_sigma_ms=0` in measurement configs
+when the exact upgrade split time matters; the beta default intentionally
+randomizes the client-auth delay around `client_upgrade_delay_ms`.
 
 For more readable research plots, use an optional local Python venv. These
 packages are not FPS runtime or build dependencies:

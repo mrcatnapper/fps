@@ -1,4 +1,5 @@
 #include "fps/net/tcp_relay_app.hpp"
+#include "fps/net/client_upgrade_delay.hpp"
 #include "fps/net/tcp_socket_options.hpp"
 
 #include <boost/asio.hpp>
@@ -303,6 +304,22 @@ BOOST_AUTO_TEST_CASE(tcp_no_delay_helper_sets_connected_socket_option) {
     BOOST_CHECK(!server_option.value());
 }
 
+BOOST_AUTO_TEST_CASE(client_upgrade_delay_helpers_clamp_and_disable_jitter) {
+    using namespace std::chrono_literals;
+
+    BOOST_TEST(fps::net::clamped_client_upgrade_delay(3000ms, -5000ms).count() == 0);
+    BOOST_TEST(fps::net::clamped_client_upgrade_delay(3000ms, 0ms).count() == 3000);
+    BOOST_TEST(fps::net::clamped_client_upgrade_delay(3000ms, 5000ms).count() == 6000);
+    BOOST_TEST(fps::net::sample_client_upgrade_delay(3000ms, 0ms).count() == 3000);
+    BOOST_TEST(fps::net::sample_client_upgrade_delay(0ms, 1000ms).count() == 0);
+
+    for(auto i = 0; i < 32; ++i) {
+        const auto sampled = fps::net::sample_client_upgrade_delay(900ms, 300ms);
+        BOOST_CHECK(sampled >= 0ms);
+        BOOST_CHECK(sampled <= 1800ms);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
     TempDir temp;
     const auto server = key_pair(90);
@@ -348,6 +365,7 @@ BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
     BOOST_TEST(controller.zero_rtt.capabilities == 7U);
     BOOST_TEST(controller.min_records_before_trial == 2U);
     BOOST_TEST(loaded.value().zero_rtt->client_upgrade_delay.count() == 3456);
+    BOOST_TEST(loaded.value().zero_rtt->client_upgrade_delay_sigma.count() == 1152);
 }
 
 BOOST_AUTO_TEST_CASE(loads_zero_rtt_server_json_config_with_base64_keys_and_uuid_allowlist) {
