@@ -2,6 +2,60 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-02
+
+### Self-review and extended validation for shaper-aware fragmentation
+
+Goal:
+
+- Review `5591f4b Add shaper-aware datagram fragmentation` before PR/merge
+  work and run the extended validation set without soak.
+
+Self-review:
+
+- Queue ordering is preserved: dynamic fragmentation replaces the front shaped
+  datagram with ordered fragment queue items on the same carrier.
+- Shaper accounting is consistent: original datagram bytes are queued first,
+  fragment header overhead is added when the datagram is expanded, and each
+  fragment commit consumes `fragment_header + chunk`.
+- Small datagrams still use the unfragmented `opaque_datagram` path when they
+  fit the sampled TLS record; they are not penalized by fragment-header bounds.
+- The lower-bound block path is intentional: if a sampled TLS record cannot fit
+  even `fragment_header + 1 byte`, the datagram remains queued and no unnatural
+  larger record is emitted.
+- Residual limitation: fragment chunk size is fixed at the first split
+  decision. Later smaller shaper samples can block the next already-numbered
+  fragment until a fitting sample appears. This avoids re-fragmenting
+  fragments and preserves current wire semantics.
+- No secret/key/UUID/raw packet logging was introduced. Payload inspection is
+  limited to unit tests.
+
+Verification:
+
+- `FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local suite passed;
+  - ASan+UBSan local suite passed;
+  - Valgrind unit pass reported 0 errors and no leaks;
+  - coverage gates passed: line coverage 74.40%, function coverage 82.20%;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - 4.999 Mbit/s, 0% loss, FPS TUN stats non-zero, services alive.
+- `python3 tools/docker_multi_client_sim.py --sudo --image fps:local --duration 8 --bandwidth 2M --length 900`
+  - two distinct leases, bidirectional probes at about 2 Mbit/s, 0% loss,
+    spoof drop event observed, services alive.
+- `python3 tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - duplicate replacement counter observed; old client blocked, new client OK.
+- `python3 tools/docker_socks_smoke.py --sudo --build --image fps:local --proxy-image fps-dante-proxy:local`
+  - SOCKS HTTP probe OK, services alive.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 8 --bandwidth 3M --length 1000`
+  - 3.001 Mbit/s, 0% loss, FPS TUN stats non-zero, services alive.
+
 ## 2026-06-01
 
 ### Add shaper-aware opaque datagram fragmentation
