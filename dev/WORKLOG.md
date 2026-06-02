@@ -4,6 +4,64 @@
 
 ## 2026-06-02
 
+### Run 5-minute fpshop multi-client Alpine soak
+
+Goal:
+
+- Validate the current shaper-aware datagram fragmentation branch on the weak
+  remote `fpshop` host with multiple leased clients and multiple carrier
+  sessions.
+- Record the future workflow decision: do not build images on weak remote soak
+  hosts; build the Alpine image locally and transfer it with `docker save |
+  ssh ... docker load`.
+
+Setup:
+
+- Built local Alpine runtime image `fps:soak-multi-19b4bf0` from current
+  `develop` commit `19b4bf0`.
+- Transferred the committed repository snapshot to
+  `/tmp/fps-soak-multi-19b4bf0` on `fpshop` with `git archive`.
+- Loaded the locally built image on `fpshop` with
+  `docker save fps:soak-multi-19b4bf0 | gzip -1 | ssh fpshop 'gunzip |
+  docker load'`.
+
+Verification:
+
+- Remote command:
+  `ssh fpshop 'cd /tmp/fps-soak-multi-19b4bf0 && python3
+  tools/docker_resilience_soak.py --image fps:soak-multi-19b4bf0 --duration
+  300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure
+  --stress-bandwidth 2M --startup-timeout 90 --keep-artifacts'`.
+
+Results:
+
+- Main mixed client-to-server UDP: `300.05s`, `14,649` packets,
+  `0%` loss, about `0.200 Mbit/s`, plus `551` HTTP probes.
+- Server-to-client UDP probes to both leases: `489` packets each,
+  `0%` loss.
+- Backpressure stress phase: about `2.000 Mbit/s`, `2,084` packets,
+  `0%` loss; Docker-level `write_queue_full` was not observed, which remains
+  acceptable for this routine topology/timing-dependent stress probe.
+- Spoofed-source negative path: `ignored_spoofed_tun_source=1`; valid
+  post-spoof UDP stayed healthy with `0%` loss.
+- Carrier stop/start recovery: one authenticated carrier closed with expected
+  `peer_eof`, a replacement carrier registered, and recovered UDP stayed at
+  `0%` loss.
+- Final server status: two active carriers, three accepted/authenticated
+  carrier sessions total, one intentional carrier removal, non-zero TUN
+  packet/byte counters, zero TUN write/codec/TLS/packet-too-large failures and
+  all six services running.
+- Log review found no fatal/panic/assert/sanitizer failures. Expected debug
+  `zero_rtt_upgrade_miss precheck_failed` entries appeared before
+  authentication, expected `non_ipv4_tun_destination`/`ignored_non_ipv4`
+  counters appeared from harness probes/background traffic, and carrier-origin
+  `ConnectionClosedError` corresponded to the deliberate carrier restart.
+
+Cleanup:
+
+- Temporary remote artifacts and the temporary local/remote image tag were
+  removed after log review.
+
 ### Self-review and extended validation for shaper-aware fragmentation
 
 Goal:

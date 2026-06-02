@@ -265,6 +265,15 @@ on a separate Linux host and clients on the local host. The server side should
 publish the FPS carrier listener on an externally reachable TLS port such as
 `:443`; keep carrier origin and TUN setup inside containers.
 
+On weak remote hosts, build the Alpine runtime image locally and load it
+remotely instead of compiling there:
+
+```sh
+docker build -f Dockerfile.alpine -t fps:soak-$(git rev-parse --short HEAD) .
+docker save fps:soak-$(git rev-parse --short HEAD) | \
+  ssh fps.example.net docker load
+```
+
 The current beta-candidate shape is:
 
 - one remote `fps_server` plus self-hosted `fps_carrier origin`;
