@@ -242,6 +242,88 @@ The daemon counters are still useful for the pcap question: FPS did encode,
 send, classify and accept client-to-server datagram frames without breaking TLS
 record syntax.
 
+### Offload-Controlled Remote Repeat
+
+The same remote-host experiment was repeated with endpoint offload effects
+explicitly reduced on the capture host. Before starting `tcpdump`, the remote
+Ethernet interface was changed from:
+
+```text
+tcp-segmentation-offload: on
+generic-segmentation-offload: on
+generic-receive-offload: on
+rx-gro-hw: on
+```
+
+to:
+
+```text
+tcp-segmentation-offload: off
+generic-segmentation-offload: off
+generic-receive-offload: off
+rx-gro-hw: off
+```
+
+The original settings were restored after the capture. This is still an
+endpoint capture inside a virtualized environment, not an external tap, but it
+removes the impossible 8-14 KiB endpoint packet artifacts seen in the earlier
+run. In this repeat, all observed IP packets were at or below 1500 bytes.
+
+Readable plots from the offload-controlled run:
+
+![Offload-controlled remote market-data packet size and timing overview](./assets/pcap-flow/market-data-remote-offload-overview.png)
+
+![Offload-controlled remote market-data packet-size and inter-packet quantiles](./assets/pcap-flow/market-data-remote-offload-quantiles.png)
+
+Experiment parameters:
+
+- `fps_server` ran on the remote host, in host networking, on TCP port `443`;
+- `fps_client` ran locally and connected to that public endpoint;
+- capture filter: client public IP plus server TCP port `443`, excluding the
+  server's separate outbound connection to the origin;
+- one persistent HTTPS market-data carrier connection, one GET about every
+  0.5 seconds, 140 successful polls and about 4.17 MiB of response body;
+- `security.zero_rtt.client_upgrade_delay_ms=10000` and
+  `security.zero_rtt.client_upgrade_delay_sigma_ms=0`;
+- after upgrade, bounded UDP probes generated opaque TUN datagrams in both
+  directions: small client-to-server probes and denser server-to-client probes.
+
+Wire-shape check:
+
+```text
+total TLS records: 682
+client -> server Application Data records: 177
+server -> client Application Data records: 501
+content types observed: ChangeCipherSpec, Handshake, ApplicationData
+```
+
+Visible FPS TCP-link packet statistics:
+
+| Phase | Duration | Packets | IP throughput | IP size max | IP size p50 | IP size p95 | inter-packet p50 | inter-packet p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before upgrade | about 10.2 s | 566 | about 0.51 Mbit/s | 1500 B | 1500 B | 1500 B | 0.004 ms | 24.2 ms |
+| after upgrade | about 66.8 s | 3258 | about 0.46 Mbit/s | 1500 B | 1500 B | 1500 B | 0.004 ms | 27.8 ms |
+
+Direction-specific post-upgrade statistics:
+
+| Direction | Packets | IP throughput | IP size p50 | IP size p95 | TCP payload p50 | TCP payload p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| client to server | 600 | about 0.008 Mbit/s | 52 B | 308 B | 0 B | 256 B |
+| server to client | 2658 | about 0.45 Mbit/s | 1500 B | 1500 B | 1448 B | 1448 B |
+
+The offload-controlled capture confirms the earlier interpretation with a
+cleaner packet-size view. The response-heavy carrier naturally produces many
+MTU-sized server-to-client packets, while the client-to-server direction remains
+sparse and request-sized. FPS preserved parseable TLS record syntax after
+upgrade and did not create endpoint-captured packets larger than the interface
+MTU once GRO/GSO/TSO effects were disabled.
+
+The very small inter-packet medians should not be overinterpreted as physical
+wire timing. They are endpoint `tcpdump` timestamps for bursts of already
+segmented packets in a virtualized environment. They are useful for regression
+comparison between runs on the same host, but final mimicry claims still require
+an external capture point or a controlled bare-metal capture setup.
+
 ### Remote-Carrier Interpretation
 
 This capture is closer to a real automated carrier than the local WSS debug

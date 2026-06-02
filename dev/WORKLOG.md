@@ -2,6 +2,77 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-03
+
+### Repeat remote pcap flow analysis with offload control
+
+Goal:
+
+- Re-run the remote `fpshop` market-data carrier packet-size/timing capture
+  after disabling endpoint offload features, so captured packet sizes are closer
+  to the actual MTU-limited wire shape.
+- Keep the concrete external market-data origin out of reports and docs.
+
+Setup:
+
+- Built local Alpine runtime image `fps:pcap-offload-68f9bed`.
+- Loaded the image onto `fpshop` with `docker save ... | gzip -1 | ssh fpshop
+  'gunzip | docker load'`.
+- Ran `fps_server` on `fpshop` in host networking on TCP `443` and `fps_client`
+  locally in host networking on `127.0.0.1:7443`.
+- Used one persistent HTTPS market-data carrier connection through FPS with one
+  GET about every 0.5 seconds.
+- Set `client_upgrade_delay_ms=10000` and `client_upgrade_delay_sigma_ms=0` for
+  a deterministic visible pre-upgrade window.
+- Temporarily changed `enp1s0` on `fpshop`:
+  `gro off`, `gso off`, `tso off`, `rx-gro-hw off`; restored all four to `on`
+  after capture.
+- The first retry waited for a non-existent `event=lease_applied` log and was
+  aborted by cleanup. The second retry used `iperf3 --bidir`, which hung under
+  the asymmetric shaped C2S path. The final run used bounded Python UDP
+  send/receive probes instead, avoiding `iperf3` control-flow ambiguity.
+
+Results:
+
+- Capture artifacts are under ignored
+  `captures/fps-pcap-offload-221834/`.
+- TLS wire-shape checker passed:
+  - total TLS records: 682;
+  - client-to-server Application Data records: 177;
+  - server-to-client Application Data records: 501.
+- Carrier workload: 140 successful polls, about 4.17 MiB response body, no
+  poller errors.
+- Capture duration about 77.5 seconds; upgrade split about 10.3 seconds after
+  capture start.
+- Packet-size result after disabling offloads: max observed IP packet length
+  was 1500 bytes before and after upgrade. This confirms that earlier 8-14 KiB
+  endpoint-captured packet sizes were GRO/GSO/TSO or hypervisor aggregation
+  artifacts rather than physical wire packets.
+- Post-upgrade visible link:
+  - 3258 packets;
+  - about 0.46 Mbit/s IP throughput;
+  - IP size p50/p95/max: 1500/1500/1500 bytes;
+  - inter-packet p50/p95: about 0.004/27.8 ms.
+- Direction-specific post-upgrade shape:
+  - C2S: 600 packets, about 0.008 Mbit/s, IP p50/p95 52/308 bytes;
+  - S2C: 2658 packets, about 0.45 Mbit/s, IP p50/p95 1500/1500 bytes.
+- No `level=error` or `level=fatal` log entries in client/server logs.
+
+Docs:
+
+- Added `docs/assets/pcap-flow/market-data-remote-offload-overview.png`.
+- Added `docs/assets/pcap-flow/market-data-remote-offload-quantiles.png`.
+- Updated `docs/pcap-flow-analysis.md` with the offload-controlled repeat and
+  interpretation.
+
+Verification:
+
+- `python3 tools/is_pcap_looks_like_tls.py captures/fps-pcap-offload-221834/fps-link.pcap --port 443 --require-bidirectional --require-application-data --min-records 10 --summary captures/fps-pcap-offload-221834/tls-shape.json`
+- `python3 tools/analyze_pcap_tcp_flow.py captures/fps-pcap-offload-221834/fps-link.pcap --port 443 --split-time-epoch <epoch> --summary-json captures/fps-pcap-offload-221834/flow-summary.json --packets-csv captures/fps-pcap-offload-221834/flow-packets.csv --svg captures/fps-pcap-offload-221834/flow-plot.svg`
+- `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/fps-pcap-offload-221834/flow-packets.csv --summary-json captures/fps-pcap-offload-221834/flow-summary.json --out-prefix captures/fps-pcap-offload-221834/offload-aware-market-data --sample-size 0`
+- Remote post-check: `ethtool -k enp1s0` showed GRO/GSO/TSO/RX-GRO-HW restored
+  to `on`; `ss -ltnp` showed no leftover FPS listener on `:443`.
+
 ## 2026-06-02
 
 ### Randomize client Zero-RTT auth delay
