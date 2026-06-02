@@ -32,6 +32,7 @@
 #include "fps/log/describe.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
+#include "fps/net/tcp_socket_options.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
 #include "fps/net/tun_tunnel_adapter.hpp"
@@ -291,7 +292,8 @@ public:
                               << " tun_enabled=" << config_.tun.has_value() << " shaper_enabled=" << config_.shaper_profile.has_value()
                               << " allow_fragmentation=" << config_.allow_fragmentation
                               << " shaper_profile=" << (config_.shaper_profile.has_value() ? config_.shaper_profile->profile_id : std::string{"none"})
-                              << " read_buffer_size=" << config_.read_buffer_size << " max_session_write_queue_bytes=" << config_.max_session_write_queue_bytes;
+                              << " read_buffer_size=" << config_.read_buffer_size << " tcp_no_delay=" << config_.tcp_no_delay
+                              << " max_session_write_queue_bytes=" << config_.max_session_write_queue_bytes;
         accept_next();
         schedule_shaper_snapshot_timer();
         return true;
@@ -910,6 +912,10 @@ private:
         }
         ++stats_.sessions_accepted;
 
+        if(!apply_session_tcp_options(*client_socket, session_id, "accepted")) {
+            accept_next();
+            return;
+        }
         connect_target(client_socket, session_id);
         accept_next();
     }
@@ -943,12 +949,35 @@ private:
                                                      << " target=" << endpoint_to_string(self->config_.target) << " error=" << connect_error.message();
                             return;
                         }
+                        if(!self->apply_session_tcp_options(*origin_socket, session_id, "target")) {
+                            self->close_socket(*client_socket);
+                            return;
+                        }
                         FPS_LOG_INFO("relay") << "event=target_connected session_id=" << session_id << " target=" << endpoint_to_string(self->config_.target);
                         self->start_bridge(client_socket, origin_socket, session_id);
                     }
                 );
             }
         );
+    }
+
+    [[nodiscard]] auto apply_session_tcp_options(tcp::socket& socket, std::uint64_t session_id, std::string_view socket_role) -> bool {
+        auto result = set_tcp_no_delay(socket, config_.tcp_no_delay);
+        if(result) {
+            return true;
+        }
+        ++stats_.sessions_closed;
+        record_closed_session(session_id, false, relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "set_tcp_no_delay_failed"));
+        FPS_LOG_WARNING("relay") << "event=set_tcp_no_delay_failed session_id=" << session_id << " socket=" << socket_role
+                                 << " enabled=" << config_.tcp_no_delay << " error=" << result.error();
+        close_socket(socket);
+        return false;
+    }
+
+    static void close_socket(tcp::socket& socket) {
+        boost::system::error_code ignored;
+        socket.cancel(ignored);
+        socket.close(ignored);
     }
 
     void start_bridge(const std::shared_ptr<tcp::socket>& client_socket, const std::shared_ptr<tcp::socket>& origin_socket, std::uint64_t session_id) {

@@ -1,5 +1,7 @@
 #include "fps/net/tcp_relay_app.hpp"
+#include "fps/net/tcp_socket_options.hpp"
 
+#include <boost/asio.hpp>
 #include <boost/json.hpp>
 #include <boost/test/unit_test.hpp>
 
@@ -63,6 +65,7 @@ auto file_permission_bits(const std::filesystem::path& path) -> unsigned int {
 }
 
 using fps::test::key_pair;
+using tcp = boost::asio::ip::tcp;
 
 template <typename Key>
 auto key_base64(const Key& key) -> std::string {
@@ -238,7 +241,8 @@ BOOST_AUTO_TEST_CASE(loads_passthrough_json_config) {
                "network": {
                  "listen": "127.0.0.1:18443",
                  "origin": "127.0.0.1:19443",
-                 "read_buffer_size": 4096
+                 "read_buffer_size": 4096,
+                 "tcp_no_delay": false
                },
                "limits": {
                  "max_session_write_queue_bytes": 8192
@@ -258,11 +262,45 @@ BOOST_AUTO_TEST_CASE(loads_passthrough_json_config) {
     BOOST_TEST(loaded.value().listen.host == "127.0.0.1");
     BOOST_TEST(loaded.value().target.port == 19443U);
     BOOST_TEST(loaded.value().read_buffer_size == 4096U);
+    BOOST_CHECK(!loaded.value().tcp_no_delay);
     BOOST_TEST(loaded.value().max_session_write_queue_bytes == 8192U);
     BOOST_CHECK(loaded.value().logging.level == fps::log::Severity::debug);
     BOOST_REQUIRE(loaded.value().status_socket.has_value());
     BOOST_TEST(loaded.value().status_socket->string() == (temp.path / "fps.status").string());
     BOOST_CHECK(!loaded.value().tun.has_value());
+}
+
+BOOST_AUTO_TEST_CASE(tcp_no_delay_defaults_to_enabled) {
+    TempDir temp;
+    const auto config_path = temp.path / "server.json";
+    write_text(config_path, R"json({"network": {"listen": "127.0.0.1:18443", "origin": "127.0.0.1:19443"}})json");
+
+    auto loaded = fps::net::load_tcp_relay_config(config_path.string(), "origin", fps::RelayRole::server);
+
+    BOOST_REQUIRE(loaded);
+    BOOST_CHECK(loaded.value().tcp_no_delay);
+}
+
+BOOST_AUTO_TEST_CASE(tcp_no_delay_helper_sets_connected_socket_option) {
+    boost::asio::io_context io;
+    tcp::acceptor acceptor{io, tcp::endpoint{boost::asio::ip::make_address("127.0.0.1"), 0}};
+    tcp::socket client{io};
+    tcp::socket server{io};
+
+    client.connect(acceptor.local_endpoint());
+    acceptor.accept(server);
+
+    auto enabled = fps::net::set_tcp_no_delay(client, true);
+    BOOST_REQUIRE(enabled);
+    tcp::no_delay client_option;
+    client.get_option(client_option);
+    BOOST_CHECK(client_option.value());
+
+    auto disabled = fps::net::set_tcp_no_delay(server, false);
+    BOOST_REQUIRE(disabled);
+    tcp::no_delay server_option;
+    server.get_option(server_option);
+    BOOST_CHECK(!server_option.value());
 }
 
 BOOST_AUTO_TEST_CASE(loads_zero_rtt_client_json_config_with_uuid_identity) {
@@ -485,6 +523,21 @@ BOOST_AUTO_TEST_CASE(rejects_malformed_json_and_wrong_types) {
     auto bad_status_type = fps::net::load_tcp_relay_config(wrong_status_type.string(), "origin", fps::RelayRole::server);
     BOOST_REQUIRE(!bad_status_type);
     BOOST_TEST(bad_status_type.error() == "ops.status_socket must be a string");
+
+    const auto wrong_tcp_no_delay_type = temp.path / "wrong-tcp-no-delay-type.json";
+    write_text(
+        wrong_tcp_no_delay_type,
+        R"json({
+               "network": {
+                 "listen": "127.0.0.1:18443",
+                 "origin": "127.0.0.1:19443",
+                 "tcp_no_delay": "yes"
+               }
+             })json"
+    );
+    auto bad_tcp_no_delay_type = fps::net::load_tcp_relay_config(wrong_tcp_no_delay_type.string(), "origin", fps::RelayRole::server);
+    BOOST_REQUIRE(!bad_tcp_no_delay_type);
+    BOOST_TEST(bad_tcp_no_delay_type.error() == "network.tcp_no_delay must be a boolean");
 }
 
 BOOST_AUTO_TEST_CASE(rejects_missing_required_network_fields) {
@@ -952,6 +1005,7 @@ BOOST_AUTO_TEST_CASE(cli_parses_check_config_and_key_tool_commands) {
     BOOST_CHECK(checked.command == fps::net::TcpRelayCliCommand::check_config);
     BOOST_REQUIRE(checked.config.has_value());
     BOOST_TEST(checked.config->target.port == 18443U);
+    BOOST_CHECK(checked.config->tcp_no_delay);
 
     auto status = parse_server_cli({"fps_server", "--status", "--config", config_path.string(), "--status-socket", (temp.path / "override.status").string()});
     BOOST_TEST(status.error.empty());

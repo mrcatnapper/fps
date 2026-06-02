@@ -4,6 +4,40 @@
 
 ## 2026-06-02
 
+### Add TCP_NODELAY runtime policy
+
+Goal:
+
+- Make the FPS relay TCP policy explicit before deeper shaper mimicry work.
+- Keep Docker as the primary runtime while documenting its limits for
+  packet-capture fidelity.
+
+Changes:
+
+- Added `network.tcp_no_delay`, default `true`, to the relay config.
+- Applied `TCP_NODELAY` to accepted and outbound relay TCP sockets before a
+  `TlsTcpCarrierSession` starts. Failure to set the option closes the candidate
+  session with `set_tcp_no_delay_failed` metadata instead of silently running
+  under an unknown TCP policy.
+- Added a small `tcp_socket_options` helper and loopback unit coverage that
+  sets and reads back the actual socket option.
+- Updated check-config summaries and docs for the new option.
+- Documented Docker/VM capture limitations: bridge/endpoint pcaps can show
+  offload or hypervisor aggregation artifacts, so physical wire-shape claims
+  require host-network/native or external-capture setups.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_relay_app --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build -R 'fps_cli_streams' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
 ### Run 5-minute fpshop multi-client Alpine soak
 
 Goal:

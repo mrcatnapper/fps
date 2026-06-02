@@ -92,6 +92,7 @@ target_compile_definitions(fps_protocol_core PUBLIC BOOST_LOG_DYN_LINK)
 # depending on the TLS/TCP session implementation.
 add_library(fps_carrier_core
   src/net/covert_datagram_transport.cpp
+  src/net/tcp_socket_options.cpp
   src/net/tls_tcp_carrier_adapter.cpp
   src/net/tls_tcp_carrier_session.cpp
   src/net/tls_tcp_carrier_session_io.cpp)

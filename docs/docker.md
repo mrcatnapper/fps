@@ -82,6 +82,21 @@ and Boost/OpenSSL headers, while the runtime image keeps installed FPS binaries,
 as an operator/debug smoke tool for TUN throughput checks, not as a protocol
 dependency.
 
+## Traffic-Shape Fidelity
+
+Docker remains the primary deployment path for beta operators, but it is not a
+perfect packet-capture laboratory. Docker bridge, veth, VM and host offload
+layers can expose coalesced 8-14 KiB packets to endpoint `tcpdump` through
+GRO/GSO/TSO or hypervisor aggregation. Those captures are useful for TLS
+byte-stream validation and coarse shaper regressions; they do not prove physical
+wire packet sizes.
+
+For stricter traffic-analysis experiments, prefer either native binaries or
+Docker host networking, and capture on the external interface or an external
+tap. If measuring on the endpoint, explicitly account for offload settings.
+The FPS relay sets `network.tcp_no_delay=true` by default on its TCP sockets so
+the shaper, not Nagle, controls classified-record timing.
+
 ## Entrypoint API
 
 Default command:

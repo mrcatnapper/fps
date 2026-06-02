@@ -427,7 +427,8 @@ Minimal server-side v5 shape:
   "network": {
     "listen": "127.0.0.1:8443",
     "origin": "127.0.0.1:9443",
-    "read_buffer_size": 65536
+    "read_buffer_size": 65536,
+    "tcp_no_delay": true
   },
   "security": {
     "zero_rtt": {
@@ -504,6 +505,13 @@ Optional shaper adaptive fields live under `shaper.adaptive`:
   }
 }
 ```
+
+`network.tcp_no_delay` defaults to `true` and is applied to both accepted and
+outbound FPS relay TCP sockets. This disables Nagle on the FPS link so shaped
+classified TLS records are not delayed or coalesced by an implicit TCP policy.
+Other TCP knobs such as corking, socket buffer sizes, keepalive and quick ACK
+are intentionally not part of the beta config; batching belongs to the shaper,
+and platform-specific TCP heuristics can create new fingerprints.
 
 Validation rules:
 

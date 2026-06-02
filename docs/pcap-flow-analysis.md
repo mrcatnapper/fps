@@ -255,3 +255,9 @@ baseline. It shows three practical points:
 The next useful research step is to repeat the same measurement with carriers
 whose application protocol is naturally full-duplex or client-upload-heavy, then
 compare post-upgrade CDF drift against the carrier-only baseline.
+
+For future shaper experiments, treat Docker bridge and VM endpoint captures as
+operational diagnostics rather than final wire evidence. They can validate TLS
+record syntax and shaper behavior at the byte-stream level, but physical packet
+size claims require an external capture point or an endpoint measurement with
+offload effects explicitly controlled.

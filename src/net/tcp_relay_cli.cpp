@@ -154,6 +154,7 @@ void print_config_summary(std::ostream& out, const TcpRelayConfig& config, std::
     out << "config=valid"
         << " role=" << role_name(config.role) << " listen=" << endpoint_to_string(config.listen) << " " << target_name << "="
         << endpoint_to_string(config.target) << " read_buffer_size=" << config.read_buffer_size
+        << " tcp_no_delay=" << config.tcp_no_delay
         << " max_session_write_queue_bytes=" << config.max_session_write_queue_bytes << " log_level=" << log::severity_to_string(config.logging.level)
         << " zero_rtt_enabled=" << config.zero_rtt.has_value() << " tun_enabled=" << config.tun.has_value()
         << " shaper_enabled=" << config.shaper_profile.has_value() << " status_socket_enabled=" << config.status_socket.has_value()

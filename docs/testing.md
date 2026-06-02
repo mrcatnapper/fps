@@ -461,6 +461,12 @@ second. Use the Docker bridge capture path for TCP reassembly; capturing on
 Linux `any` can duplicate or reorder Docker bridge packets enough to confuse
 TLS record reconstruction.
 
+Docker/VM endpoint captures can show GRO/GSO/TSO or hypervisor-aggregated packet
+sizes that are larger than physical Ethernet frames. Use these artifacts for TLS
+record syntax and coarse size/timing regressions. For physical wire-shape
+claims, capture from an external tap or disable relevant offloads for the
+measurement host and document that change.
+
 For more readable research plots, use an optional local Python venv. These
 packages are not FPS runtime or build dependencies:
 

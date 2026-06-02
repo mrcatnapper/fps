@@ -147,6 +147,7 @@ def check_config_summary(binary, target_field, target_flag):
         required = [
             "config=valid",
             "log_level=debug",
+            "tcp_no_delay=1",
             "zero_rtt_enabled=0",
             f"{target_field}=127.0.0.1:",
         ]

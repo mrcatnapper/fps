@@ -362,6 +362,12 @@ auto load_tcp_relay_config(std::string_view path, std::string_view target_name, 
         config.read_buffer_size = *read_buffer.value();
     }
 
+    auto tcp_no_delay = bool_config(tree, "network.tcp_no_delay", true);
+    if(!tcp_no_delay) {
+        return TcpRelayConfigResult::failure(tcp_no_delay.error());
+    }
+    config.tcp_no_delay = tcp_no_delay.value();
+
     auto max_queue = optional_size_config(tree, "limits.max_session_write_queue_bytes");
     if(!max_queue) {
         return TcpRelayConfigResult::failure(max_queue.error());

@@ -55,6 +55,7 @@ struct TcpRelayConfig {
     std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
     bool allow_fragmentation = true;
+    bool tcp_no_delay = true;
     log::LoggingConfig logging;
     std::optional<ZeroRttRelayConfig> zero_rtt;
     std::optional<TunRelayConfig> tun;
