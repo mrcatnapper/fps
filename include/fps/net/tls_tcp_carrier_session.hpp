@@ -231,6 +231,7 @@ private:
     void enqueue_counted_write(Direction direction, WriteItem item);
     void enqueue_write(Direction direction, WriteItem item);
     void enqueue_shaped_write(Direction direction, ShapedWriteItem item);
+    [[nodiscard]] auto split_shaped_datagram_front(Direction direction, const SendPlan& plan) -> bool;
     void maybe_schedule_shaped_write(Direction direction);
     void handle_shaper_timer(Direction direction, const boost::system::error_code& error);
     void drain_writes(Direction direction);
@@ -298,6 +299,7 @@ private:
     bool server_to_client_shutdown_done_ = false;
     bool zero_rtt_authenticated_ = false;
     bool zero_rtt_client_upgrade_sent_ = false;
+    std::uint32_t next_shaped_fragment_packet_id_ = 0x80000000U;
     std::optional<std::chrono::steady_clock::time_point> zero_rtt_client_channel_ready_at_;
     std::optional<TlsTcpCarrierCloseInfo> pending_close_info_;
     TlsTcpCarrierSessionStats stats_;

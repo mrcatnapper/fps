@@ -4,6 +4,62 @@
 
 ## 2026-06-01
 
+### Add shaper-aware opaque datagram fragmentation
+
+Goal:
+
+- Use FPS datagram fragmentation as a shaper degree of freedom instead of
+  blocking every datagram larger than the currently sampled TLS record.
+- Correct the pcap-flow report caveat around large endpoint-captured packet
+  sizes from offload/aggregation.
+
+Changes:
+
+- Added a reusable `fps/net/datagram_fragment.hpp` helper for fragment payload
+  construction and fragment-count calculation.
+- Reused that helper in `CovertDatagramTransport`.
+- Updated the authenticated shaped send path in `TlsTcpCarrierSession`:
+  - shaped non-control frames are queued as individual scheduling units;
+  - if a queued `opaque_datagram` does not fit the sampled TLS record, FPS
+    expands it into ordered `opaque_datagram_fragment` items on the same
+    carrier when the sampled record can fit a fragment header plus at least one
+    data byte;
+  - if even the smallest fragment cannot fit, the datagram remains queued and
+    the shaper emits a blocked event for that scheduling attempt;
+  - fragment header overhead is added to shaper budget accounting before the
+    first fragment is committed;
+  - shaped queue byte diagnostics now use pre-accounted classified-record
+    sizes instead of reporting zero for not-yet-encoded records.
+- Added unit coverage for:
+  - large authenticated datagram split into multiple shaped TLS records and
+    byte-for-byte reassembly;
+  - tiny datagram staying unfragmented when it fits but a fragment header would
+    not fit;
+  - blocked lower-bound case where sampled TLS record is too small for a
+    fragment header.
+- Updated `docs/specification.md` and `docs/pcap-flow-analysis.md`.
+
+Decisions:
+
+- The wire format is unchanged: the existing encrypted
+  `opaque_datagram_fragment` frame is reused.
+- Fragment count is fixed at the first split decision. Later shaper samples can
+  still block individual fragment records if their target size/padding window
+  cannot fit the next fragment.
+- The pcap report treats 8-14 KiB endpoint-captured packet sizes as
+  GRO/GSO/TSO/hypervisor aggregation artifacts, not physical Ethernet/IP
+  fragmentation evidence.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R 'fps_unit_tests' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Run remote market-data carrier pcap experiment
 
 Goal:

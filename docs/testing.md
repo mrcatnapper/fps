@@ -321,7 +321,8 @@ Unit tests cover:
   fragmented server-accept wait, post-accept carrier passthrough plus classified
   record insertion, size-aware shaped classified records, shared shaper
   observation of coalesced TCP reads as complete TLS records, shaper queue
-  preflight and unauthenticated enqueue rejection.
+  preflight, shaper-aware opaque datagram fragmentation and unauthenticated
+  enqueue rejection.
 - `CovertDatagramTransport`, `TunTunnelAdapter` and `TunPacketPump` carrier
   registration/removal, generic datagram round-robin and targeted writes,
   lease-aware destination routing, strict source-IP enforcement,

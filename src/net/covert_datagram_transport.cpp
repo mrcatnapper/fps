@@ -7,12 +7,11 @@
 #include <utility>
 #include <vector>
 
+#include "fps/net/datagram_fragment.hpp"
 #include "fps/core/wire.hpp"
 
 namespace fps::net {
 namespace {
-
-constexpr std::size_t kDatagramFragmentHeaderSize = sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 
 [[nodiscard]] auto fits_u16(std::size_t value) noexcept -> bool { return value <= std::numeric_limits<std::uint16_t>::max(); }
 
@@ -247,7 +246,7 @@ auto CovertDatagramTransport::enqueue_datagram_on_carrier(CovertCarrier& carrier
 
 auto CovertDatagramTransport::enqueue_fragmented_datagram(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult {
     const auto chunk_size = config_.max_frame_payload_size - kDatagramFragmentHeaderSize;
-    const auto fragment_count = (datagram.size() + chunk_size - 1U) / chunk_size;
+    const auto fragment_count = fragment_count_for_size(datagram.size(), chunk_size);
     if(!fits_u16(fragment_count) || !fits_u32(datagram.size())) {
         return CovertDatagramResult::failure(CovertDatagramError::datagram_too_large);
     }
@@ -259,16 +258,12 @@ auto CovertDatagramTransport::enqueue_fragmented_datagram(CovertCarrier& carrier
     for(std::size_t index = 0, offset = 0; offset < datagram.size(); ++index) {
         const auto bytes_remaining = datagram.size() - offset;
         const auto chunk_bytes = std::min(chunk_size, bytes_remaining);
-        ByteVector payload;
-        payload.reserve(kDatagramFragmentHeaderSize + chunk_bytes);
-        append_be(payload, packet_id);
-        append_be(payload, static_cast<std::uint16_t>(index));
-        append_be(payload, static_cast<std::uint16_t>(fragment_count));
-        append_be(payload, total_size);
-        payload.insert(
-            payload.end(), datagram.begin() + static_cast<std::ptrdiff_t>(offset), datagram.begin() + static_cast<std::ptrdiff_t>(offset + chunk_bytes)
+        payloads.push_back(
+            make_datagram_fragment_payload(
+                packet_id, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), total_size,
+                datagram.subspan(offset, chunk_bytes)
+            )
         );
-        payloads.push_back(std::move(payload));
         offset += chunk_bytes;
     }
 

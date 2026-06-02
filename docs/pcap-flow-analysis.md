@@ -193,6 +193,14 @@ Carrier workload:
 
 Visible FPS TCP-link packet statistics:
 
+Important capture caveat: these packet-size values come from an endpoint capture
+on a virtualized Linux host. Large values such as 8-14 KiB are expected when
+GRO/GSO/TSO, checksum offload or hypervisor-side aggregation are active; they
+represent coalesced packets as exposed to `tcpdump`, not Ethernet frames of that
+size on the physical wire and not IP fragmentation. The TLS record parser check
+below still validates the byte-stream shape, but exact L2/MTU-size conclusions
+require capturing after offload is disabled or from an external tap.
+
 | Phase | Duration | Packets | IP throughput | IP size p50 | IP size p95 | inter-packet p50 | inter-packet p95 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | before upgrade | about 10.1 s | 184 | about 0.56 Mbit/s | 261 B | 14532 B | 0.94 ms | 473 ms |
@@ -212,13 +220,17 @@ FPS/TUN signal from daemon counters:
 | client to server | small UDP datagrams | 103 datagram frames, 6144 bytes accepted by the server-side FPS session |
 | server to client | 240 UDP datagrams, 1200-byte payloads | 240 datagram frames, 294720 bytes delivered to the client-side FPS session |
 
-An earlier diagnostic run attempted 256-byte client-to-server UDP payloads. The
-adaptive shaper learned that this carrier's client-to-server TLS records were
-small request records; it therefore blocked those larger covert payloads rather
-than emitting a larger, easier-to-fingerprint client-to-server TLS record. That
-is the right security-biased behavior for this shaper baseline, but it also
-shows that a GET-response carrier is naturally asymmetric: server-to-client
-capacity is much better than client-to-server capacity.
+An earlier diagnostic run attempted 256-byte client-to-server UDP payloads before
+the shaper-aware fragmentation pass. The adaptive shaper learned that this
+carrier's client-to-server TLS records were small request records; it therefore
+kept the oversized covert payload queued instead of emitting a larger,
+easier-to-fingerprint client-to-server TLS record. That was the correct
+security-biased behavior for the baseline shaper, but it also showed why FPS
+datagram fragmentation belongs directly in the shaped send path: if the next
+datagram is too large for the sampled TLS record, FPS should split it into
+smaller opaque datagram fragments; if the fragment is smaller than the sampled
+record, the classified-record codec can fill the remainder with encrypted
+padding.
 
 The refined run used smaller client-to-server UDP payloads so FPS could insert
 classified records in both directions. The ad-hoc UDP socket bound to the

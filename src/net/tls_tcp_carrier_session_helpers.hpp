@@ -105,15 +105,6 @@ inline constexpr std::size_t kClassifiedRecordPlainHeaderSize =
     };
 }
 
-[[nodiscard]] inline auto frame_payload_size_sum(std::span<const TlsTcpCarrierCovertFrame> frames) -> std::size_t {
-    std::size_t total = 0;
-    for(const auto& frame : frames) {
-        const auto size = frame.payload.size();
-        total = size > std::numeric_limits<std::size_t>::max() - total ? std::numeric_limits<std::size_t>::max() : total + size;
-    }
-    return total;
-}
-
 inline void add_stat(std::uint64_t& value, std::size_t delta) noexcept {
     const auto increment = static_cast<std::uint64_t>(std::min<std::size_t>(delta, std::numeric_limits<std::uint64_t>::max()));
     value = increment > std::numeric_limits<std::uint64_t>::max() - value ? std::numeric_limits<std::uint64_t>::max() : value + increment;

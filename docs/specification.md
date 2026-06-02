@@ -373,6 +373,12 @@ Current implemented scope:
 - size-aware classified-record encoding: when the shaper selects a target TLS
   Application Data record wire size, FPS pads the encrypted classified record to
   that exact outer TLS record size;
+- shaper-aware datagram fragmentation: if a queued `opaque_datagram` is too
+  large for the sampled TLS record but the record can carry at least one
+  fragment header plus one byte of data, FPS expands that datagram into ordered
+  `opaque_datagram_fragment` records on the same carrier; if even the smallest
+  fragment cannot fit, the datagram stays queued and injection is blocked for
+  that scheduling attempt;
 - commit-safe shaper scheduling: rejected target sizes, padding limits and
   write-queue pressure leave queued covert data and shaper budget intact;
 - backpressure accounting and bounded write queues;
