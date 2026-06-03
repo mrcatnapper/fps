@@ -7,8 +7,9 @@ Current baseline:
 
 - public remote: `git@github.com:mrcatnapper/fps.git`;
 - default branch: `main`;
-- working branch: `develop`;
-- GitHub Pages source: `main:/docs`;
+- working branch: `develop`, currently unprotected and used for PR staging;
+- GitHub Pages source: `main:/docs`, published at
+  `https://mrcatnapper.github.io/fps/`;
 - image publishing: manual `Publish Images` workflow only.
 
 ## Routine Checks
@@ -86,6 +87,11 @@ Repository merge policy:
 
 Keep `Quality` manual/scheduled rather than required for every PR until runtime
 is stable enough to absorb its cost.
+
+Repository-defined workflows are `CI`, `Quality` and `Publish Images`.
+GitHub-managed `pages-build-deployment` and `Dependency Graph` workflows can
+also appear in the Actions UI when Pages and dependency graph features are
+enabled; they are not release gates.
 
 Security settings currently enabled:
 

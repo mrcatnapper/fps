@@ -93,7 +93,7 @@ Local non-Docker Python runtime dependencies are pinned in
 
 ## GitHub Actions CI
 
-The repository ships three GitHub Actions workflows:
+The repository defines three GitHub Actions workflow files:
 
 - `CI`: runs on pull requests, pushes to `main` and manual dispatch. It covers
   `ubuntu-24.04 x gcc/clang` local builds/tests through the repository
@@ -107,6 +107,10 @@ The repository ships three GitHub Actions workflows:
   runtime smoke, then can publish Ubuntu and Alpine images to GHCR when
   `publish=true`. With the default `publish=false`, it is a build-only
   deployment dry run.
+
+GitHub also shows platform-managed workflows such as Pages deployment or
+Dependency Graph when those repository features are enabled. They are not part
+of the FPS test matrix.
 
 The `ci` stage keeps package installation in the repository Dockerfile instead
 of duplicating Boost/OpenSSL/LLVM package lists in workflow YAML. It is not part
@@ -274,9 +278,9 @@ FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop \
 ```
 
 On weak remote hosts, keep `--build-local`: the tool builds the Alpine runtime
-image locally and loads it remotely with `docker save | ssh ... docker load`
-instead of compiling there. If the image is already present on both hosts, omit
-`--build-local` and pass `--image`.
+image locally and then loads it remotely with
+`docker save | ssh ... docker load` instead of compiling there. If the image is
+already present on both hosts, omit `--build-local` and pass `--image`.
 
 The default UDP probe rate is deliberately modest (`--udp-pps 8`) because this
 gate validates carrier recovery, lease routing and shaped transport liveness,

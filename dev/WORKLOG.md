@@ -4,6 +4,52 @@
 
 ## 2026-06-03
 
+### Audit documentation and DevOps consistency
+
+Goal:
+
+- Check code/documentation/DevOps self-consistency across public docs, developer
+  notes, examples, tools, workflows and current GitHub repository settings.
+- Exclude `dev/WORKLOG.md` and `articles/` from the documentation audit scope
+  while still recording this work in the log.
+
+Findings:
+
+- Public docs and examples are broadly aligned with the current
+  transcript-bound classified-record transport, TUN adapter, Docker-first
+  runtime, proxy overlay and shaper tooling.
+- Markdown links across active docs are valid.
+- GitHub state matches the operations notes: public repository, `main`
+  protected with the five expected CI checks, squash-only merge policy, Pages
+  from `main:/docs`, secret scanning and push protection enabled. `develop` is
+  intentionally unprotected for PR staging.
+- Minor drift fixed:
+  - stale CMake project description still said `v2 relay`;
+  - docs did not distinguish repository-defined workflows from GitHub-managed
+    Pages/Dependency Graph workflows shown in the Actions UI;
+  - roadmap still overstated a historical two-host soak as `30-minute` instead
+    of the current reproducible 300-second release-candidate gate.
+
+Verification:
+
+- `gh repo view --json nameWithOwner,defaultBranchRef,isPrivate,visibility,url`
+- `gh workflow list`
+- `gh api repos/mrcatnapper/fps/branches/main/protection`
+- `gh api repos/mrcatnapper/fps/pages`
+- Markdown link check over all tracked Markdown except `articles/` and
+  `dev/WORKLOG.md`.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- CLI help smoke for `fps_client`, `fps_server`, `fps_carrier` and
+  `pcap_to_shaper_profile.py`.
+
+This logical commit: pending.
+
 ### Refresh documentation snapshot and remove stale review artifacts
 
 Goal:

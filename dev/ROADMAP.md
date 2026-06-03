@@ -79,8 +79,10 @@ without claiming resistance to advanced timing/size traffic analysis.
   deterministic; cover lease-aware queue overflow in unit tests.
 - [x] Harden inbound TUN fragment reassembly for multi-carrier use by keying
   reassembly state by source carrier and packet id with a bounded state cap.
-- [x] Run a two-host 30-minute Docker/TUN soak on a weak remote Linux host for
-  the current beta candidate.
+- [x] Run a two-host Docker/TUN soak on a weak remote Linux host for the current
+  beta candidate. The current repository gate is a reproducible 300-second
+  split-host run; longer runs remain release-candidate policy, not a single
+  historical guarantee.
 - [x] Add a repository two-host soak tool so release-candidate split-host
   checks do not depend on ad-hoc scripts.
 - Repeat `tools/docker_two_host_soak.py` for release candidates until it is
