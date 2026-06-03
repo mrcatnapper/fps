@@ -27,6 +27,14 @@ The current UX is still too easy to misconfigure manually. The biggest issues
 are not protocol failures; they are operator-footguns around Docker output
 paths, shell parsing, public port checks and endpoint topology.
 
+Follow-up status:
+
+- P0/P1 documentation and CLI fixes are addressed by the follow-up increment in
+  this branch: JSON server keypair output, host-visible Docker profile
+  generation examples, public `:443` preflight and loopback/troubleshooting
+  guidance.
+- Debug-carrier healthchecks remain optional future work.
+
 ## Flow Tested
 
 1. Built locally:
@@ -220,4 +228,3 @@ Focus on docs and small CLI output improvements before changing protocol code:
    - missing SOCKS listener;
    - `leased_client_address` present but `carriers_current=0`.
 5. Optional: add Compose healthchecks for the deterministic debug-carrier stack.
-

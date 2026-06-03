@@ -80,7 +80,8 @@ must be regenerated. Treat it as a planned outage.
 1. Generate a new server key pair:
 
    ```sh
-   fps_server --generate-server-keypair
+   fps_server --generate-server-keypair --format json > server-keypair.json
+   chmod 600 server-keypair.json
    ```
 
 2. Replace `server_private_key_base64` and `server_public_key_base64` in the

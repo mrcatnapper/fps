@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import base64
 import json
 import re
 import stat
@@ -102,6 +103,27 @@ def check_key_tooling(binary):
         if re.search(pattern, completed.stdout) is None:
             raise RuntimeError(f"server key helper output is incomplete: {completed.stdout!r}")
 
+    completed = run_command([binary, "--generate-server-keypair", "--format", "json"])
+    expect_clean_success(completed, f"{binary} --generate-server-keypair --format json")
+    key_json = json.loads(completed.stdout)
+    if sorted(key_json) != [
+        "server_private_key_base64",
+        "server_public_key_base64",
+    ]:
+        raise RuntimeError(f"server key JSON helper output is incomplete: {completed.stdout!r}")
+    for key, value in key_json.items():
+        decoded = base64.b64decode(value, validate=True)
+        if len(decoded) != 32:
+            raise RuntimeError(f"{key} decoded to {len(decoded)} bytes, expected 32")
+
+    rejected = run_command([binary, "--generate-server-keypair", "--format", "uri"])
+    if rejected.returncode != 2:
+        raise RuntimeError(f"--generate-server-keypair --format uri returned {rejected.returncode}")
+    if rejected.stdout:
+        raise RuntimeError(f"invalid keypair format wrote stdout: {rejected.stdout!r}")
+    if "unsupported --format value for --generate-server-keypair" not in rejected.stderr:
+        raise RuntimeError(f"invalid keypair format diagnostic is wrong: {rejected.stderr!r}")
+
     completed = run_command([binary, "--generate-client-uuid"])
     expect_clean_success(completed, f"{binary} --generate-client-uuid")
     if re.fullmatch(
@@ -117,6 +139,14 @@ def check_key_tooling(binary):
         raise RuntimeError(f"--raw wrote stdout: {raw_removed.stdout!r}")
     if "unknown option" not in raw_removed.stderr:
         raise RuntimeError(f"--raw diagnostic missing unknown option: {raw_removed.stderr!r}")
+
+    uuid_format = run_command([binary, "--generate-client-uuid", "--format", "json"])
+    if uuid_format.returncode != 2:
+        raise RuntimeError(f"--generate-client-uuid --format json returned {uuid_format.returncode}")
+    if uuid_format.stdout:
+        raise RuntimeError(f"UUID invalid format wrote stdout: {uuid_format.stdout!r}")
+    if "profile output options require" not in uuid_format.stderr:
+        raise RuntimeError(f"UUID invalid format diagnostic is wrong: {uuid_format.stderr!r}")
 
     for unknown in [["--definitely-unknown"], ["--another-unknown", "value"]]:
         completed = run_command([binary, *unknown])

@@ -579,6 +579,14 @@ Shaper profile export CLI:
 - otherwise the command falls back to the static profile from the config;
 - only `--format json` is supported in the current schema.
 
+Server keypair CLI:
+
+- `fps_server --generate-server-keypair` prints text fields for manual use;
+- `fps_server --generate-server-keypair --format json` prints a flat JSON object
+  with `server_private_key_base64` and `server_public_key_base64`, matching the
+  server config field names;
+- unsupported keypair formats fail config/CLI parsing with a diagnostic.
+
 Offline shaper profile tooling:
 
 - `tools/pcap_to_shaper_profile.py carrier.pcap --port 443 --output

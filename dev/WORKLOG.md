@@ -4,6 +4,42 @@
 
 ## 2026-06-03
 
+### Fix personal UX flow footguns
+
+Goal:
+
+- Implement the highest-impact fixes from the fresh `dev/UX_FLOW_REVIEW.md`
+  without changing protocol or runtime behavior.
+- Make server key generation script-safe and make Docker profile generation
+  examples write files on the intended host filesystem.
+
+Changes:
+
+- Added `fps_server --generate-server-keypair --format json`, returning a flat
+  JSON object with `server_private_key_base64` and
+  `server_public_key_base64`.
+- Kept existing text keypair output as the default.
+- Updated CLI tests for JSON key output, invalid keypair formats and UUID
+  helper format rejection.
+- Updated public Docker/client docs with host-visible profile generation,
+  public `:443` preflight, provider firewall warning, container-vs-host
+  loopback troubleshooting and expected benign TUN noise guidance.
+- Updated Docker smoke tooling to parse keypair JSON instead of text output.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- Manual CLI smoke for `fps_server --generate-server-keypair --format json`,
+  invalid keypair format rejection and `fps_client` helper discoverability.
+- `git diff --check`
+
+This logical commit: `Fix personal Docker UX footguns`.
+
 ### Recreate personal Docker UX flow on fpshop
 
 Goal:
