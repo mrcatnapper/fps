@@ -12,7 +12,7 @@ namespace {
 auto sample_profile(std::uint64_t seed = 7) -> fps::ShaperProfile {
     const fps::DirectionProfile direction_profile{
         .record_size_cdf = {{64, 0.5}, {128, 1.0}},
-        .inter_record_delay_ms_cdf = {{10, 0.5}, {25, 1.0}},
+        .inter_record_delay_us_cdf = {{10'000, 0.5}, {25'000, 1.0}},
     };
 
     return fps::ShaperProfile{
@@ -29,7 +29,7 @@ auto sample_profile(std::uint64_t seed = 7) -> fps::ShaperProfile {
 auto adaptive_profile() -> fps::ShaperProfile {
     auto profile = sample_profile(11);
     profile.client_to_server.record_size_cdf = {{64, 1.0}};
-    profile.client_to_server.inter_record_delay_ms_cdf = {{5, 1.0}};
+    profile.client_to_server.inter_record_delay_us_cdf = {{5'000, 1.0}};
     profile.adaptive_min_records = 2;
     profile.adaptive_min_observation = std::chrono::milliseconds{10};
     profile.adaptive_decay = 1.0;
@@ -326,7 +326,7 @@ BOOST_AUTO_TEST_CASE(adaptive_model_uses_observed_tls_record_sizes_and_delays_af
 
     BOOST_TEST(plan.allow_injected_record);
     BOOST_TEST(plan.tls_record_size == 512U);
-    BOOST_TEST(plan.delay.count() == 20);
+    BOOST_TEST(plan.delay.count() == 20'000);
 }
 
 BOOST_AUTO_TEST_CASE(shaper_snapshot_roundtrips_and_bootstraps_peer_model) {

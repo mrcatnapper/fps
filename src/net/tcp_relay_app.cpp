@@ -1,6 +1,7 @@
 #include "fps/net/tcp_relay_app.hpp"
 
 #include "tcp_relay_app_helpers.hpp"
+#include "tcp_relay_shaper_json.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
@@ -594,11 +595,16 @@ private:
             const auto snapshot = shaper_->snapshot();
             const auto& c2s = snapshot.directions[direction_index(Direction::client_to_server)];
             const auto& s2c = snapshot.directions[direction_index(Direction::server_to_client)];
-            shaper["adaptive_ready_c2s"] = shaper_->adaptive_ready(Direction::client_to_server);
-            shaper["adaptive_ready_s2c"] = shaper_->adaptive_ready(Direction::server_to_client);
+            const auto adaptive_ready_c2s = shaper_->adaptive_ready(Direction::client_to_server);
+            const auto adaptive_ready_s2c = shaper_->adaptive_ready(Direction::server_to_client);
+            shaper["adaptive_ready_c2s"] = adaptive_ready_c2s;
+            shaper["adaptive_ready_s2c"] = adaptive_ready_s2c;
             shaper["observed_records_c2s"] = c2s.observed_records;
             shaper["observed_records_s2c"] = s2c.observed_records;
             shaper["snapshot_interval_ms"] = static_cast<std::uint64_t>(std::max<std::int64_t>(0, shaper_->snapshot_interval().count()));
+            if(config_.shaper_profile.has_value()) {
+                shaper["profile"] = detail::shaper_profile_to_json(*config_.shaper_profile, snapshot, adaptive_ready_c2s, adaptive_ready_s2c);
+            }
         }
 
         json::object root;

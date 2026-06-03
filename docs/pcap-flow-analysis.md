@@ -340,6 +340,12 @@ The next useful research step is to repeat the same measurement with carriers
 whose application protocol is naturally full-duplex or client-upload-heavy, then
 compare post-upgrade CDF drift against the carrier-only baseline.
 
+For repeatable follow-up runs, a live adaptive profile can be exported from a
+running daemon with `fps_client --write-shaper-profile --config client.json
+--output profile.json` or the equivalent `fps_server` command. The exported JSON
+uses compact CDF pairs and can be used as a static bootstrap profile for later
+captures without replaying the original training window.
+
 For future shaper experiments, treat Docker bridge and VM endpoint captures as
 operational diagnostics rather than final wire evidence. They can validate TLS
 record syntax and shaper behavior at the byte-stream level, but physical packet

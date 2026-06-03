@@ -65,6 +65,15 @@ auto file_permission_bits(const std::filesystem::path& path) -> unsigned int {
     return static_cast<unsigned int>(permissions);
 }
 
+auto json_u64(const json::value& value) -> std::uint64_t {
+    if(value.is_uint64()) {
+        return value.as_uint64();
+    }
+    BOOST_REQUIRE(value.is_int64());
+    BOOST_REQUIRE(value.as_int64() >= 0);
+    return static_cast<std::uint64_t>(value.as_int64());
+}
+
 using fps::test::key_pair;
 using tcp = boost::asio::ip::tcp;
 
@@ -116,10 +125,10 @@ auto server_config_json(const fps::X25519KeyPair& server, const std::string& tun
 auto shaper_profile_json() -> std::string {
     return R"json(
     "profile_id": "unit-profile",
-    "record_size_cdf_c2s": [{"le": 4096, "p": 1.0}],
-    "record_size_cdf_s2c": [{"le": 4096, "p": 1.0}],
-    "inter_record_delay_ms_cdf_c2s": [{"le": 1, "p": 1.0}],
-    "inter_record_delay_ms_cdf_s2c": [{"le": 1, "p": 1.0}],
+    "record_size_cdf_c2s": [[4096, 1.0]],
+    "record_size_cdf_s2c": [[4096, 1.0]],
+    "inter_record_delay_us_cdf_c2s": [[1000, 1.0]],
+    "inter_record_delay_us_cdf_s2c": [[1000, 1.0]],
     "covert_ratio_max": 1.0,
     "burst_records_max": 2,
     "jitter_ms": {"min": 0, "max": 0},
@@ -501,6 +510,78 @@ BOOST_AUTO_TEST_CASE(loads_inline_and_file_shaper_json_config) {
     BOOST_REQUIRE(file_loaded);
     BOOST_REQUIRE(file_loaded.value().shaper_profile.has_value());
     BOOST_TEST(file_loaded.value().shaper_profile->profile_id == "unit-profile");
+}
+
+BOOST_AUTO_TEST_CASE(cli_writes_static_shaper_profile_json) {
+    TempDir temp;
+    const auto config_path = temp.path / "server-shaper.json";
+    write_text(
+        config_path,
+        R"json({
+               "network": {
+                 "listen": "127.0.0.1:18443",
+                 "origin": "127.0.0.1:19443"
+               },
+               "shaper": {
+                 "enabled": true,
+)json" + shaper_profile_json() +
+            R"json(
+               }
+             })json"
+    );
+
+    const auto output_path = temp.path / "shape-export.json";
+    auto [code, out, err] = run_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", output_path.string()});
+    BOOST_TEST(code == 0);
+    BOOST_TEST(out.empty());
+    BOOST_TEST(err.empty());
+    BOOST_TEST(file_permission_bits(output_path) == static_cast<unsigned int>(std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+
+    json::error_code parse_error;
+    auto parsed = json::parse(read_text(output_path), parse_error);
+    BOOST_REQUIRE(!parse_error);
+    BOOST_REQUIRE(parsed.is_object());
+    const auto& root = parsed.as_object();
+    BOOST_TEST(root.at("profile_id").as_string() == "unit-profile");
+    BOOST_REQUIRE(root.at("record_size_cdf_c2s").is_array());
+    const auto& size_pair = root.at("record_size_cdf_c2s").as_array().front().as_array();
+    BOOST_TEST(json_u64(size_pair.at(0)) == 4096U);
+    BOOST_TEST(size_pair.at(1).as_double() == 1.0);
+    BOOST_REQUIRE(root.at("inter_record_delay_us_cdf_c2s").is_array());
+    const auto& delay_pair = root.at("inter_record_delay_us_cdf_c2s").as_array().front().as_array();
+    BOOST_TEST(json_u64(delay_pair.at(0)) == 1000U);
+    BOOST_TEST(root.find("inter_record_delay_ms_cdf_c2s") == root.end());
+
+    const auto reloaded_config = temp.path / "reload-shaper.json";
+    write_text(
+        reloaded_config,
+        R"json({
+               "network": {
+                 "listen": "127.0.0.1:18443",
+                 "origin": "127.0.0.1:19443"
+               },
+               "shaper": {
+                 "enabled": true,
+                 "profile_file": "shape-export.json"
+               }
+             })json"
+    );
+    auto reloaded = fps::net::load_tcp_relay_config(reloaded_config.string(), "origin", fps::RelayRole::server);
+    BOOST_REQUIRE(reloaded);
+    BOOST_REQUIRE(reloaded.value().shaper_profile.has_value());
+    BOOST_TEST(reloaded.value().shaper_profile->profile_id == "unit-profile");
+
+    auto [exists_code, exists_out, exists_err] =
+        run_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", output_path.string()});
+    BOOST_TEST(exists_code == 2);
+    BOOST_TEST(exists_out.empty());
+    BOOST_TEST(exists_err.find("already exists") != std::string::npos);
+
+    auto [force_code, force_out, force_err] =
+        run_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", output_path.string(), "--force"});
+    BOOST_TEST(force_code == 0);
+    BOOST_TEST(force_out.empty());
+    BOOST_TEST(force_err.empty());
 }
 
 BOOST_AUTO_TEST_CASE(rejects_malformed_json_and_wrong_types) {
@@ -956,6 +1037,29 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_zero_rtt_json_config) {
 
 BOOST_AUTO_TEST_CASE(rejects_invalid_shaper_json_config) {
     TempDir temp;
+    const auto old_format_path = temp.path / "old-shaper.json";
+    write_text(
+        old_format_path,
+        R"json({
+               "network": {
+                 "listen": "127.0.0.1:17443",
+                 "target": "127.0.0.1:18443"
+               },
+               "shaper": {
+                 "enabled": true,
+                 "profile_id": "old",
+                 "record_size_cdf_c2s": [{"le": 4096, "p": 1.0}],
+                 "record_size_cdf_s2c": [[4096, 1.0]],
+                 "inter_record_delay_us_cdf_c2s": [[1000, 1.0]],
+                 "inter_record_delay_us_cdf_s2c": [[1000, 1.0]],
+                 "covert_ratio_max": 1.0
+               }
+             })json"
+    );
+    auto old_format = fps::net::load_tcp_relay_config(old_format_path.string(), "server", fps::RelayRole::client);
+    BOOST_REQUIRE(!old_format);
+    BOOST_TEST(old_format.error().find("entries must be [value, probability] pairs") != std::string::npos);
+
     const auto config_path = temp.path / "bad-shaper.json";
     write_text(
         config_path,
@@ -967,10 +1071,10 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_shaper_json_config) {
                "shaper": {
                  "enabled": true,
                  "profile_id": "bad",
-                 "record_size_cdf_c2s": [{"le": 0, "p": 1.0}],
-                 "record_size_cdf_s2c": [{"le": 4096, "p": 1.0}],
-                 "inter_record_delay_ms_cdf_c2s": [{"le": 0, "p": 1.0}],
-                 "inter_record_delay_ms_cdf_s2c": [{"le": 0, "p": 1.0}],
+                 "record_size_cdf_c2s": [[0, 1.0]],
+                 "record_size_cdf_s2c": [[4096, 1.0]],
+                 "inter_record_delay_us_cdf_c2s": [[0, 1.0]],
+                 "inter_record_delay_us_cdf_s2c": [[0, 1.0]],
                  "covert_ratio_max": 1.0
                }
              })json"
@@ -1031,6 +1135,12 @@ BOOST_AUTO_TEST_CASE(cli_parses_check_config_and_key_tool_commands) {
     BOOST_REQUIRE(status.config.has_value());
     BOOST_REQUIRE(status.status_socket_override.has_value());
     BOOST_TEST(status.status_socket_override->string() == (temp.path / "override.status").string());
+
+    auto write_shape = parse_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", (temp.path / "shape.json").string()});
+    BOOST_TEST(write_shape.error.empty());
+    BOOST_CHECK(write_shape.command == fps::net::TcpRelayCliCommand::write_shaper_profile);
+    BOOST_REQUIRE(write_shape.config.has_value());
+    BOOST_REQUIRE(write_shape.client_profile.output_path.has_value());
 
     auto server_key = parse_server_cli({"fps_server", "--generate-server-keypair"});
     BOOST_TEST(server_key.error.empty());

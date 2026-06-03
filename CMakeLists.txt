@@ -152,6 +152,7 @@ add_library(fps_linux_runtime
   src/net/tcp_relay_config_shaper.cpp
   src/net/tcp_relay_app.cpp
   src/net/tcp_relay_cli.cpp
+  src/net/tcp_relay_shaper_json.cpp
   src/platform/linux/tun_device.cpp
   src/platform/linux/tun_runtime.cpp)
 

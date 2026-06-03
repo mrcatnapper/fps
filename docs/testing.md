@@ -343,19 +343,20 @@ Unit tests cover:
   encode/decode.
 - Config/CLI/logging JSON parsing, required network fields, Zero-RTT key and
   allowlist validation, TUN validation, shaper config, log-level override and
-  helper commands.
+  helper commands, including compact shaper CDF profile export.
 
 Local integration tests cover:
 
 - CLI stdout/stderr behavior, UUID generation, server keypair generation,
   generated client profiles, safe profile `--output`, `fps://` URI roundtrip,
   URI write-to-file import, unknown option rejection, `--check-config`,
-  lease-management option presence and log-level override.
+  lease-management option presence, shaper profile write-to-file export and
+  log-level override.
 - Local `ops.status_socket` smoke: daemon publishes a UNIX status socket,
   `--status` returns JSON counters plus `sessions.last_closed` /
   `sessions.recent_closed`, root `auth` and `classified_record` counter groups,
-  socket permissions are `0600`, and status output does not expose UUIDs or key
-  material.
+  a compact non-secret `shaper.profile` snapshot, socket permissions are `0600`,
+  and status output does not expose UUIDs or key material.
 - Linux route helper dry plans for split tunnel, full tunnel policy routing,
   carrier bypass and cleanup.
 - Reusable debug carrier direct roundtrip, including WSS echo and ordinary HTTPS

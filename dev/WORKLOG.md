@@ -4,6 +4,57 @@
 
 ## 2026-06-03
 
+### Add JSON shaper profile import/export UX
+
+Goal:
+
+- Make shaper CDF profiles directly reusable from config/status without adding a
+  separate pcap profile tool in this increment.
+- Keep the public format readable JSON, not base64, and remove old object-based
+  CDF config forms because there is no compatibility requirement yet.
+
+Changes:
+
+- Changed public shaper CDF config to compact pairs:
+  `[[value, cumulative_probability], ...]`.
+- Renamed public shaper inter-record delay fields to microseconds:
+  `inter_record_delay_us_cdf_c2s` and `inter_record_delay_us_cdf_s2c`.
+- Switched shaper scheduling delays and adaptive delay buckets to
+  microseconds; jitter config remains `jitter_ms` and is converted internally.
+- Changed structured shaper events to log explicit `delay_us`, avoiding silent
+  sub-millisecond truncation through generic chrono-to-milliseconds JSON
+  serialization.
+- Added non-secret `shaper.profile` snapshots to status JSON when shaper is
+  enabled. The snapshot contains compact CDF arrays, profile id, observed record
+  counts and adaptive readiness metadata.
+- Added `fps_client|fps_server --write-shaper-profile --config PATH --output
+  PATH [--force] [--format json]`. The command exports a live status-socket
+  snapshot when reachable and falls back to the static config profile otherwise.
+  Output uses the existing secret-file writer (`0600`, no overwrite without
+  `--force`).
+- Updated unit/integration coverage for compact CDF parsing, legacy object CDF
+  rejection, profile export permissions/overwrite behavior and status JSON
+  shaper snapshots.
+- Updated `docs/specification.md`, `docs/testing.md` and
+  `docs/pcap-flow-analysis.md`.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R fps_unit_tests --output-on-failure`
+- `ctest --test-dir build -R 'fps_status_socket|fps_cli_streams' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+
+Open:
+
+- Offline pcap-to-profile tooling remains deferred. The current export path is
+  daemon-first: run representative carriers, let adaptive CDF learn, then export
+  the live profile.
+
 ### Repeat remote pcap flow analysis with offload control
 
 Goal:

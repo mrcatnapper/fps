@@ -74,6 +74,16 @@ def main():
                     },
                     "logging": {"level": "off"},
                     "ops": {"status_socket": str(status_socket)},
+                    "shaper": {
+                        "enabled": True,
+                        "profile_id": "status-smoke",
+                        "record_size_cdf_c2s": [[4096, 1.0]],
+                        "record_size_cdf_s2c": [[4096, 1.0]],
+                        "inter_record_delay_us_cdf_c2s": [[1000, 1.0]],
+                        "inter_record_delay_us_cdf_s2c": [[1000, 1.0]],
+                        "covert_ratio_max": 1.0,
+                        "burst_records_max": 2,
+                    },
                 }
             ),
             encoding="utf-8",
@@ -102,6 +112,16 @@ def main():
             for section in ["auth", "classified_record"]:
                 if section not in initial or not isinstance(initial[section], dict):
                     raise RuntimeError(f"status missing {section} section: {initial!r}")
+            shaper = initial.get("shaper")
+            if not shaper or not shaper.get("enabled") or "profile" not in shaper:
+                raise RuntimeError(f"status missing shaper profile snapshot: {initial!r}")
+            profile = shaper["profile"]
+            if profile.get("profile_id") != "status-smoke":
+                raise RuntimeError(f"unexpected shaper profile id: {profile!r}")
+            if profile.get("record_size_cdf_c2s") != [[4096, 1.0]]:
+                raise RuntimeError(f"unexpected compact record CDF: {profile!r}")
+            if "inter_record_delay_ms_cdf_c2s" in profile:
+                raise RuntimeError(f"legacy millisecond delay CDF present: {profile!r}")
 
             with socket.create_connection(("127.0.0.1", listen_port), timeout=2.0):
                 pass

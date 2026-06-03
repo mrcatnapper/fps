@@ -133,7 +133,7 @@ auto bridge_zero_rtt_options(
 auto fixed_record_shaper_profile(std::size_t record_size) -> fps::ShaperProfile {
     const fps::DirectionProfile direction_profile{
         .record_size_cdf = {{record_size, 1.0}},
-        .inter_record_delay_ms_cdf = {{1, 1.0}},
+        .inter_record_delay_us_cdf = {{1000, 1.0}},
     };
     return fps::ShaperProfile{
         .profile_id = "bridge-shaper-profile",

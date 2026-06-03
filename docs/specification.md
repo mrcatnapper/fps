@@ -389,7 +389,10 @@ outer TLS record wire sizes, including the 5-byte TLS record header. A sampled
 size smaller than the classified-record overhead, or larger than the configured
 classified-record padding capacity, blocks injection until another scheduling
 attempt. `codec.max_frame_padding` also limits classified-record padding in the
-current Linux relay config.
+current Linux relay config. `shaper.inter_record_delay_us_cdf_c2s` and
+`shaper.inter_record_delay_us_cdf_s2c` buckets are inter-record delays in
+microseconds. Public CDF config uses compact `[value, cumulative_probability]`
+pairs, for example `[[512, 0.4], [1500, 1.0]]`.
 
 Adaptive behavior:
 
@@ -500,10 +503,10 @@ Optional shaper adaptive fields live under `shaper.adaptive`:
   "shaper": {
     "enabled": true,
     "profile_id": "example-origin-v5",
-    "record_size_cdf_c2s": [{"le": 512, "p": 0.4}, {"le": 1500, "p": 1.0}],
-    "record_size_cdf_s2c": [{"le": 512, "p": 0.4}, {"le": 1500, "p": 1.0}],
-    "inter_record_delay_ms_cdf_c2s": [{"le": 20, "p": 0.5}, {"le": 100, "p": 1.0}],
-    "inter_record_delay_ms_cdf_s2c": [{"le": 20, "p": 0.5}, {"le": 100, "p": 1.0}],
+    "record_size_cdf_c2s": [[512, 0.4], [1500, 1.0]],
+    "record_size_cdf_s2c": [[512, 0.4], [1500, 1.0]],
+    "inter_record_delay_us_cdf_c2s": [[20000, 0.5], [100000, 1.0]],
+    "inter_record_delay_us_cdf_s2c": [[20000, 0.5], [100000, 1.0]],
     "adaptive": {
       "enabled": true,
       "min_records": 16,
@@ -554,7 +557,8 @@ Operational status:
   carrier lifecycle counters, duplicate UUID replacement counters,
   `sessions.last_closed`, bounded `sessions.recent_closed`, auth counters under
   `auth`, classified-record counters under `classified_record`, TUN packet/drop
-  counters and shaper/backpressure counters;
+  counters, shaper/backpressure counters and, when enabled,
+  `shaper.profile` with a non-secret compact CDF snapshot;
 - `auth` contains candidate, authenticated, precheck failure, unknown-client,
   decrypt failure and server-accept failure counters;
 - `classified_record` contains decode/encode failure, tamper/invalid and
@@ -563,6 +567,16 @@ Operational status:
   and non-secret direction/component/stage/error names;
 - status output must not include UUID values, private/public keys, raw client
   instance ids, raw TLS payloads, raw TUN packets or IP payload bytes.
+
+Shaper profile export CLI:
+
+- `fps_client --write-shaper-profile --config client.json --output profile.json
+  [--force]` and the same `fps_server` command write a normalized shaper profile
+  JSON file with `0600` permissions;
+- if `ops.status_socket` or `--status-socket PATH` is reachable, the exported
+  profile uses the live adaptive CDF snapshot from `shaper.profile`;
+- otherwise the command falls back to the static profile from the config;
+- only `--format json` is supported in the current schema.
 
 Client profile CLI:
 

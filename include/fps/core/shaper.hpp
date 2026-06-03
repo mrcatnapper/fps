@@ -27,7 +27,7 @@ struct JitterRange {
 
 struct DirectionProfile {
     std::vector<CdfPoint> record_size_cdf;
-    std::vector<CdfPoint> inter_record_delay_ms_cdf;
+    std::vector<CdfPoint> inter_record_delay_us_cdf;
 };
 
 struct ShaperProfile {
@@ -59,7 +59,7 @@ struct CovertPayloadView {
 
 struct SendPlan {
     Direction direction{};
-    std::chrono::milliseconds delay{0};
+    std::chrono::microseconds delay{0};
     std::size_t tls_record_size{};
     std::size_t covert_payload_budget{};
     bool allow_cover_forward = true;
@@ -75,7 +75,7 @@ struct SendPlanRequest {
 
 struct ShaperDirectionSnapshot {
     std::vector<CdfPoint> record_size_cdf;
-    std::vector<CdfPoint> inter_record_delay_ms_cdf;
+    std::vector<CdfPoint> inter_record_delay_us_cdf;
     std::uint64_t observed_records = 0;
 };
 
@@ -131,7 +131,7 @@ private:
         std::optional<std::chrono::steady_clock::time_point> first_observed_at;
         std::optional<std::chrono::steady_clock::time_point> last_observed_at;
         std::vector<AdaptiveBucket> record_size_buckets;
-        std::vector<AdaptiveBucket> inter_record_delay_ms_buckets;
+        std::vector<AdaptiveBucket> inter_record_delay_us_buckets;
         bool backpressured = false;
         bool profile_exhausted = false;
     };
@@ -142,8 +142,8 @@ private:
     [[nodiscard]] auto sample_cdf(const std::vector<CdfPoint>& cdf) -> std::size_t;
     [[nodiscard]] auto sample_buckets(const std::vector<AdaptiveBucket>& buckets) -> std::size_t;
     [[nodiscard]] auto sample_record_size(Direction direction, const DirectionProfile& direction_profile, const DirectionState& state) -> std::size_t;
-    [[nodiscard]] auto sample_delay(const DirectionProfile& direction_profile) -> std::chrono::milliseconds;
-    [[nodiscard]] auto sample_delay(Direction direction, const DirectionProfile& direction_profile, const DirectionState& state) -> std::chrono::milliseconds;
+    [[nodiscard]] auto sample_delay(const DirectionProfile& direction_profile) -> std::chrono::microseconds;
+    [[nodiscard]] auto sample_delay(Direction direction, const DirectionProfile& direction_profile, const DirectionState& state) -> std::chrono::microseconds;
     [[nodiscard]] auto remaining_budget(const DirectionState& state) const -> std::size_t;
     [[nodiscard]] auto adaptive_ready(const DirectionState& state, std::chrono::steady_clock::time_point now) const noexcept -> bool;
     [[nodiscard]] auto snapshot_for(Direction direction) const -> ShaperDirectionSnapshot;

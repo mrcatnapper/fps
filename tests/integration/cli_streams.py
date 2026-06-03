@@ -32,6 +32,7 @@ def check_help(binary, expect_lease_commands):
         "--check-config",
         "--status",
         "--status-socket",
+        "--write-shaper-profile",
         "--generate-server-keypair",
         "--generate-client-uuid",
     ]
@@ -229,6 +230,16 @@ def check_client_profile_generation(fps_server, fps_client):
                         "server_address": "10.77.0.1",
                         "lease_file": "leases.json",
                     },
+                    "shaper": {
+                        "enabled": True,
+                        "profile_id": "cli-shaper",
+                        "record_size_cdf_c2s": [[4096, 1.0]],
+                        "record_size_cdf_s2c": [[4096, 1.0]],
+                        "inter_record_delay_us_cdf_c2s": [[1000, 1.0]],
+                        "inter_record_delay_us_cdf_s2c": [[1000, 1.0]],
+                        "covert_ratio_max": 1.0,
+                        "burst_records_max": 2,
+                    },
                 }
             ),
             encoding="utf-8",
@@ -342,6 +353,30 @@ def check_client_profile_generation(fps_server, fps_client):
         )
         if not output_profile.read_text(encoding="utf-8").startswith("fps://v1/"):
             raise RuntimeError("--force did not rewrite profile output as URI")
+
+        shaper_output = temp / "shaper-profile.json"
+        shaper_export = run_command(
+            [
+                fps_server,
+                "--write-shaper-profile",
+                "--config",
+                str(server_config),
+                "--output",
+                str(shaper_output),
+            ]
+        )
+        expect_clean_success(shaper_export, f"{fps_server} --write-shaper-profile")
+        if shaper_export.stdout:
+            raise RuntimeError("--write-shaper-profile unexpectedly wrote stdout")
+        if stat.S_IMODE(shaper_output.stat().st_mode) != 0o600:
+            raise RuntimeError("--write-shaper-profile did not write mode 0600")
+        exported_shaper = json.loads(shaper_output.read_text(encoding="utf-8"))
+        if exported_shaper.get("profile_id") != "cli-shaper":
+            raise RuntimeError(f"unexpected shaper profile export: {exported_shaper!r}")
+        if exported_shaper.get("record_size_cdf_c2s") != [[4096, 1.0]]:
+            raise RuntimeError(f"shaper profile export did not use compact CDF pairs: {exported_shaper!r}")
+        if "inter_record_delay_ms_cdf_c2s" in exported_shaper:
+            raise RuntimeError("shaper profile export included legacy delay field")
 
         client_config = temp / "client.json"
         client_config.write_text(completed.stdout, encoding="utf-8")

@@ -1,6 +1,7 @@
 #include "fps/net/tcp_relay_app.hpp"
 
 #include "tcp_relay_app_helpers.hpp"
+#include "tcp_relay_shaper_json.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
@@ -63,7 +64,8 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
     out << "Usage: " << program << " --listen HOST:PORT " << target_flag << " HOST:PORT [--read-buffer BYTES]\n"
         << "       " << program << " --config PATH\n"
         << "       " << program << " --check-config --config PATH\n"
-        << "       " << program << " --status --config PATH\n";
+        << "       " << program << " --status --config PATH\n"
+        << "       " << program << " --write-shaper-profile --config PATH --output PATH\n";
     if(role == RelayRole::server) {
         out << "       " << program << " --lease-list --config PATH\n"
             << "       " << program << " --lease-revoke-client-uuid UUID --config PATH\n"
@@ -82,7 +84,8 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
         << "  --config PATH            Load relay settings from JSON config.\n"
         << "  --check-config           Validate config and print a non-secret summary.\n"
         << "  --status                 Query local ops.status_socket and print JSON.\n"
-        << "  --status-socket PATH     Override status socket path for --status.\n";
+        << "  --status-socket PATH     Override status socket path for --status or --write-shaper-profile.\n"
+        << "  --write-shaper-profile   Write current/live shaper CDF profile JSON to --output.\n";
     if(role == RelayRole::server) {
         out << "  --lease-list             Print non-secret server TUN lease metadata as JSON.\n"
             << "  --lease-revoke-client-uuid UUID\n"
@@ -138,6 +141,8 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
         return "--print-config-from-uri";
     case TcpRelayCliCommand::write_config_from_uri:
         return "--write-config-from-uri";
+    case TcpRelayCliCommand::write_shaper_profile:
+        return "--write-shaper-profile";
     case TcpRelayCliCommand::status:
         return "--status";
     case TcpRelayCliCommand::lease_list:
@@ -495,36 +500,92 @@ auto run_write_config_from_uri(std::string_view uri, const std::filesystem::path
     return 0;
 }
 
-auto run_status_query(const std::filesystem::path& socket_path, std::ostream& out, std::ostream& err) -> int {
+[[nodiscard]] auto query_status_socket_text(const std::filesystem::path& socket_path) -> Result<std::string, std::string> {
     try {
         boost::asio::io_context io;
         local_stream::socket socket{io};
         boost::system::error_code error;
         socket.connect(local_stream::endpoint{socket_path.string()}, error);
         if(error) {
-            err << "Error: failed to connect status socket: " << error.message() << '\n';
-            return 1;
+            return Result<std::string, std::string>::failure("failed to connect status socket: " + error.message());
         }
 
+        std::string out;
         std::array<char, 4096> buffer{};
         while(true) {
             const auto bytes_read = socket.read_some(boost::asio::buffer(buffer), error);
             if(bytes_read > 0U) {
-                out.write(buffer.data(), static_cast<std::streamsize>(bytes_read));
+                out.append(buffer.data(), bytes_read);
             }
             if(error == boost::asio::error::eof) {
                 break;
             }
             if(error) {
-                err << "Error: failed to read status socket: " << error.message() << '\n';
-                return 1;
+                return Result<std::string, std::string>::failure("failed to read status socket: " + error.message());
             }
         }
-        return out ? 0 : 1;
-    } catch(const std::exception& error) {
-        err << "Error: failed to query status socket: " << error.what() << '\n';
+        return Result<std::string, std::string>::success(std::move(out));
+    } catch(const std::exception& error) { return Result<std::string, std::string>::failure("failed to query status socket: " + std::string{error.what()}); }
+}
+
+auto run_status_query(const std::filesystem::path& socket_path, std::ostream& out, std::ostream& err) -> int {
+    auto status = query_status_socket_text(socket_path);
+    if(!status) {
+        err << "Error: " << status.error() << '\n';
         return 1;
     }
+    out << status.value();
+    return out ? 0 : 1;
+}
+
+[[nodiscard]] auto live_shaper_profile_json(const std::filesystem::path& socket_path) -> std::optional<json::object> {
+    auto status_text = query_status_socket_text(socket_path);
+    if(!status_text) {
+        return std::nullopt;
+    }
+    boost::system::error_code error;
+    auto parsed = json::parse(status_text.value(), error);
+    if(error || !parsed.is_object()) {
+        return std::nullopt;
+    }
+    const auto& root = parsed.as_object();
+    const auto shaper_iter = root.find("shaper");
+    if(shaper_iter == root.end() || !shaper_iter->value().is_object()) {
+        return std::nullopt;
+    }
+    const auto& shaper = shaper_iter->value().as_object();
+    const auto profile_iter = shaper.find("profile");
+    if(profile_iter == shaper.end() || !profile_iter->value().is_object()) {
+        return std::nullopt;
+    }
+    return profile_iter->value().as_object();
+}
+
+auto run_write_shaper_profile(
+    const TcpRelayConfig& config, const std::optional<std::filesystem::path>& socket_path, const std::filesystem::path& output_path, bool force,
+    std::ostream& err
+) -> int {
+    if(!config.shaper_profile.has_value()) {
+        err << "Error: --write-shaper-profile requires shaper.enabled/profile in config\n";
+        return 2;
+    }
+
+    json::object profile_json;
+    if(socket_path.has_value()) {
+        if(auto live = live_shaper_profile_json(*socket_path); live.has_value()) {
+            profile_json = std::move(*live);
+        }
+    }
+    if(profile_json.empty()) {
+        profile_json = detail::shaper_profile_to_json(*config.shaper_profile);
+    }
+
+    auto write_error = write_secret_file(output_path, json::serialize(profile_json) + "\n", force);
+    if(write_error.has_value()) {
+        err << "Error: " << *write_error << '\n';
+        return 2;
+    }
+    return 0;
 }
 
 [[nodiscard]] auto lease_cli_allocator_config(const TcpRelayConfig& config) -> Result<TunLeaseAllocatorConfig, std::string> {
@@ -681,6 +742,7 @@ struct RawCliOptions {
     bool generate_server_keypair = false;
     bool generate_client_uuid = false;
     bool generate_client_profile = false;
+    bool write_shaper_profile = false;
     bool lease_list = false;
     bool lease_prune = false;
     bool force = false;
@@ -724,6 +786,7 @@ struct RawCliOptions {
     add("generate-server-keypair", "generate server X25519 key pair");
     add("generate-client-uuid", "generate client UUID");
     add("generate-client-profile", "generate client profile");
+    add("write-shaper-profile", "write shaper profile JSON");
     add("print-config-from-uri", po::value<std::string>(), "decode client profile URI");
     add("write-config-from-uri", po::value<std::string>(), "write config from client profile URI");
     add("lease-list", "list leases");
@@ -772,6 +835,7 @@ struct RawCliOptions {
     options.generate_server_keypair = variables.count("generate-server-keypair") != 0U;
     options.generate_client_uuid = variables.count("generate-client-uuid") != 0U;
     options.generate_client_profile = variables.count("generate-client-profile") != 0U;
+    options.write_shaper_profile = variables.count("write-shaper-profile") != 0U;
     options.lease_list = variables.count("lease-list") != 0U;
     options.lease_prune = variables.count("lease-prune") != 0U;
     options.force = variables.count("force") != 0U;
@@ -820,6 +884,7 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
     bool config_seen = false;
     bool client_profile_option_seen = false;
     bool profile_output_option_seen = false;
+    bool format_option_seen = false;
     std::optional<log::Severity> cli_log_level;
     auto set_command = [&](TcpRelayCliCommand command) -> bool {
         if(result.command != TcpRelayCliCommand::run) {
@@ -855,6 +920,9 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
         return result;
     }
     if(raw.generate_client_profile && !set_command(TcpRelayCliCommand::generate_client_profile)) {
+        return result;
+    }
+    if(raw.write_shaper_profile && !set_command(TcpRelayCliCommand::write_shaper_profile)) {
         return result;
     }
     if(raw.print_config_from_uri.has_value()) {
@@ -923,7 +991,8 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
         result.client_profile.client_status_socket = std::filesystem::path{std::move(*raw.client_status_socket)};
     }
     if(raw.format.has_value()) {
-        client_profile_option_seen = true;
+        format_option_seen = true;
+        profile_output_option_seen = true;
         result.client_profile.format = std::move(*raw.format);
     }
     if(raw.output.has_value()) {
@@ -1107,6 +1176,35 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
         return result;
     }
 
+    if(result.command == TcpRelayCliCommand::write_shaper_profile) {
+        if(!config_seen) {
+            result.error = "--write-shaper-profile requires --config PATH";
+            return result;
+        }
+        if(client_profile_option_seen) {
+            result.error = "client profile options require --generate-client-profile";
+            return result;
+        }
+        if(!result.client_profile.output_path.has_value()) {
+            result.error = "--write-shaper-profile requires --output PATH";
+            return result;
+        }
+        if(result.client_profile.force_output && !result.client_profile.output_path.has_value()) {
+            result.error = "--force requires --output PATH";
+            return result;
+        }
+        if(result.client_profile.format != "json") {
+            result.error = "unsupported --format value: expected json";
+            return result;
+        }
+        if(format_option_seen && result.client_profile.format.empty()) {
+            result.error = "--format must not be empty";
+            return result;
+        }
+        result.config = std::move(config);
+        return result;
+    }
+
     if(result.command == TcpRelayCliCommand::print_config_from_uri) {
         if(role != RelayRole::client) {
             result.error = "--print-config-from-uri is only available for fps_client";
@@ -1118,6 +1216,10 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
         }
         if(client_profile_option_seen) {
             result.error = "client profile options require --generate-client-profile";
+            return result;
+        }
+        if(format_option_seen) {
+            result.error = "--format requires --generate-client-profile or --write-shaper-profile";
             return result;
         }
         if(profile_output_option_seen) {
@@ -1146,6 +1248,10 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
         }
         if(client_profile_option_seen) {
             result.error = "client profile options require --generate-client-profile";
+            return result;
+        }
+        if(format_option_seen) {
+            result.error = "--format requires --generate-client-profile or --write-shaper-profile";
             return result;
         }
         if(!result.client_profile_uri.has_value() || result.client_profile_uri->empty()) {
@@ -1265,6 +1371,14 @@ auto run_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, std:
             return 2;
         }
         return run_write_config_from_uri(*parsed.client_profile_uri, *parsed.client_profile.output_path, parsed.client_profile.force_output, err);
+    case TcpRelayCliCommand::write_shaper_profile: {
+        if(!parsed.config || !parsed.client_profile.output_path.has_value()) {
+            err << "Error: --write-shaper-profile requires --config PATH and --output PATH\n";
+            return 2;
+        }
+        const auto socket_path = parsed.status_socket_override.has_value() ? parsed.status_socket_override : parsed.config->status_socket;
+        return run_write_shaper_profile(*parsed.config, socket_path, *parsed.client_profile.output_path, parsed.client_profile.force_output, err);
+    }
     case TcpRelayCliCommand::lease_list:
         if(!parsed.config) {
             err << "Error: --lease-list requires --config PATH\n";

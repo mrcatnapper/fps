@@ -14,7 +14,7 @@ namespace {
 constexpr std::uint8_t kControlTypeShaperSnapshot = 3;
 constexpr std::uint8_t kShaperSnapshotVersion = 1;
 constexpr std::size_t kSizeBucketQuantum = 64;
-constexpr std::size_t kDelayBucketQuantumMs = 5;
+constexpr std::size_t kDelayBucketQuantumUs = 100;
 constexpr std::uint32_t kCdfProbabilityScale = 1'000'000;
 constexpr std::size_t kMaxSnapshotProfileIdSize = 255;
 constexpr std::size_t kMaxSnapshotCdfEntries = 256;
@@ -134,8 +134,8 @@ void Shaper::observe_cover_record(const CoverRecordObservation& observation) {
         state.first_observed_at = now;
     }
     if(state.last_observed_at.has_value()) {
-        const auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - *state.last_observed_at).count();
-        observe_bucket(state.inter_record_delay_ms_buckets, bucket_for(static_cast<std::size_t>(std::max<std::int64_t>(0, delay_ms)), kDelayBucketQuantumMs));
+        const auto delay_us = std::chrono::duration_cast<std::chrono::microseconds>(now - *state.last_observed_at).count();
+        observe_bucket(state.inter_record_delay_us_buckets, bucket_for(static_cast<std::size_t>(std::max<std::int64_t>(0, delay_us)), kDelayBucketQuantumUs));
     }
     state.last_observed_at = now;
     ++state.observed_record_count;
@@ -284,10 +284,10 @@ auto Shaper::sample_record_size(Direction direction, const DirectionProfile& dir
     return sample_cdf(direction_profile.record_size_cdf);
 }
 
-auto Shaper::sample_delay(const DirectionProfile& direction_profile) -> std::chrono::milliseconds {
-    const auto base = static_cast<long long>(sample_cdf(direction_profile.inter_record_delay_ms_cdf));
-    const auto min_jitter = profile_.jitter.min.count();
-    const auto max_jitter = profile_.jitter.max.count();
+auto Shaper::sample_delay(const DirectionProfile& direction_profile) -> std::chrono::microseconds {
+    const auto base = static_cast<long long>(sample_cdf(direction_profile.inter_record_delay_us_cdf));
+    const auto min_jitter = std::chrono::duration_cast<std::chrono::microseconds>(profile_.jitter.min).count();
+    const auto max_jitter = std::chrono::duration_cast<std::chrono::microseconds>(profile_.jitter.max).count();
 
     auto jitter = 0LL;
     if(min_jitter != 0LL || max_jitter != 0LL) {
@@ -295,21 +295,21 @@ auto Shaper::sample_delay(const DirectionProfile& direction_profile) -> std::chr
         jitter = jitter_distribution(rng_);
     }
 
-    return std::chrono::milliseconds{std::max(0LL, base + jitter)};
+    return std::chrono::microseconds{std::max(0LL, base + jitter)};
 }
 
-auto Shaper::sample_delay(Direction direction, const DirectionProfile& direction_profile, const DirectionState& state) -> std::chrono::milliseconds {
+auto Shaper::sample_delay(Direction direction, const DirectionProfile& direction_profile, const DirectionState& state) -> std::chrono::microseconds {
     if(adaptive_ready(state, state.last_observed_at.value_or(std::chrono::steady_clock::now()))) {
-        const auto sampled = sample_buckets(state.inter_record_delay_ms_buckets);
+        const auto sampled = sample_buckets(state.inter_record_delay_us_buckets);
         if(sampled > 0U) {
-            const auto min_jitter = profile_.jitter.min.count();
-            const auto max_jitter = profile_.jitter.max.count();
+            const auto min_jitter = std::chrono::duration_cast<std::chrono::microseconds>(profile_.jitter.min).count();
+            const auto max_jitter = std::chrono::duration_cast<std::chrono::microseconds>(profile_.jitter.max).count();
             auto jitter = 0LL;
             if(min_jitter != 0LL || max_jitter != 0LL) {
                 std::uniform_int_distribution<long long> jitter_distribution(min_jitter, max_jitter);
                 jitter = jitter_distribution(rng_);
             }
-            return std::chrono::milliseconds{std::max(0LL, static_cast<long long>(sampled) + jitter)};
+            return std::chrono::microseconds{std::max(0LL, static_cast<long long>(sampled) + jitter)};
         }
     }
     (void)direction;
@@ -327,7 +327,7 @@ auto Shaper::remaining_budget(const DirectionState& state) const -> std::size_t 
 
 auto Shaper::adaptive_ready(const DirectionState& state, std::chrono::steady_clock::time_point now) const noexcept -> bool {
     if(!profile_.adaptive_enabled || state.observed_record_count < profile_.adaptive_min_records || !state.first_observed_at.has_value() ||
-       state.record_size_buckets.empty() || state.inter_record_delay_ms_buckets.empty()) {
+       state.record_size_buckets.empty() || state.inter_record_delay_us_buckets.empty()) {
         return false;
     }
     return now - *state.first_observed_at >= profile_.adaptive_min_observation;
@@ -337,10 +337,10 @@ auto Shaper::snapshot_for(Direction direction) const -> ShaperDirectionSnapshot 
     const auto& state = state_for(direction);
     const auto& static_profile = profile_for(direction);
     auto size_cdf = buckets_to_cdf(state.record_size_buckets);
-    auto delay_cdf = buckets_to_cdf(state.inter_record_delay_ms_buckets);
+    auto delay_cdf = buckets_to_cdf(state.inter_record_delay_us_buckets);
     return ShaperDirectionSnapshot{
         .record_size_cdf = size_cdf.empty() ? static_profile.record_size_cdf : std::move(size_cdf),
-        .inter_record_delay_ms_cdf = delay_cdf.empty() ? static_profile.inter_record_delay_ms_cdf : std::move(delay_cdf),
+        .inter_record_delay_us_cdf = delay_cdf.empty() ? static_profile.inter_record_delay_us_cdf : std::move(delay_cdf),
         .observed_records = state.observed_record_count,
     };
 }
@@ -361,11 +361,11 @@ void Shaper::observe_bucket(std::vector<AdaptiveBucket>& buckets, std::size_t va
 
 void Shaper::apply_direction_snapshot(Direction direction, const ShaperDirectionSnapshot& snapshot, std::chrono::steady_clock::time_point now) {
     auto& state = state_for(direction);
-    if(snapshot.record_size_cdf.empty() || snapshot.inter_record_delay_ms_cdf.empty()) {
+    if(snapshot.record_size_cdf.empty() || snapshot.inter_record_delay_us_cdf.empty()) {
         return;
     }
     state.record_size_buckets = cdf_to_buckets(snapshot.record_size_cdf);
-    state.inter_record_delay_ms_buckets = cdf_to_buckets(snapshot.inter_record_delay_ms_cdf);
+    state.inter_record_delay_us_buckets = cdf_to_buckets(snapshot.inter_record_delay_us_cdf);
     state.observed_record_count = std::max<std::uint64_t>(snapshot.observed_records, static_cast<std::uint64_t>(profile_.adaptive_min_records));
     state.first_observed_at = now - profile_.adaptive_min_observation;
     state.last_observed_at = now;
@@ -401,9 +401,9 @@ void Shaper::validate_profile(const ShaperProfile& profile) {
     }
 
     validate_cdf(profile.client_to_server.record_size_cdf, "client_to_server record sizes");
-    validate_cdf(profile.client_to_server.inter_record_delay_ms_cdf, "client_to_server delays");
+    validate_cdf(profile.client_to_server.inter_record_delay_us_cdf, "client_to_server delays");
     validate_cdf(profile.server_to_client.record_size_cdf, "server_to_client record sizes");
-    validate_cdf(profile.server_to_client.inter_record_delay_ms_cdf, "server_to_client delays");
+    validate_cdf(profile.server_to_client.inter_record_delay_us_cdf, "server_to_client delays");
 }
 
 void Shaper::validate_cdf(const std::vector<CdfPoint>& cdf, const char* name) {
@@ -475,7 +475,7 @@ auto encode_shaper_snapshot_control(const ShaperSnapshot& snapshot) -> ByteVecto
     for(const auto& direction : snapshot.directions) {
         append_be(out, static_cast<std::uint64_t>(direction.observed_records));
         append_cdf(out, direction.record_size_cdf);
-        append_cdf(out, direction.inter_record_delay_ms_cdf);
+        append_cdf(out, direction.inter_record_delay_us_cdf);
     }
     return out;
 }
@@ -507,15 +507,15 @@ auto decode_shaper_snapshot_control(std::span<const std::byte> payload) -> Shape
             return ShaperSnapshotResult::failure(ShaperSnapshotError::invalid_payload);
         }
         direction.record_size_cdf = std::move(*sizes);
-        direction.inter_record_delay_ms_cdf = std::move(*delays);
+        direction.inter_record_delay_us_cdf = std::move(*delays);
     }
     if(offset != payload.size()) {
         return ShaperSnapshotResult::failure(ShaperSnapshotError::invalid_payload);
     }
     if(!snapshot_cdf_valid(snapshot.directions[direction_index(Direction::client_to_server)].record_size_cdf) ||
-       !snapshot_cdf_valid(snapshot.directions[direction_index(Direction::client_to_server)].inter_record_delay_ms_cdf) ||
+       !snapshot_cdf_valid(snapshot.directions[direction_index(Direction::client_to_server)].inter_record_delay_us_cdf) ||
        !snapshot_cdf_valid(snapshot.directions[direction_index(Direction::server_to_client)].record_size_cdf) ||
-       !snapshot_cdf_valid(snapshot.directions[direction_index(Direction::server_to_client)].inter_record_delay_ms_cdf)) {
+       !snapshot_cdf_valid(snapshot.directions[direction_index(Direction::server_to_client)].inter_record_delay_us_cdf)) {
         return ShaperSnapshotResult::failure(ShaperSnapshotError::invalid_payload);
     }
     return ShaperSnapshotResult::success(std::move(snapshot));

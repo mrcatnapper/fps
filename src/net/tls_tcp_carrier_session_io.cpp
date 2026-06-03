@@ -5,6 +5,7 @@
 #include <boost/asio/write.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -43,6 +44,10 @@ struct ShapeSizeBounds {
     std::size_t min_tls_record_size = 0;
     std::size_t max_tls_record_size = 0;
 };
+
+[[nodiscard]] auto delay_us(std::chrono::microseconds delay) noexcept -> std::uint64_t {
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(0, delay.count()));
+}
 
 [[nodiscard]] auto classified_shape_size_bounds(
     std::span<const TlsTcpCarrierOwnedCovertFrame> frames, const std::optional<TlsTcpCarrierZeroRttOptions>& options
@@ -1006,7 +1011,7 @@ void TlsTcpCarrierSession::maybe_schedule_shaped_write(Direction direction) {
                 .decision = TlsTcpCarrierShaperDecision::blocked,
                 .payload_size = item.payload_size,
                 .queue_bytes = shaped_queue_bytes(direction),
-                .delay = plan.delay,
+                .delay_us = delay_us(plan.delay),
                 .tls_record_size = plan.tls_record_size,
                 .covert_payload_budget = plan.covert_payload_budget,
             }
@@ -1053,7 +1058,7 @@ void TlsTcpCarrierSession::handle_shaper_timer(Direction direction, const boost:
                 .decision = TlsTcpCarrierShaperDecision::blocked,
                 .payload_size = front.payload_size,
                 .queue_bytes = shaped_queue_bytes(direction),
-                .delay = plan.delay,
+                .delay_us = delay_us(plan.delay),
                 .tls_record_size = plan.tls_record_size,
                 .covert_payload_budget = plan.covert_payload_budget,
             }
@@ -1085,7 +1090,7 @@ void TlsTcpCarrierSession::handle_shaper_timer(Direction direction, const boost:
             .decision = TlsTcpCarrierShaperDecision::scheduled,
             .payload_size = item.payload_size,
             .queue_bytes = shaped_queue_bytes(direction),
-            .delay = plan.delay,
+            .delay_us = delay_us(plan.delay),
             .tls_record_size = plan.tls_record_size,
             .encoded_tls_record_size = item.write.bytes.size(),
             .covert_payload_budget = plan.covert_payload_budget,

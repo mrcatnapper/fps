@@ -5,6 +5,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -12,6 +13,35 @@
 #include <vector>
 
 namespace fps::net::detail {
+
+[[nodiscard]] auto parse_cdf_bound(const json::value& value, std::string_view display_path) -> Result<std::size_t, std::string> {
+    if(value.is_uint64()) {
+        if(value.as_uint64() > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+            return Result<std::size_t, std::string>::failure(std::string{display_path} + " bucket is out of range");
+        }
+        return Result<std::size_t, std::string>::success(static_cast<std::size_t>(value.as_uint64()));
+    }
+    if(value.is_int64()) {
+        if(value.as_int64() < 0) {
+            return Result<std::size_t, std::string>::failure(std::string{display_path} + " bucket must not be negative");
+        }
+        return Result<std::size_t, std::string>::success(static_cast<std::size_t>(value.as_int64()));
+    }
+    return Result<std::size_t, std::string>::failure(std::string{display_path} + " bucket must be an integer");
+}
+
+[[nodiscard]] auto parse_cdf_probability(const json::value& value, std::string_view display_path) -> Result<double, std::string> {
+    if(value.is_double()) {
+        return Result<double, std::string>::success(value.as_double());
+    }
+    if(value.is_int64()) {
+        return Result<double, std::string>::success(static_cast<double>(value.as_int64()));
+    }
+    if(value.is_uint64()) {
+        return Result<double, std::string>::success(static_cast<double>(value.as_uint64()));
+    }
+    return Result<double, std::string>::failure(std::string{display_path} + " probability must be a number");
+}
 
 [[nodiscard]] auto parse_cdf(const json::object& root, std::string_view path, std::string_view display_path) -> Result<std::vector<CdfPoint>, std::string> {
     auto child = optional_array_config(root, path);
@@ -24,19 +54,19 @@ namespace fps::net::detail {
 
     std::vector<CdfPoint> out;
     for(const auto& item : *child.value()) {
-        if(!item.is_object()) {
-            return Result<std::vector<CdfPoint>, std::string>::failure(std::string{display_path} + " entries must be objects");
+        if(!item.is_array()) {
+            return Result<std::vector<CdfPoint>, std::string>::failure(std::string{display_path} + " entries must be [value, probability] pairs");
         }
-        const auto& object = item.as_object();
-        auto le = optional_size_config(object, "le");
-        auto p = optional_double_config(object, "p");
+        const auto& pair = item.as_array();
+        if(pair.size() != 2U) {
+            return Result<std::vector<CdfPoint>, std::string>::failure(std::string{display_path} + " entries must contain exactly two values");
+        }
+        auto le = parse_cdf_bound(pair[0], display_path);
+        auto p = parse_cdf_probability(pair[1], display_path);
         if(!le || !p) {
             return Result<std::vector<CdfPoint>, std::string>::failure(!le ? le.error() : p.error());
         }
-        if(!le.value().has_value() || !p.value().has_value()) {
-            return Result<std::vector<CdfPoint>, std::string>::failure(std::string{display_path} + " entries require le and p");
-        }
-        out.push_back(CdfPoint{.le = *le.value(), .p = *p.value()});
+        out.push_back(CdfPoint{.le = le.value(), .p = p.value()});
     }
     return Result<std::vector<CdfPoint>, std::string>::success(std::move(out));
 }
@@ -87,11 +117,11 @@ namespace fps::net::detail {
     if(!s2c_sizes) {
         return Result<ShaperProfile, std::string>::failure(s2c_sizes.error());
     }
-    auto c2s_delays = parse_cdf(root, "inter_record_delay_ms_cdf_c2s", "shaper.inter_record_delay_ms_cdf_c2s");
+    auto c2s_delays = parse_cdf(root, "inter_record_delay_us_cdf_c2s", "shaper.inter_record_delay_us_cdf_c2s");
     if(!c2s_delays) {
         return Result<ShaperProfile, std::string>::failure(c2s_delays.error());
     }
-    auto s2c_delays = parse_cdf(root, "inter_record_delay_ms_cdf_s2c", "shaper.inter_record_delay_ms_cdf_s2c");
+    auto s2c_delays = parse_cdf(root, "inter_record_delay_us_cdf_s2c", "shaper.inter_record_delay_us_cdf_s2c");
     if(!s2c_delays) {
         return Result<ShaperProfile, std::string>::failure(s2c_delays.error());
     }
@@ -124,12 +154,12 @@ namespace fps::net::detail {
         .client_to_server =
             DirectionProfile{
                 .record_size_cdf = std::move(c2s_sizes).value(),
-                .inter_record_delay_ms_cdf = std::move(c2s_delays).value(),
+                .inter_record_delay_us_cdf = std::move(c2s_delays).value(),
             },
         .server_to_client =
             DirectionProfile{
                 .record_size_cdf = std::move(s2c_sizes).value(),
-                .inter_record_delay_ms_cdf = std::move(s2c_delays).value(),
+                .inter_record_delay_us_cdf = std::move(s2c_delays).value(),
             },
         .covert_ratio_max = covert_ratio.value().value_or(0.0),
         .burst_records_max = burst_records.value(),

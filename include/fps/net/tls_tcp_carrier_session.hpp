@@ -53,13 +53,13 @@ struct TlsTcpCarrierShaperEvent {
     TlsTcpCarrierShaperDecision decision{};
     std::size_t payload_size{};
     std::size_t queue_bytes{};
-    std::chrono::milliseconds delay{0};
+    std::uint64_t delay_us{};
     std::size_t tls_record_size{};
     std::size_t encoded_tls_record_size{};
     std::size_t covert_payload_budget{};
 };
 BOOST_DESCRIBE_STRUCT(
-    TlsTcpCarrierShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay, tls_record_size, encoded_tls_record_size, covert_payload_budget)
+    TlsTcpCarrierShaperEvent, (), (direction, decision, payload_size, queue_bytes, delay_us, tls_record_size, encoded_tls_record_size, covert_payload_budget)
 )
 
 struct TlsTcpCarrierDirectionStats {

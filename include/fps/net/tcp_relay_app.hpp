@@ -72,7 +72,7 @@ using TcpRelayConfigResult = Result<TcpRelayConfig, std::string>;
 
 BOOST_DEFINE_ENUM_CLASS(
     TcpRelayCliCommand, run, check_config, generate_server_keypair, generate_client_uuid, generate_client_profile, print_config_from_uri, write_config_from_uri,
-    status, lease_list, lease_revoke_client_uuid, lease_prune
+    write_shaper_profile, status, lease_list, lease_revoke_client_uuid, lease_prune
 )
 
 struct ClientProfileRequest {
