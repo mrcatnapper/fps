@@ -4,6 +4,51 @@
 
 ## 2026-06-03
 
+### Full verification before UX-footgun PR
+
+Goal:
+
+- Re-run the full local, Docker, root/TUN and split-host soak verification
+  suite before opening/merging the UX-footgun branch.
+
+Results:
+
+- Non-Docker quality suite passed:
+  - clang-20 local build/CTest;
+  - ASan+UBSan local CTest;
+  - Valgrind unit pass: 211 test cases, 0 errors/leaks;
+  - llvm-cov thresholds: 74.69% line coverage, 82.54% function coverage;
+  - libFuzzer smoke: TLS records, covert codec, envelope, Zero-RTT and TUN
+    frames.
+- Docker smoke passed for both `fps:local` (`Dockerfile`) and `fps:alpine`
+  (`Dockerfile.alpine`), including JSON server keypair generation,
+  `check-config` entrypoint alias and compose validation.
+- Root/TUN CTest passed: 6/6 (`open_smoke`, loopback, burst,
+  fragmentation, shaper and multi-carrier).
+- Local Docker/TUN resilience soak passed on `fps:alpine`: two clients, carrier
+  recovery, spoof-drop, HTTP/UDP probes and no packet loss in checked probes.
+- Split-host `fpshop` soak passed for project
+  `fps-two-host-pr-f440f89-215623`:
+  - image built locally and transferred with Docker save/load;
+  - duration 300s, two clients, two carriers per client, shaper enabled;
+  - planned carrier restarts: `a1`, `b2`, `a2`, `b1`;
+  - UDP client A: 2400/2400, 0% loss;
+  - UDP client B: 2396/2400, 0.1667% loss, below the configured threshold;
+  - bad payloads: 0;
+  - bad classified/envelope/shaper log counters: 0;
+  - spoofed-source drop observed: 1.
+
+Verification commands:
+
+- `tools/run_quality_checks.sh --all`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_IMAGE=fps:alpine FPS_DOCKER_SOAK_BUILD=0 tools/run_quality_checks.sh --soak-smoke`
+- `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:alpine --transfer-image --duration 300 --clients 2 --carriers-per-client 2 --project fps-two-host-pr-f440f89-215623 --keep-artifacts`
+
 ### Fix personal UX flow footguns
 
 Goal:
