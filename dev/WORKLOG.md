@@ -4,6 +4,62 @@
 
 ## 2026-06-03
 
+### Self-review and extended validation for shaper profile export
+
+Goal:
+
+- Review the JSON shaper profile export/import increment before the next soak
+  run.
+- Execute the extended non-soak validation suite, including sanitizer,
+  coverage, fuzz, TUN/root and Docker runtime checks.
+
+Self-review:
+
+- Reviewed the last commit (`9f436db Add JSON shaper profile export`) and the
+  changed shaper JSON/config/status paths.
+- Rechecked public-field cleanup with `rg` for stale
+  `inter_record_delay_ms_cdf` and object-style CDF examples. The only remaining
+  occurrences are intentional negative tests that prove removed formats are
+  rejected.
+- Confirmed that structured shaper events expose `delay_us` explicitly, avoiding
+  accidental sub-millisecond truncation through generic chrono serialization.
+- No code changes were needed during this review.
+
+Verification:
+
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang-20 warning build and local CTest: 15/15 passed;
+  - ASan+UBSan local CTest: 15/15 passed;
+  - Valgrind unit pass: 209 test cases, zero errors/leaks;
+  - llvm-cov gate: 74.54% line coverage and 82.49% function coverage;
+  - libFuzzer smoke: all five fuzz targets passed with 64 runs.
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+  - 6/6 TUN/root tests passed.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+  - Ubuntu runtime image build and Docker smoke passed.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+  - Alpine runtime image build and Docker smoke passed.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - UDP 5.00 Mbit/s, zero packet loss, all services alive.
+- `python3 tools/docker_multi_client_sim.py --sudo --image fps:local --duration 10 --bandwidth 1M --length 1000`
+  - two clients received different leases; C2S/S2C UDP probes had zero packet
+    loss; spoofed source drop event was observed; all services alive.
+- `python3 tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - `replace_old` duplicate-UUID policy behaved as expected.
+- `python3 tools/docker_socks_smoke.py --sudo --image fps:local --proxy-image fps-dante-proxy:local --build`
+  - Dante SOCKS overlay HTTP probe passed; all services alive.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 10 --bandwidth 3M --length 1000`
+  - UDP 3.00 Mbit/s, zero packet loss, all services alive.
+- `git diff --check`
+
+Notes:
+
+- No remote soak was run in this pass by request.
+- Docker buildx was unavailable in this environment; Docker checks used the
+  existing script fallback to the classic Docker builder.
+
 ### Add JSON shaper profile import/export UX
 
 Goal:
