@@ -529,11 +529,12 @@ example run, plots and conclusions.
 - There is no full routing/NAT-to-Internet integration scenario.
 - Docker build/smoke, multi-client and proxy-overlay smokes are opt-in because
   they need a local Docker daemon, `/dev/net/tun` and `NET_ADMIN`.
-- There is no long-running soak/stress test for sustained TUN backpressure.
+- Long-running Docker/TUN soak exists as manual tooling, but it is not yet a
+  scheduled privileged CI job.
 - Fuzzing is bounded smoke, not a long corpus-minimization campaign.
 - Shaper unit/session tests assert exact inserted classified TLS record wire
   sizes and adaptive per-TLS-record model behavior, but not yet full pcap-level
   timing/size distribution mimicry.
-- Production UUID/key rotation, hardened proxy overlay policy,
-  lease-management UX beyond list/revoke/prune and realistic carrier traffic
+- Proxy overlay hardening, lease-management UX beyond list/revoke/prune,
+  public upgrade guidance, release signing and realistic carrier traffic
   modeling workflows remain future work.

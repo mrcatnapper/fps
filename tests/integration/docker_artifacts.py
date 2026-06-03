@@ -152,24 +152,36 @@ def main():
     )
     reject_secrets(release_docs, "release docs")
 
-    protocol_review = read(repo / "dev/PROTOCOL_REVIEW_BRIEF.md")
+    beta_status = read(repo / "docs/beta-status.md")
     require_all(
-        protocol_review,
+        beta_status,
         [
-            "Zero-RTT carrier authentication",
-            "transcript-bound hint precheck",
-            "Classified FPS Records",
-            "No timestamp or replay cache",
-            "public-key-shaped prefix",
-            "Lease Routing And Client Isolation",
-            "Logging And Status Secrecy",
-            "Reviewer questions",
-            "docs/specification.md",
-            "tests/fuzz/",
+            "controlled Linux/Docker beta deployments",
+            "Manual GHCR",
+            "reproducible two-host",
+            "current review brief",
+            "classified FPS records",
+            "no-timestamp/no-cache replay model",
+            "Traffic-shape mimicry remains incomplete",
         ],
-        "protocol review brief",
+        "beta status docs",
     )
-    reject_secrets(protocol_review, "protocol review brief")
+    reject_secrets(beta_status, "beta status docs")
+
+    github_ops = read(repo / "dev/GITHUB_OPERATIONS.md")
+    require_all(
+        github_ops,
+        [
+            "Do not reuse old review snapshots",
+            "docs/specification.md",
+            "docs/testing.md",
+            "docs/beta-status.md",
+            "latest soak evidence",
+            "shaper interaction",
+        ],
+        "GitHub operations docs",
+    )
+    reject_secrets(github_ops, "GitHub operations docs")
 
     entrypoint = read(repo / "docker/fps-entrypoint.sh")
     require_all(

@@ -4,6 +4,43 @@
 
 ## 2026-06-03
 
+### Refresh documentation snapshot and remove stale review artifacts
+
+Goal:
+
+- Review current public/operator and developer Markdown outside `WORKLOG.md`
+  and articles.
+- Remove stale review snapshots that duplicate current docs and should be
+  regenerated fresh for the next review cycle.
+
+Changes:
+
+- Deleted obsolete `dev/PROTOCOL_REVIEW_BRIEF.md`, `dev/REVIEW.md` and
+  `dev/UX_FLOW_REVIEW.md`.
+- Updated remaining docs to stop referring to the deleted protocol review brief
+  as an active review packet.
+- Refreshed beta status around public GitHub/GHCR state, reproducible two-host
+  soak tooling and the current shaper status.
+- Updated the specification version/roadmap wording and clarified that
+  `security.zero_rtt` is the current config namespace while the active wire flow
+  includes a server accept leg before final classified-record keys are used.
+- Updated `AGENTS.md`, root `README.md`, docs index, testing gaps and GitHub
+  operations notes to match the current documentation layout.
+- Updated `tests/integration/docker_artifacts.py` so it checks current
+  beta-status/GitHub-operations contracts instead of requiring the deleted
+  protocol-review snapshot.
+
+Verification:
+
+- Markdown link check over `docs/*.md`, `dev/*.md`, `README.md` and
+  `AGENTS.md`.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `rg -n 'PROTOCOL_REVIEW_BRIEF|UX_FLOW_REVIEW|dev/REVIEW|REVIEW.md|protocol-review packet exists|review package exists|private release policy|30-minute two-host|There is no long-running soak|Production UUID/key rotation|Advanced traffic shaping remains deferred|echo\\.websocket|hold-wss|postman|Deribit|native packaging|shared_secret|IFF|primary session' docs dev README.md AGENTS.md --glob '!dev/WORKLOG.md'`
+- `git diff --check`
+
+This logical commit: `Refresh docs and remove stale review snapshots`.
+
 ### Add reproducible two-host soak tooling
 
 Goal:

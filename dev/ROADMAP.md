@@ -88,10 +88,10 @@ without claiming resistance to advanced timing/size traffic analysis.
 
 ## Phase 5: Security Hardening
 
-- [x] Prepare an external protocol review brief for Zero-RTT precheck,
-  classified FPS records, replay policy, lease enforcement and known risks.
-- Run independent crypto/protocol review of transcript-bound Zero-RTT precheck,
-  classified FPS records and replay assumptions.
+- Regenerate a concise external protocol review brief from the current
+  specification, beta status, tests and latest soak evidence.
+- Run independent crypto/protocol review of transcript-bound precheck,
+  classified FPS records, shaper interaction and replay assumptions.
 - [x] Design and implement the next Zero-RTT wire revision around a full per-direction carrier
   transcript hash, removing visible public-key-shaped handshake material and
   reducing replay surface.
