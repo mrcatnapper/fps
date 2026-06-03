@@ -30,6 +30,7 @@
 #include "fps/core/cover_session_pipeline.hpp"
 #include "fps/core/crypto.hpp"
 #include "fps/core/identity.hpp"
+#include "fps/core/protocol_constants.hpp"
 #include "fps/log/describe.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
@@ -47,6 +48,7 @@ using local_stream = boost::asio::local::stream_protocol;
 namespace json = boost::json;
 
 constexpr auto kNoisyLogInterval = std::chrono::seconds{10};
+constexpr std::size_t kShaperSnapshotControlCdfPoints = 16;
 
 using detail::codec_error_message;
 using detail::classified_record_encode_error_message;
@@ -849,7 +851,7 @@ private:
         if(config_.role != RelayRole::server || !shaper_ || !session) {
             return;
         }
-        auto payload = encode_shaper_snapshot_control(shaper_->snapshot());
+        auto payload = encode_shaper_snapshot_control(compact_shaper_snapshot(shaper_->snapshot(), kShaperSnapshotControlCdfPoints));
         auto queued = session->enqueue_covert_frame(Direction::server_to_client, FrameType::control, payload);
         if(!queued) {
             FPS_LOG_WARNING("shaper") << "event=shaper_snapshot_send_failed session_id=" << session_id
@@ -878,19 +880,17 @@ private:
             return;
         }
         shaper_snapshot_timer_.expires_after(shaper_->snapshot_interval());
-        shaper_snapshot_timer_.async_wait(
-            [self = shared_from_this()](const boost::system::error_code& error) {
-                if(error == boost::asio::error::operation_aborted) {
-                    return;
-                }
-                if(error) {
-                    FPS_LOG_WARNING("shaper") << "event=shaper_snapshot_timer_failed error=" << error.message();
-                    return;
-                }
-                self->broadcast_shaper_snapshot();
-                self->schedule_shaper_snapshot_timer();
+        shaper_snapshot_timer_.async_wait([self = shared_from_this()](const boost::system::error_code& error) {
+            if(error == boost::asio::error::operation_aborted) {
+                return;
             }
-        );
+            if(error) {
+                FPS_LOG_WARNING("shaper") << "event=shaper_snapshot_timer_failed error=" << error.message();
+                return;
+            }
+            self->broadcast_shaper_snapshot();
+            self->schedule_shaper_snapshot_timer();
+        });
     }
 
     void accept_next() {
@@ -973,7 +973,9 @@ private:
             return true;
         }
         ++stats_.sessions_closed;
-        record_closed_session(session_id, false, relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "set_tcp_no_delay_failed"));
+        record_closed_session(
+            session_id, false, relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "set_tcp_no_delay_failed")
+        );
         FPS_LOG_WARNING("relay") << "event=set_tcp_no_delay_failed session_id=" << session_id << " socket=" << socket_role
                                  << " enabled=" << config_.tcp_no_delay << " error=" << result.error();
         close_socket(socket);
@@ -1176,7 +1178,7 @@ private:
             options.client_upgrade_delay_sigma = config_.zero_rtt->client_upgrade_delay_sigma;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
-            options.max_envelope_padding_size = config_.max_frame_padding_size;
+            options.max_envelope_padding_size = shaper_ ? kDefaultTlsRecordPayloadLimit : config_.max_frame_padding_size;
             if(config_.role == RelayRole::client && client_instance_id_.has_value()) {
                 options.client_upgrade_padding = encode_client_instance_control(*client_instance_id_);
             }

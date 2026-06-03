@@ -4,6 +4,78 @@
 
 ## 2026-06-03
 
+### Stabilize shaped TUN soak before PR merge
+
+Goal:
+
+- Run the final remote multi-client soak for the adaptive TLS-record shaper PR
+  before merging.
+- Fix any regression found by the soak instead of pushing a known-bad PR state.
+
+Findings:
+
+- The first remote soak attempts reproduced a real shaped TUN data-path failure:
+  clients queued/datagram-counted C2S packets, but the server did not receive
+  TUN datagrams.
+- A local isolated netns reproduction with
+  `tests/integration/tun_zero_rtt_loopback.py --enable-shaper` confirmed the
+  product-path issue without involving the remote host.
+- Root cause: production relay passed
+  `max_envelope_padding_size = codec.max_frame_padding` into the classified
+  record codec. With shaper profiles sampling larger TLS record sizes (for
+  example 4096-byte records) and normal `codec.max_frame_padding = 64`, small
+  TUN datagrams could not be padded up to the target TLS record size. They stayed
+  blocked in the shaped queue instead of being emitted.
+- A second issue found during the first soak attempt was oversized adaptive
+  shaper snapshot control frames. Large adaptive CDFs could exceed the codec
+  frame payload limit when sent as one control frame.
+
+Changes:
+
+- Added `compact_shaper_snapshot(...)` and bounded server snapshot broadcasts to
+  16 CDF points per distribution before encoding the control frame.
+- When a relay has shaper enabled, production `TlsTcpCarrierZeroRttOptions` now
+  permits record-level envelope padding up to the TLS record payload limit while
+  keeping per-frame padding controlled by `codec.max_frame_padding`.
+- Added focused unit coverage for bounded shaper snapshot control payloads.
+- Added a client-role shaped datagram test that verifies a C2S shaped datagram
+  can be decoded by a server-side classified receiver.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=shaper --catch_system_errors=no --log_level=test_suite`
+- `./build/fps_unit_tests --run_test=tls_tcp_carrier_session/client_role_shaped_datagram_decodes_on_server_side --catch_system_errors=no --log_level=test_suite`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `ctest --test-dir build --output-on-failure`
+- `sudo -n python3 tests/integration/tun_zero_rtt_loopback.py --fps-client /workspaces/build/fps_client --fps-server /workspaces/build/fps_server --carrier /workspaces/tools/fps_carrier.py --enable-shaper --carrier-count 2 --expect-carrier-count 2 --udp-count 4 --udp-payload-size 600`
+- `docker build -f Dockerfile.alpine -t fps:alpine .`
+- `docker save fps:soak-69a4d3b-padfix | ssh fpshop docker load`
+- Remote 5-minute split-host soak with server/origin on `fpshop` and two local
+  Docker clients, each with two carrier sessions:
+  - image: `fps:soak-69a4d3b-padfix`;
+  - artifacts: `captures/fps-remote-soak-48859`;
+  - leases: `10.89.0.2` and `10.89.0.3`;
+  - carrier restarts: `a1`, `b2`, then `a2` and `b1` together;
+  - UDP echo: client A `5400/5400`, client B `5400/5400`, zero loss;
+  - HTTP probes: client A `97/97`, client B `97/97`;
+  - server classified records: decoded `12088`, encoded `11979`, zero
+    decode/encode/tamper errors;
+  - server TUN counters: `packets_from_device=11880`,
+    `packets_to_device=12061`;
+  - bad log counters for classified/envelope encode/decode and oversized
+    payload were all zero;
+  - all FPS, carrier and client services were alive at collection time.
+
+Notes:
+
+- Build images locally for weak remote soak hosts and transfer them with
+  `docker save | ssh ... docker load`; do not build the image on `fpshop`.
+- The failed intermediate harness attempts are preserved under earlier
+  `captures/fps-remote-soak-*` directories, but only
+  `captures/fps-remote-soak-48859` is the successful final soak for this entry.
+
 ### Add offline pcap-to-shaper-profile tool
 
 Goal:

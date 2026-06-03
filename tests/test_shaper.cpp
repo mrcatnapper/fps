@@ -354,6 +354,35 @@ BOOST_AUTO_TEST_CASE(shaper_snapshot_roundtrips_and_bootstraps_peer_model) {
     BOOST_TEST(plan.tls_record_size == 512U);
 }
 
+BOOST_AUTO_TEST_CASE(shaper_snapshot_compaction_bounds_control_payload) {
+    auto profile = adaptive_profile();
+    profile.adaptive_min_records = 2;
+    profile.adaptive_min_observation = std::chrono::milliseconds{1};
+    fps::Shaper shaper{profile};
+    const auto t0 = std::chrono::steady_clock::now();
+
+    for(std::size_t index = 1; index <= 128; ++index) {
+        const auto offset = std::chrono::milliseconds{static_cast<int>(index)};
+        shaper.observe_cover_record({fps::Direction::client_to_server, 64 + index * 8, t0 + offset});
+        shaper.observe_cover_record({fps::Direction::server_to_client, 96 + index * 9, t0 + offset});
+    }
+
+    const auto full = fps::encode_shaper_snapshot_control(shaper.snapshot());
+    const auto compact = fps::compact_shaper_snapshot(shaper.snapshot(), 16);
+    const auto encoded = fps::encode_shaper_snapshot_control(compact);
+
+    BOOST_TEST(encoded.size() < full.size());
+    BOOST_TEST(encoded.size() < 1280U);
+    auto decoded = fps::decode_shaper_snapshot_control(encoded);
+    BOOST_REQUIRE(decoded);
+    for(const auto& direction : decoded.value().directions) {
+        BOOST_TEST(direction.record_size_cdf.size() <= 16U);
+        BOOST_TEST(direction.inter_record_delay_us_cdf.size() <= 16U);
+        BOOST_TEST(direction.record_size_cdf.back().p == 1.0);
+        BOOST_TEST(direction.inter_record_delay_us_cdf.back().p == 1.0);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(shaper_snapshot_rejects_profile_mismatch) {
     auto profile = adaptive_profile();
     fps::Shaper server{profile};

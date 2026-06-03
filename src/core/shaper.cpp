@@ -190,9 +190,8 @@ void Shaper::commit_send_plan(const SendPlan& plan) {
     ++state.consecutive_injected_records;
 }
 
-auto Shaper::next_send_plan(
-    Direction direction, std::size_t min_covert_payload_size, std::size_t min_tls_record_size, std::size_t max_tls_record_size
-) -> SendPlan {
+auto Shaper::next_send_plan(Direction direction, std::size_t min_covert_payload_size, std::size_t min_tls_record_size, std::size_t max_tls_record_size)
+    -> SendPlan {
     auto plan = propose_send_plan(
         SendPlanRequest{
             .direction = direction,
@@ -523,6 +522,40 @@ auto decode_shaper_snapshot_control(std::span<const std::byte> payload) -> Shape
 
 auto is_shaper_snapshot_control(std::span<const std::byte> payload) noexcept -> bool {
     return !payload.empty() && std::to_integer<unsigned int>(payload[0]) == kControlTypeShaperSnapshot;
+}
+
+auto compact_shaper_snapshot(const ShaperSnapshot& snapshot, std::size_t max_cdf_points) -> ShaperSnapshot {
+    if(max_cdf_points == 0U) {
+        max_cdf_points = 1U;
+    }
+
+    const auto compact_cdf = [max_cdf_points](const std::vector<CdfPoint>& cdf) {
+        if(cdf.size() <= max_cdf_points) {
+            return cdf;
+        }
+
+        std::vector<CdfPoint> out;
+        out.reserve(max_cdf_points);
+        for(std::size_t index = 1; index <= max_cdf_points; ++index) {
+            const auto selected = std::min(cdf.size() - 1U, ((index * cdf.size()) + max_cdf_points - 1U) / max_cdf_points - 1U);
+            if(out.empty() || cdf[selected].le != out.back().le) {
+                out.push_back(cdf[selected]);
+            } else {
+                out.back() = cdf[selected];
+            }
+        }
+        if(!out.empty()) {
+            out.back().p = 1.0;
+        }
+        return out;
+    };
+
+    ShaperSnapshot compact = snapshot;
+    for(auto& direction : compact.directions) {
+        direction.record_size_cdf = compact_cdf(direction.record_size_cdf);
+        direction.inter_record_delay_us_cdf = compact_cdf(direction.inter_record_delay_us_cdf);
+    }
+    return compact;
 }
 
 } // namespace fps

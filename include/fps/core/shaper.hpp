@@ -1,7 +1,7 @@
 #pragma once
 
-#include <chrono>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -91,6 +91,7 @@ using ShaperSnapshotResult = Result<ShaperSnapshot, ShaperSnapshotError>;
 [[nodiscard]] auto encode_shaper_snapshot_control(const ShaperSnapshot& snapshot) -> ByteVector;
 [[nodiscard]] auto decode_shaper_snapshot_control(std::span<const std::byte> payload) -> ShaperSnapshotResult;
 [[nodiscard]] auto is_shaper_snapshot_control(std::span<const std::byte> payload) noexcept -> bool;
+[[nodiscard]] auto compact_shaper_snapshot(const ShaperSnapshot& snapshot, std::size_t max_cdf_points) -> ShaperSnapshot;
 
 class Shaper {
 public:
