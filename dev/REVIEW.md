@@ -112,6 +112,13 @@ Date: 2026-05-29
     dependence, but pcap-level packet-size/timing checks are still needed before
     claiming traffic-shape mimicry.
 
+16. **Two-host soak is now required tooling, not an ad-hoc ritual.** The last
+    remote soak found a real shaped TUN regression, but the harness itself also
+    failed twice due one-off compose/template mistakes. Release-candidate soak
+    should use the repository `docker_two_host_soak.py` flow so split-host
+    liveness, multi-client leases, carrier restarts, spoof-drop and bad-log
+    assertions are repeatable.
+
 ## Decisions Captured
 
 - `security.zero_rtt` remains the only carrier authentication mechanism.
@@ -141,8 +148,8 @@ Date: 2026-05-29
 
 - Reuse the versioned `fps://` URI shape in future Android/GUI QR flows.
 - Add CI jobs for GCC, clang, ASan/UBSan, Valgrind, coverage and fuzz smoke.
-- Repeat the two-host Docker/TUN soak for release candidates and promote it to a
-  privileged scheduled runner when the environment is stable enough.
+- Repeat `tools/docker_two_host_soak.py` for release candidates and promote it
+  to a privileged scheduled runner when the environment is stable enough.
 - Decide after protocol review whether a replay cache should return on top of
   transcript-bound candidates.
 - Keep `main` protected before inviting more contributors.

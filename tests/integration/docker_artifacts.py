@@ -488,7 +488,7 @@ def main():
             "fps-client-a",
             "fps-client-b",
             "allowed_client_uuids",
-            "detail=ignored_spoofed_tun_source",
+            "ignored_spoofed_tun_source",
             "event=session_stats",
             "iperf3",
             "SPOOF_IP",
@@ -523,7 +523,7 @@ def main():
             "observed_write_queue_full",
             "write_queue_full_before",
             "write_queue_full_after",
-            "detail=ignored_spoofed_tun_source",
+            "ignored_spoofed_tun_source",
             "socks_overlay_ok",
             "print(f\"error: {error}\", file=sys.stderr)",
             "down\", \"-v\", \"--remove-orphans",
@@ -531,6 +531,32 @@ def main():
         "Docker resilience soak",
     )
     reject_secrets(resilience_soak, "Docker resilience soak")
+
+    two_host_soak = read(repo / "tools/docker_two_host_soak.py")
+    require_all(
+        two_host_soak,
+        [
+            "--remote",
+            "--remote-connect-host",
+            "--build-local",
+            "--transfer-image",
+            "transfer_docker_image",
+            "copy_tree_to_remote",
+            "remote_compose",
+            "carriers-per-client",
+            "--max-loss-percent",
+            "BAD_LOG_PATTERNS",
+            "ignored_spoofed_tun_source",
+            "down\", \"-v\", \"--remove-orphans",
+            "rm -rf",
+            "fps-two-host-udp-client",
+            "fps-two-host-http-client",
+            "local-tmp.logs",
+            "remote-tmp.logs",
+        ],
+        "Docker two-host soak",
+    )
+    reject_secrets(two_host_soak, "Docker two-host soak")
 
     return 0
 

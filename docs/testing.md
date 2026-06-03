@@ -265,30 +265,42 @@ on a separate Linux host and clients on the local host. The server side should
 publish the FPS carrier listener on an externally reachable TLS port such as
 `:443`; keep carrier origin and TUN setup inside containers.
 
-On weak remote hosts, build the Alpine runtime image locally and load it
-remotely instead of compiling there:
+Use the repository tool instead of a one-off harness:
 
 ```sh
-docker build -f Dockerfile.alpine -t fps:soak-$(git rev-parse --short HEAD) .
-docker save fps:soak-$(git rev-parse --short HEAD) | \
-  ssh fps.example.net docker load
+FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop \
+  --build-local --duration 300 --clients 2 --carriers-per-client 2 \
+  --bandwidth 500K --length 512 --keep-artifacts
 ```
 
-The current beta-candidate shape is:
+On weak remote hosts, keep `--build-local`: the tool builds the Alpine runtime
+image locally and loads it remotely with `docker save | ssh ... docker load`
+instead of compiling there. If the image is already present on both hosts, omit
+`--build-local` and pass `--image`.
+
+The default UDP probe rate is deliberately modest (`--udp-pps 8`) because this
+gate validates carrier recovery, lease routing and shaped transport liveness,
+not maximum throughput. Raise it explicitly for capacity experiments. The
+default loss gate allows up to `--max-loss-percent 1.0` during planned carrier
+restarts; any payload mismatch, classified/envelope encode/decode error or
+service exit still fails the run.
+
+The current release-candidate shape is:
 
 - one remote `fps_server` plus self-hosted `fps_carrier origin`;
 - two local `fps_client` containers with distinct UUIDs and local
-  `fps_carrier client` processes;
-- sustained client-to-server UDP through TUN with a concurrent HTTP probe;
-- server-to-client UDP probes to both leased client addresses;
+  `fps_carrier client` processes, with two carrier sessions per client by
+  default;
+- sustained UDP echo probes through TUN with a concurrent HTTP probe;
 - spoofed-source negative probe with `ignored_spoofed_tun_source` in status;
-- carrier stop/start and post-recovery UDP probe;
-- final status check for service liveness and secret-free JSON snapshots.
+- planned carrier stop/start, including simultaneous carrier restarts;
+- final status/log checks for service liveness, non-zero FPS traffic counters,
+  bad classified/envelope encode/decode events and secret-free JSON snapshots.
 
-Do not add one-off two-host orchestration scripts to the repository unless they
-become stable product tooling. Keep the command shape, image tag, duration,
-throughput/loss summary, spoof-drop result, carrier recovery result and cleanup
-notes with the release-candidate record.
+The tool writes a `summary.json` and redacted logs under `captures/<project>`
+when `--keep-artifacts` is set or when the run fails. Keep the command shape,
+image tag, duration, loss summary, spoof-drop result, carrier recovery result
+and cleanup notes with the release-candidate record in `dev/WORKLOG.md`.
 
 ## CTest Labels
 

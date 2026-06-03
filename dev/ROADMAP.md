@@ -81,8 +81,10 @@ without claiming resistance to advanced timing/size traffic analysis.
   reassembly state by source carrier and packet id with a bounded state cap.
 - [x] Run a two-host 30-minute Docker/TUN soak on a weak remote Linux host for
   the current beta candidate.
-- Repeat two-host soak for release candidates until it is promoted to a
-  privileged scheduled runner.
+- [x] Add a repository two-host soak tool so release-candidate split-host
+  checks do not depend on ad-hoc scripts.
+- Repeat `tools/docker_two_host_soak.py` for release candidates until it is
+  promoted to a privileged scheduled runner.
 
 ## Phase 5: Security Hardening
 
@@ -157,6 +159,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   sustained traffic.
 - [x] Validate one distributed two-host Docker/TUN soak over a real published
   `:443` carrier port.
+- [x] Add reproducible two-host soak orchestration with local image transfer,
+  multi-client/multi-carrier traffic, carrier restarts and bad-log gates.
 - Promote Docker/TUN soak to scheduled/manual privileged CI after repeated
   stable release-candidate runs.
 

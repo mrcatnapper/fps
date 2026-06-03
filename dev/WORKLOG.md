@@ -4,6 +4,95 @@
 
 ## 2026-06-03
 
+### Add reproducible two-host soak tooling
+
+Goal:
+
+- Turn the repeated `fpshop` release-candidate soak from ad-hoc harnesses into
+  repository tooling.
+- Preserve the useful split-host coverage from the last soak: remote
+  server/origin, local clients, multiple carrier sessions, TUN traffic, planned
+  carrier restarts, spoof-drop and bad-log assertions.
+
+Post mortem:
+
+- The previous split-host soak found a real shaped TUN bug, but the harness
+  itself failed first on compose YAML and JSON-template mistakes. Those failures
+  were orchestration defects caused by keeping the split-host setup outside the
+  repo.
+- Existing Docker tools covered local multi-client and resilience scenarios,
+  but not remote Docker-over-SSH, local image transfer, remote artifact/log
+  collection or multi-carrier restart plans.
+- A first implementation smoke exposed two new harness issues before the final
+  run: an unsupported `fps_carrier --server-bps` flag and an incomplete shaper
+  profile with `covert_ratio_max=0`. Both are now covered by the repository
+  script shape and static checks.
+- The UDP probe needed sequence-aware accounting. Planned carrier restarts can
+  delay echo replies; late replies must be matched by sequence instead of being
+  counted as payload corruption.
+
+Changes:
+
+- Added remote Docker/SSH helpers in `tools/fps_docker_common.py`: remote
+  compose, remote exec, local tree copy and `docker save | ssh docker load`.
+  Remote work directories are explicitly sanity-checked before any `rm -rf`.
+- Added `tools/docker_two_host_soak.py`.
+  - Builds/transfers a local Alpine image when requested.
+  - Runs remote `fps_server` + `fps_carrier origin` and local multi-client
+    `fps_client` + multiple `fps_carrier client` services.
+  - Uses shaped configs by default, status sockets, distinct UUID leases,
+    background UDP echo loops, HTTP probes, spoofed-source negative probe and
+    planned carrier restarts.
+  - Writes redacted artifacts under `captures/<project>` on failure or
+    `--keep-artifacts`, including compose files, status snapshots, compose logs
+    and container-local probe logs.
+- Updated `docs/testing.md`, `docs/release.md`, `dev/REVIEW.md`,
+  `dev/ROADMAP.md` and the Docker artifact static check.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- Local resilience smoke:
+  `FPS_DOCKER_SUDO=1 tools/docker_resilience_soak.py --image fps:local --duration 5 --clients 1`
+  - carrier restart recovered;
+  - mixed UDP, server-to-client UDP and post-spoof UDP all reported zero loss;
+  - `ignored_spoofed_tun_source=1`.
+- Short split-host smoke after fixes:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 20 --clients 1 --carriers-per-client 1`
+  - UDP `159/160`, `0.625%` loss, no bad payloads;
+  - HTTP `23/23`;
+  - bad-log counters all zero.
+- Short split-host smoke after remote-directory safety guard:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 10 --clients 1 --carriers-per-client 1`
+  - UDP `80/80`, no bad payloads;
+  - bad-log counters all zero;
+  - remote compose/copy/cleanup path remained functional.
+- Full split-host soak:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 300 --clients 2 --carriers-per-client 2 --project fps-two-host-soak-192714 --keep-artifacts`
+  - artifacts: `captures/fps-two-host-soak-192714`;
+  - leases: `10.89.0.2`, `10.89.0.3`;
+  - carrier restarts: `a1`, `b2`, then `a2` and `b1`;
+  - UDP A `2399/2400`, `0.0417%` loss, no bad payloads;
+  - UDP B `2400/2400`, zero loss, no bad payloads;
+  - server UDP echo received/sent all client packets;
+  - HTTP probes succeeded for both clients;
+  - `ignored_spoofed_tun_source=1`;
+  - classified/envelope bad-log counters all zero;
+  - local and remote services alive at collection time.
+
+Notes:
+
+- `tools/docker_two_host_soak.py` defaults to `--udp-pps 8` and
+  `--max-loss-percent 1.0`. This is a recovery/liveness gate, not a throughput
+  benchmark.
+- Existing failed smoke artifacts are intentionally left under ignored
+  `captures/fps-two-host-*` paths for this development session.
+
+This logical commit: `Add reproducible two-host soak tooling`.
+
 ### Stabilize shaped TUN soak before PR merge
 
 Goal:

@@ -85,7 +85,12 @@ FPS_DOCKER_SUDO=1 tools/docker_tun_iperf_sim.py --image fps:local \
 ```
 
 Repeat the two-host soak described in [testing.md](./testing.md) for release
-candidates. Public release should not rely on a single historical pass.
+candidates. Public release should not rely on a single historical pass:
+
+```sh
+FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop \
+  --build-local --duration 300 --clients 2 --carriers-per-client 2
+```
 
 ## Version And Tag
 
