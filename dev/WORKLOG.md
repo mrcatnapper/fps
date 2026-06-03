@@ -4,6 +4,59 @@
 
 ## 2026-06-03
 
+### Add offline pcap-to-shaper-profile tool
+
+Goal:
+
+- Let operators prepare a static shaper CDF profile from a carrier-only pcap
+  without first running an FPS daemon long enough to export a live adaptive
+  snapshot.
+- Reuse one libpcap/TCP/TLS parser across pcap tools instead of keeping
+  separate local parsers.
+
+Changes:
+
+- Added `tools/fps_pcap.py` with shared libpcap loading, Ethernet/raw/SLL/SLL2,
+  IPv4/IPv6/TCP parsing, TCP connection grouping, client/server inference and
+  TLS record parsing over reassembled TCP byte streams.
+- Refactored `tools/is_pcap_looks_like_tls.py` and
+  `tools/analyze_pcap_tcp_flow.py` to use the shared parser.
+- Added `tools/pcap_to_shaper_profile.py`.
+  - Builds compact JSON shaper profiles from TLS Application Data records.
+  - Infers client/server direction from the TCP SYN/SYN-ACK handshake; if the
+    capture starts later, `--port` is used as the service-port hint.
+  - Uses full TLS record wire size, including the 5-byte TLS header, matching
+    the runtime shaper observation path.
+  - Computes inter-record delay CDFs in microseconds.
+  - Supports `--start-epoch`/`--end-epoch`, CDF bin count, summary JSON and
+    overwrite protection.
+- Added `tests/integration/pcap_shaper_profile.py`, which writes a synthetic
+  pcap with a TCP handshake and a deliberately fragmented TLS record. The test
+  exercises the TLS-shape checker, the new profile tool and the pcap flow
+  analyzer through the shared parser.
+- Added CTest `fps_pcap_shaper_profile` with `SKIP_RETURN_CODE=77` for hosts
+  without libpcap.
+- Updated `docs/specification.md`, `docs/testing.md` and
+  `docs/pcap-flow-analysis.md`.
+
+Verification:
+
+- `python3 -m py_compile tools/*.py tests/integration/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/pcap_shaper_profile.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R 'fps_pcap_shaper_profile|fps_unit_tests' --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+
+Notes:
+
+- The offline tool should be fed carrier-only baseline traffic or a selected
+  pre-upgrade window. A pcap that already includes shaped FPS records describes
+  the combined visible link, not the original carrier.
+- No remote soak was run for this small offline-tool increment.
+
 ### Self-review and extended validation for shaper profile export
 
 Goal:

@@ -346,6 +346,21 @@ running daemon with `fps_client --write-shaper-profile --config client.json
 uses compact CDF pairs and can be used as a static bootstrap profile for later
 captures without replaying the original training window.
 
+When FPS has not been deployed yet, a baseline can also be prepared offline from
+a carrier-only pcap:
+
+```sh
+python3 tools/pcap_to_shaper_profile.py carrier-baseline.pcap \
+  --port 443 \
+  --profile-id example-origin-v1 \
+  --output profile.json
+```
+
+This uses TCP reassembly and TLS record parsing rather than packet boundaries.
+It therefore remains valid when the pcap contains fragmented or coalesced TCP
+segments, as long as the selected TCP stream is complete enough to parse TLS
+records.
+
 For future shaper experiments, treat Docker bridge and VM endpoint captures as
 operational diagnostics rather than final wire evidence. They can validate TLS
 record syntax and shaper behavior at the byte-stream level, but physical packet

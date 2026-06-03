@@ -578,6 +578,24 @@ Shaper profile export CLI:
 - otherwise the command falls back to the static profile from the config;
 - only `--format json` is supported in the current schema.
 
+Offline shaper profile tooling:
+
+- `tools/pcap_to_shaper_profile.py carrier.pcap --port 443 --output
+  profile.json` builds the same compact JSON shaper profile from a captured TLS
+  carrier TCP session;
+- the tool uses libpcap, reassembles each TCP direction by sequence number and
+  parses TLS records independently of packet or `recv` boundaries;
+- client/server direction is inferred from the TCP SYN/SYN-ACK handshake when
+  present. If the pcap starts after the handshake, `--port PORT` is used as a
+  service-port hint;
+- by default only TLS Application Data records are sampled. The record-size CDF
+  uses full TLS record wire size including the 5-byte TLS header, matching the
+  runtime shaper observation path; delay CDFs are inter-record delays in
+  microseconds;
+- the pcap should represent carrier-only baseline traffic or a deliberately
+  selected pre-upgrade window. A pcap that already contains shaped FPS records
+  describes the combined visible flow, not the original carrier baseline.
+
 Client profile CLI:
 
 - `fps_server --generate-client-profile --config server.json --client-uuid UUID

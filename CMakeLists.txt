@@ -359,6 +359,17 @@ if(FPS_BUILD_TESTS)
         --carrier ${CMAKE_CURRENT_SOURCE_DIR}/tools/fps_carrier.py)
     fps_set_test_properties(fps_carrier_http_zero_rtt 25 "integration;local;wss;zero_rtt")
 
+    add_test(NAME fps_pcap_shaper_profile
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/pcap_shaper_profile.py
+        --repo ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(fps_pcap_shaper_profile
+      PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 10
+        LABELS "integration;local;pcap;tool;shaper")
+
     if(FPS_ENABLE_PCAP_TESTS)
       add_test(NAME fps_pcap_tls_shape
         COMMAND

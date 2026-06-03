@@ -375,6 +375,8 @@ Local integration tests cover:
 - WSS passthrough, WSS Zero-RTT using reusable `fps_carrier`, and a Zero-RTT
   HTTPS browser-style request through `fps_client -> fps_server -> fps_carrier`.
 - Optional pcap TLS shape check when `-DFPS_ENABLE_PCAP_TESTS=ON`.
+- Local synthetic pcap shaper-profile generation check; it skips cleanly when
+  libpcap is unavailable.
 
 Opt-in real TUN integration covers:
 
@@ -430,6 +432,24 @@ python3 tools/is_pcap_looks_like_tls.py /tmp/fps-wire.pcap \
 
 The check validates TLS record framing and content types only. Timing and size
 distribution analysis remains out of scope for the regression check.
+
+Offline shaper profile generation from a carrier pcap:
+
+```sh
+python3 tools/pcap_to_shaper_profile.py /tmp/carrier-baseline.pcap \
+  --port 443 \
+  --profile-id example-origin-v1 \
+  --bins 50 \
+  --output profile.json
+```
+
+The profile tool uses the same libpcap/TCP/TLS parser as the TLS-shape checker.
+It infers client/server direction from the TCP SYN/SYN-ACK handshake when the
+capture includes it; if the capture starts later, `--port` is used as the
+service-port hint. The generated JSON can be copied into `shaper` or loaded via
+`shaper.profile_file`. Capture carrier-only baseline traffic, or restrict the
+pcap to a known pre-upgrade time window with `--start-epoch`/`--end-epoch`; a
+post-upgrade capture describes the combined visible FPS link.
 
 For exploratory traffic-shape analysis, run the Docker/TUN capture experiment:
 
