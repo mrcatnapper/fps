@@ -4,6 +4,64 @@
 
 ## 2026-06-03
 
+### Recreate personal Docker UX flow on fpshop
+
+Goal:
+
+- Run the current end-user flow against `fpshop` as a remote personal
+  `fps_server` host.
+- Validate that FPS can be used as a practical VPN/proxy path for a concrete
+  external portal without changing the local host default route.
+- Regenerate `dev/UX_FLOW_REVIEW.md` with current UX blockers and follow-up
+  candidates.
+
+What was tested:
+
+- Built local Alpine runtime image `fps:uxflow-2305584` and derivative
+  `fps-dante-proxy:uxflow-2305584`.
+- Loaded both images to `fpshop` with `docker save | ssh fpshop docker load`.
+- Started remote `fps_carrier origin`, `fps_server` and Dante overlay.
+- Started local `fps_client` and `fps_carrier client` in Docker host-network
+  mode.
+- Published the server on remote TCP `:443` after confirming the provider
+  firewall blocked arbitrary high ports.
+- Verified Zero-RTT auth, client lease `10.88.0.2`, server TUN `10.88.0.1`
+  and live carrier count on both sides.
+- Performed HTTPS over SOCKS/FPS to `www.wikipedia.org`; one GET and three HEAD
+  probes returned `HTTP/1.1 200 OK`.
+- Removed temporary containers, volumes, remote directory and local secret temp
+  files after the run.
+
+Findings:
+
+- The product path works for personal SOCKS-over-FPS use with the Dante overlay.
+- Main UX blockers are operator footguns:
+  - `--output /tmp/client.json` in one-shot Docker containers writes inside the
+    ephemeral container unless the output directory is bind-mounted;
+  - `--generate-server-keypair` text output is easy to parse incorrectly because
+    padded base64 contains `=`;
+  - public port `:443` needs an explicit provider firewall preflight;
+  - container loopback and host loopback are easy to confuse in bridge-mode
+    Docker labs.
+
+Changes:
+
+- Added fresh `dev/UX_FLOW_REVIEW.md` as the active review snapshot for the
+  next UX increment.
+
+Verification:
+
+- `docker build -f Dockerfile.alpine -t fps:uxflow-2305584 .`
+- `docker build -f examples/docker/proxy-dante/Dockerfile --build-arg FPS_BASE_IMAGE=fps:uxflow-2305584 -t fps-dante-proxy:uxflow-2305584 .`
+- `docker save fps:uxflow-2305584 fps-dante-proxy:uxflow-2305584 | ssh fpshop docker load`
+- `ssh fpshop "cd /tmp/fps-uxflow-100369 && docker compose up -d"`
+- `docker compose -p fps-uxflow-100369 -f /tmp/.../local/compose.yml up -d`
+- status checks through `fps_client --status` and `fps_server --status`
+- Python SOCKS5 + TLS probes to `www.wikipedia.org` through
+  `10.88.0.1:1080`.
+
+This logical commit: `Document personal UX flow review`.
+
 ### Audit documentation and DevOps consistency
 
 Goal:
