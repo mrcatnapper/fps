@@ -97,6 +97,10 @@ def main():
             "examples/docker/client-host",
             "fps_carrier origin",
             "fps_carrier client",
+            "fps_server --generate-server-keypair --format json",
+            "nc -vz fps.example.net 443",
+            "Do not use",
+            "--output /tmp/client.json",
             "/etc/hosts",
             "docker compose run --rm --no-deps fps-server status",
             "docker compose run --rm --no-deps fps-client status",
@@ -152,24 +156,36 @@ def main():
     )
     reject_secrets(release_docs, "release docs")
 
-    protocol_review = read(repo / "dev/PROTOCOL_REVIEW_BRIEF.md")
+    beta_status = read(repo / "docs/beta-status.md")
     require_all(
-        protocol_review,
+        beta_status,
         [
-            "Zero-RTT carrier authentication",
-            "transcript-bound hint precheck",
-            "Classified FPS Records",
-            "No timestamp or replay cache",
-            "public-key-shaped prefix",
-            "Lease Routing And Client Isolation",
-            "Logging And Status Secrecy",
-            "Reviewer questions",
-            "docs/specification.md",
-            "tests/fuzz/",
+            "controlled Linux/Docker beta deployments",
+            "Manual GHCR",
+            "reproducible two-host",
+            "current review brief",
+            "classified FPS records",
+            "no-timestamp/no-cache replay model",
+            "Traffic-shape mimicry remains incomplete",
         ],
-        "protocol review brief",
+        "beta status docs",
     )
-    reject_secrets(protocol_review, "protocol review brief")
+    reject_secrets(beta_status, "beta status docs")
+
+    github_ops = read(repo / "dev/GITHUB_OPERATIONS.md")
+    require_all(
+        github_ops,
+        [
+            "Do not reuse old review snapshots",
+            "docs/specification.md",
+            "docs/testing.md",
+            "docs/beta-status.md",
+            "latest soak evidence",
+            "shaper interaction",
+        ],
+        "GitHub operations docs",
+    )
+    reject_secrets(github_ops, "GitHub operations docs")
 
     entrypoint = read(repo / "docker/fps-entrypoint.sh")
     require_all(
@@ -260,7 +276,7 @@ def main():
             "FPS_DOCKERFILE",
             "fps_client --generate-client-uuid",
             "fps_carrier --help",
-            "fps_server --generate-server-keypair",
+            "fps_server --generate-server-keypair --format json",
             "allowed_client_uuids",
             "fps_server --check-config --config /etc/fps/server.json",
             "\"$image\" check-config",
@@ -439,6 +455,13 @@ def main():
             "NET_ADMIN",
             "network_mode: host",
             "FPS_PUBLISHED_PORT=443",
+            "nc -vz fps.example.net 443",
+            "provider firewall or security group",
+            "target_connect_failed",
+            "no_carrier_session",
+            "non_ipv4_tun_destination",
+            "127.0.0.1 is container loopback",
+            "--output /tmp/client.json",
             "ops.status_socket",
             "docker compose run --rm --no-deps fps-server status",
             "docker compose run --rm --no-deps fps-client status",
@@ -460,6 +483,8 @@ def main():
             "rotation.md",
             "Do not share one `client_uuid` across multiple devices",
             "replace_old",
+            "--output /tmp/client.json",
+            "client_upgrade_delay_sigma_ms",
         ],
         "client profile docs",
     )
@@ -488,7 +513,7 @@ def main():
             "fps-client-a",
             "fps-client-b",
             "allowed_client_uuids",
-            "detail=ignored_spoofed_tun_source",
+            "ignored_spoofed_tun_source",
             "event=session_stats",
             "iperf3",
             "SPOOF_IP",
@@ -523,7 +548,7 @@ def main():
             "observed_write_queue_full",
             "write_queue_full_before",
             "write_queue_full_after",
-            "detail=ignored_spoofed_tun_source",
+            "ignored_spoofed_tun_source",
             "socks_overlay_ok",
             "print(f\"error: {error}\", file=sys.stderr)",
             "down\", \"-v\", \"--remove-orphans",
@@ -531,6 +556,32 @@ def main():
         "Docker resilience soak",
     )
     reject_secrets(resilience_soak, "Docker resilience soak")
+
+    two_host_soak = read(repo / "tools/docker_two_host_soak.py")
+    require_all(
+        two_host_soak,
+        [
+            "--remote",
+            "--remote-connect-host",
+            "--build-local",
+            "--transfer-image",
+            "transfer_docker_image",
+            "copy_tree_to_remote",
+            "remote_compose",
+            "carriers-per-client",
+            "--max-loss-percent",
+            "BAD_LOG_PATTERNS",
+            "ignored_spoofed_tun_source",
+            "down\", \"-v\", \"--remove-orphans",
+            "rm -rf",
+            "fps-two-host-udp-client",
+            "fps-two-host-http-client",
+            "local-tmp.logs",
+            "remote-tmp.logs",
+        ],
+        "Docker two-host soak",
+    )
+    reject_secrets(two_host_soak, "Docker two-host soak")
 
     return 0
 

@@ -10,8 +10,9 @@ as overlays, and the local/CI quality workflow is defined.
 
 FPS is not ready for public production or an unattended public beta. The main
 remaining work is independent protocol review, repeated release-candidate soak
-coverage and operator onboarding feedback. Release publishing/signing remains
-deliberately deferred until the private release policy is settled.
+coverage, operator onboarding feedback and release-signing policy. Manual GHCR
+image publication exists for controlled beta artifacts; public GitHub Releases
+and signed artifacts remain deferred.
 
 ## Ready Now
 
@@ -62,9 +63,6 @@ deliberately deferred until the private release policy is settled.
 - UUID/client revocation and server key rotation are documented as explicit
   restart/redeploy procedures and have been exercised in a local Docker
   rotation drill.
-- A protocol-review packet exists for external review. It covers Zero-RTT,
-  transcript-bound precheck, classified FPS records, replay model, lease
-  enforcement, secrecy rules and known risks.
 - The repository has an MIT license and a release checklist for beta candidates.
 - Runtime status is available through an opt-in local UNIX socket and `--status`,
   exposing non-secret session, recent-close, auth, classified-record, carrier,
@@ -88,11 +86,12 @@ deliberately deferred until the private release policy is settled.
 - A short Docker/TUN resilience soak harness now exercises mixed UDP/TCP
   traffic, carrier loss/recovery, spoof-drop liveness, optional Dante overlay
   probing and status-counter assertions.
-- The current release candidate also passed a 30-minute two-host Docker/TUN
-  soak with the server stack on a weak remote Linux host and the clients on the
-  local host. The run used two UUID clients over the published server `:443`
-  carrier port, sustained UDP plus HTTP probes, server-to-client lease routing,
-  spoof-source drop validation and carrier restart/recovery.
+- The current release-candidate workflow includes a reproducible two-host
+  Docker/TUN soak with the server stack on a weak remote Linux host and the
+  clients on the local host. The repository tool exercises two UUID clients over
+  the published server `:443` carrier port, sustained UDP plus HTTP probes,
+  server-to-client lease routing, spoof-source drop validation and planned
+  carrier restarts.
 - Queue saturation has deterministic unit coverage for bounded write queues and
   lease-aware routing. Docker-level strict `write_queue_full` observation stays
   diagnostic because it depends on host timing and container throughput.
@@ -144,9 +143,9 @@ Those remain release-hardening concerns.
 - Long-running daemon resilience is now manually validated for the current
   candidate, but not automated. Repeat the two-host soak for release candidates
   until a privileged scheduled runner exists.
-- A protocol review package exists, but there is still no independent
-  cryptographic/protocol review of the Zero-RTT precheck and classified-record
-  construction.
+- A current external protocol review brief has not been regenerated after the
+  latest transcript-bound/classified-record/shaper changes. There is still no
+  independent cryptographic/protocol review of the active construction.
 - UUID/client revocation and server-key rotation passed one local Docker drill,
   but this remains an operator procedure rather than a hot-reload management
   API.
@@ -158,10 +157,11 @@ Those remain release-hardening concerns.
   recent close metadata and auth/classified-record counters, not a metrics
   endpoint, management API or historical time series.
 - Release engineering remains incomplete for public beta: no signed Docker
-  images, public release publishing, public upgrade guide or privileged root/TUN
-  CI runner.
-- Advanced traffic shaping remains deferred. FPS currently preserves TLS record
-  framing, but it does not claim timing/size distribution resistance.
+  images, public GitHub Release process, public upgrade guide or privileged
+  root/TUN CI runner.
+- Traffic-shape mimicry remains incomplete. FPS now has classified-record
+  padding, adaptive CDF training and shaper-aware fragmentation, but it does not
+  claim timing/size distribution resistance.
 
 ## Public Beta Gate
 
@@ -173,8 +173,9 @@ Before public beta or public release, finish:
 - **Soak repeat policy:** keep the two-host Docker/TUN soak as a required
   release-candidate check and automate it later on a privileged runner. Public
   release should not rely on a single historical pass.
-- **Independent protocol review:** send the protocol packet, specification and
-  relevant tests to an external reviewer, then resolve findings around Zero-RTT
+- **Independent protocol review:** regenerate a concise current review brief
+  from `docs/specification.md`, `docs/testing.md`, this status page and the
+  relevant tests, send it to an external reviewer, then resolve findings around
   transcript binding, hint precheck, classified FPS records and the
   no-timestamp/no-cache replay model.
 - **Operator onboarding feedback:** run the documented quickstart with beta

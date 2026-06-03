@@ -4,6 +4,317 @@
 
 ## 2026-06-03
 
+### Full verification before UX-footgun PR
+
+Goal:
+
+- Re-run the full local, Docker, root/TUN and split-host soak verification
+  suite before opening/merging the UX-footgun branch.
+
+Results:
+
+- Non-Docker quality suite passed:
+  - clang-20 local build/CTest;
+  - ASan+UBSan local CTest;
+  - Valgrind unit pass: 211 test cases, 0 errors/leaks;
+  - llvm-cov thresholds: 74.69% line coverage, 82.54% function coverage;
+  - libFuzzer smoke: TLS records, covert codec, envelope, Zero-RTT and TUN
+    frames.
+- Docker smoke passed for both `fps:local` (`Dockerfile`) and `fps:alpine`
+  (`Dockerfile.alpine`), including JSON server keypair generation,
+  `check-config` entrypoint alias and compose validation.
+- Root/TUN CTest passed: 6/6 (`open_smoke`, loopback, burst,
+  fragmentation, shaper and multi-carrier).
+- Local Docker/TUN resilience soak passed on `fps:alpine`: two clients, carrier
+  recovery, spoof-drop, HTTP/UDP probes and no packet loss in checked probes.
+- Split-host `fpshop` soak passed for project
+  `fps-two-host-pr-f440f89-215623`:
+  - image built locally and transferred with Docker save/load;
+  - duration 300s, two clients, two carriers per client, shaper enabled;
+  - planned carrier restarts: `a1`, `b2`, `a2`, `b1`;
+  - UDP client A: 2400/2400, 0% loss;
+  - UDP client B: 2396/2400, 0.1667% loss, below the configured threshold;
+  - bad payloads: 0;
+  - bad classified/envelope/shaper log counters: 0;
+  - spoofed-source drop observed: 1.
+
+Verification commands:
+
+- `tools/run_quality_checks.sh --all`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_IMAGE=fps:alpine FPS_DOCKER_SOAK_BUILD=0 tools/run_quality_checks.sh --soak-smoke`
+- `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:alpine --transfer-image --duration 300 --clients 2 --carriers-per-client 2 --project fps-two-host-pr-f440f89-215623 --keep-artifacts`
+
+### Fix personal UX flow footguns
+
+Goal:
+
+- Implement the highest-impact fixes from the fresh `dev/UX_FLOW_REVIEW.md`
+  without changing protocol or runtime behavior.
+- Make server key generation script-safe and make Docker profile generation
+  examples write files on the intended host filesystem.
+
+Changes:
+
+- Added `fps_server --generate-server-keypair --format json`, returning a flat
+  JSON object with `server_private_key_base64` and
+  `server_public_key_base64`.
+- Kept existing text keypair output as the default.
+- Updated CLI tests for JSON key output, invalid keypair formats and UUID
+  helper format rejection.
+- Updated public Docker/client docs with host-visible profile generation,
+  public `:443` preflight, provider firewall warning, container-vs-host
+  loopback troubleshooting and expected benign TUN noise guidance.
+- Updated Docker smoke tooling to parse keypair JSON instead of text output.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- Manual CLI smoke for `fps_server --generate-server-keypair --format json`,
+  invalid keypair format rejection and `fps_client` helper discoverability.
+- `git diff --check`
+
+This logical commit: `Fix personal Docker UX footguns`.
+
+### Recreate personal Docker UX flow on fpshop
+
+Goal:
+
+- Run the current end-user flow against `fpshop` as a remote personal
+  `fps_server` host.
+- Validate that FPS can be used as a practical VPN/proxy path for a concrete
+  external portal without changing the local host default route.
+- Regenerate `dev/UX_FLOW_REVIEW.md` with current UX blockers and follow-up
+  candidates.
+
+What was tested:
+
+- Built local Alpine runtime image `fps:uxflow-2305584` and derivative
+  `fps-dante-proxy:uxflow-2305584`.
+- Loaded both images to `fpshop` with `docker save | ssh fpshop docker load`.
+- Started remote `fps_carrier origin`, `fps_server` and Dante overlay.
+- Started local `fps_client` and `fps_carrier client` in Docker host-network
+  mode.
+- Published the server on remote TCP `:443` after confirming the provider
+  firewall blocked arbitrary high ports.
+- Verified Zero-RTT auth, client lease `10.88.0.2`, server TUN `10.88.0.1`
+  and live carrier count on both sides.
+- Performed HTTPS over SOCKS/FPS to `www.wikipedia.org`; one GET and three HEAD
+  probes returned `HTTP/1.1 200 OK`.
+- Removed temporary containers, volumes, remote directory and local secret temp
+  files after the run.
+
+Findings:
+
+- The product path works for personal SOCKS-over-FPS use with the Dante overlay.
+- Main UX blockers are operator footguns:
+  - `--output /tmp/client.json` in one-shot Docker containers writes inside the
+    ephemeral container unless the output directory is bind-mounted;
+  - `--generate-server-keypair` text output is easy to parse incorrectly because
+    padded base64 contains `=`;
+  - public port `:443` needs an explicit provider firewall preflight;
+  - container loopback and host loopback are easy to confuse in bridge-mode
+    Docker labs.
+
+Changes:
+
+- Added fresh `dev/UX_FLOW_REVIEW.md` as the active review snapshot for the
+  next UX increment.
+
+Verification:
+
+- `docker build -f Dockerfile.alpine -t fps:uxflow-2305584 .`
+- `docker build -f examples/docker/proxy-dante/Dockerfile --build-arg FPS_BASE_IMAGE=fps:uxflow-2305584 -t fps-dante-proxy:uxflow-2305584 .`
+- `docker save fps:uxflow-2305584 fps-dante-proxy:uxflow-2305584 | ssh fpshop docker load`
+- `ssh fpshop "cd /tmp/fps-uxflow-100369 && docker compose up -d"`
+- `docker compose -p fps-uxflow-100369 -f /tmp/.../local/compose.yml up -d`
+- status checks through `fps_client --status` and `fps_server --status`
+- Python SOCKS5 + TLS probes to `www.wikipedia.org` through
+  `10.88.0.1:1080`.
+
+This logical commit: `Document personal UX flow review`.
+
+### Audit documentation and DevOps consistency
+
+Goal:
+
+- Check code/documentation/DevOps self-consistency across public docs, developer
+  notes, examples, tools, workflows and current GitHub repository settings.
+- Exclude `dev/WORKLOG.md` and `articles/` from the documentation audit scope
+  while still recording this work in the log.
+
+Findings:
+
+- Public docs and examples are broadly aligned with the current
+  transcript-bound classified-record transport, TUN adapter, Docker-first
+  runtime, proxy overlay and shaper tooling.
+- Markdown links across active docs are valid.
+- GitHub state matches the operations notes: public repository, `main`
+  protected with the five expected CI checks, squash-only merge policy, Pages
+  from `main:/docs`, secret scanning and push protection enabled. `develop` is
+  intentionally unprotected for PR staging.
+- Minor drift fixed:
+  - stale CMake project description still said `v2 relay`;
+  - docs did not distinguish repository-defined workflows from GitHub-managed
+    Pages/Dependency Graph workflows shown in the Actions UI;
+  - roadmap still overstated a historical two-host soak as `30-minute` instead
+    of the current reproducible 300-second release-candidate gate.
+
+Verification:
+
+- `gh repo view --json nameWithOwner,defaultBranchRef,isPrivate,visibility,url`
+- `gh workflow list`
+- `gh api repos/mrcatnapper/fps/branches/main/protection`
+- `gh api repos/mrcatnapper/fps/pages`
+- Markdown link check over all tracked Markdown except `articles/` and
+  `dev/WORKLOG.md`.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- CLI help smoke for `fps_client`, `fps_server`, `fps_carrier` and
+  `pcap_to_shaper_profile.py`.
+
+This logical commit: pending.
+
+### Refresh documentation snapshot and remove stale review artifacts
+
+Goal:
+
+- Review current public/operator and developer Markdown outside `WORKLOG.md`
+  and articles.
+- Remove stale review snapshots that duplicate current docs and should be
+  regenerated fresh for the next review cycle.
+
+Changes:
+
+- Deleted obsolete `dev/PROTOCOL_REVIEW_BRIEF.md`, `dev/REVIEW.md` and
+  `dev/UX_FLOW_REVIEW.md`.
+- Updated remaining docs to stop referring to the deleted protocol review brief
+  as an active review packet.
+- Refreshed beta status around public GitHub/GHCR state, reproducible two-host
+  soak tooling and the current shaper status.
+- Updated the specification version/roadmap wording and clarified that
+  `security.zero_rtt` is the current config namespace while the active wire flow
+  includes a server accept leg before final classified-record keys are used.
+- Updated `AGENTS.md`, root `README.md`, docs index, testing gaps and GitHub
+  operations notes to match the current documentation layout.
+- Updated `tests/integration/docker_artifacts.py` so it checks current
+  beta-status/GitHub-operations contracts instead of requiring the deleted
+  protocol-review snapshot.
+
+Verification:
+
+- Markdown link check over `docs/*.md`, `dev/*.md`, `README.md` and
+  `AGENTS.md`.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `rg -n 'PROTOCOL_REVIEW_BRIEF|UX_FLOW_REVIEW|dev/REVIEW|REVIEW.md|protocol-review packet exists|review package exists|private release policy|30-minute two-host|There is no long-running soak|Production UUID/key rotation|Advanced traffic shaping remains deferred|echo\\.websocket|hold-wss|postman|Deribit|native packaging|shared_secret|IFF|primary session' docs dev README.md AGENTS.md --glob '!dev/WORKLOG.md'`
+- `git diff --check`
+
+This logical commit: `Refresh docs and remove stale review snapshots`.
+
+### Add reproducible two-host soak tooling
+
+Goal:
+
+- Turn the repeated `fpshop` release-candidate soak from ad-hoc harnesses into
+  repository tooling.
+- Preserve the useful split-host coverage from the last soak: remote
+  server/origin, local clients, multiple carrier sessions, TUN traffic, planned
+  carrier restarts, spoof-drop and bad-log assertions.
+
+Post mortem:
+
+- The previous split-host soak found a real shaped TUN bug, but the harness
+  itself failed first on compose YAML and JSON-template mistakes. Those failures
+  were orchestration defects caused by keeping the split-host setup outside the
+  repo.
+- Existing Docker tools covered local multi-client and resilience scenarios,
+  but not remote Docker-over-SSH, local image transfer, remote artifact/log
+  collection or multi-carrier restart plans.
+- A first implementation smoke exposed two new harness issues before the final
+  run: an unsupported `fps_carrier --server-bps` flag and an incomplete shaper
+  profile with `covert_ratio_max=0`. Both are now covered by the repository
+  script shape and static checks.
+- The UDP probe needed sequence-aware accounting. Planned carrier restarts can
+  delay echo replies; late replies must be matched by sequence instead of being
+  counted as payload corruption.
+
+Changes:
+
+- Added remote Docker/SSH helpers in `tools/fps_docker_common.py`: remote
+  compose, remote exec, local tree copy and `docker save | ssh docker load`.
+  Remote work directories are explicitly sanity-checked before any `rm -rf`.
+- Added `tools/docker_two_host_soak.py`.
+  - Builds/transfers a local Alpine image when requested.
+  - Runs remote `fps_server` + `fps_carrier origin` and local multi-client
+    `fps_client` + multiple `fps_carrier client` services.
+  - Uses shaped configs by default, status sockets, distinct UUID leases,
+    background UDP echo loops, HTTP probes, spoofed-source negative probe and
+    planned carrier restarts.
+  - Writes redacted artifacts under `captures/<project>` on failure or
+    `--keep-artifacts`, including compose files, status snapshots, compose logs
+    and container-local probe logs.
+- Updated `docs/testing.md`, `docs/release.md`, `dev/REVIEW.md`,
+  `dev/ROADMAP.md` and the Docker artifact static check.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- Local resilience smoke:
+  `FPS_DOCKER_SUDO=1 tools/docker_resilience_soak.py --image fps:local --duration 5 --clients 1`
+  - carrier restart recovered;
+  - mixed UDP, server-to-client UDP and post-spoof UDP all reported zero loss;
+  - `ignored_spoofed_tun_source=1`.
+- Short split-host smoke after fixes:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 20 --clients 1 --carriers-per-client 1`
+  - UDP `159/160`, `0.625%` loss, no bad payloads;
+  - HTTP `23/23`;
+  - bad-log counters all zero.
+- Short split-host smoke after remote-directory safety guard:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 10 --clients 1 --carriers-per-client 1`
+  - UDP `80/80`, no bad payloads;
+  - bad-log counters all zero;
+  - remote compose/copy/cleanup path remained functional.
+- Full split-host soak:
+  `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:soak-1e588f4 --duration 300 --clients 2 --carriers-per-client 2 --project fps-two-host-soak-192714 --keep-artifacts`
+  - artifacts: `captures/fps-two-host-soak-192714`;
+  - leases: `10.89.0.2`, `10.89.0.3`;
+  - carrier restarts: `a1`, `b2`, then `a2` and `b1`;
+  - UDP A `2399/2400`, `0.0417%` loss, no bad payloads;
+  - UDP B `2400/2400`, zero loss, no bad payloads;
+  - server UDP echo received/sent all client packets;
+  - HTTP probes succeeded for both clients;
+  - `ignored_spoofed_tun_source=1`;
+  - classified/envelope bad-log counters all zero;
+  - local and remote services alive at collection time.
+
+Notes:
+
+- `tools/docker_two_host_soak.py` defaults to `--udp-pps 8` and
+  `--max-loss-percent 1.0`. This is a recovery/liveness gate, not a throughput
+  benchmark.
+- Existing failed smoke artifacts are intentionally left under ignored
+  `captures/fps-two-host-*` paths for this development session.
+
+This logical commit: `Add reproducible two-host soak tooling`.
+
 ### Stabilize shaped TUN soak before PR merge
 
 Goal:

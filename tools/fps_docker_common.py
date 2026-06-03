@@ -2,9 +2,11 @@
 
 import json
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
+from posixpath import normpath
 
 
 def repo_root() -> Path:
@@ -42,6 +44,113 @@ def docker_base(force_sudo: bool = False) -> list[str]:
 
 def docker(base: list[str], args: list[str], *, cwd=None, check=True, input_text=None):
     return run([*base, *args], cwd=cwd, check=check, input_text=input_text)
+
+
+def shell_join(args: list[str]) -> str:
+    return " ".join(shlex.quote(str(arg)) for arg in args)
+
+
+def ssh(remote: str, command: str, *, check=True):
+    return run(["ssh", remote, command], check=check)
+
+
+def ensure_safe_remote_work_dir(remote_dir: str):
+    normalized = normpath(remote_dir.strip())
+    forbidden = {"", ".", "/", "/tmp", "/var", "/var/tmp", "/home", "/root"}
+    if normalized in forbidden or not normalized.startswith("/"):
+        raise ValueError(f"unsafe remote work directory: {remote_dir!r}")
+    if normalized.count("/") < 2:
+        raise ValueError(f"remote work directory is too broad: {remote_dir!r}")
+    return normalized
+
+
+def remote_compose(
+    remote: str,
+    remote_dir: str,
+    project: str,
+    args: list[str],
+    *,
+    compose_file: str = "compose.yml",
+    remote_docker: str = "docker",
+    check=True,
+):
+    remote_dir = ensure_safe_remote_work_dir(remote_dir)
+    command = (
+        f"cd {shlex.quote(remote_dir)} && "
+        f"{remote_docker} compose -p {shlex.quote(project)} "
+        f"-f {shlex.quote(compose_file)} {shell_join(args)}"
+    )
+    return ssh(remote, command, check=check)
+
+
+def remote_compose_exec(
+    remote: str,
+    remote_dir: str,
+    project: str,
+    service: str,
+    command: list[str],
+    *,
+    compose_file: str = "compose.yml",
+    remote_docker: str = "docker",
+    check=True,
+):
+    return remote_compose(
+        remote,
+        remote_dir,
+        project,
+        ["exec", "-T", service, *command],
+        compose_file=compose_file,
+        remote_docker=remote_docker,
+        check=check,
+    )
+
+
+def copy_tree_to_remote(local_dir: Path, remote: str, remote_dir: str):
+    local_dir = local_dir.resolve()
+    remote_dir = ensure_safe_remote_work_dir(remote_dir)
+    mkdir = f"rm -rf {shlex.quote(remote_dir)} && mkdir -p {shlex.quote(remote_dir)}"
+    ssh(remote, mkdir)
+    producer = subprocess.Popen(
+        ["tar", "-C", str(local_dir), "-cf", "-", "."],
+        stdout=subprocess.PIPE,
+    )
+    assert producer.stdout is not None
+    consumer = subprocess.run(
+        ["ssh", remote, f"tar -C {shlex.quote(remote_dir)} -xf -"],
+        stdin=producer.stdout,
+        text=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    producer.stdout.close()
+    producer_rc = producer.wait()
+    if producer_rc != 0 or consumer.returncode != 0:
+        output = consumer.stdout.decode("utf-8", "replace") if consumer.stdout else ""
+        raise RuntimeError(
+            f"failed to copy {local_dir} to {remote}:{remote_dir}: "
+            f"tar={producer_rc} ssh-tar={consumer.returncode}\n{output}"
+        )
+
+
+def transfer_docker_image(base: list[str], remote: str, image: str, *, remote_docker: str = "docker"):
+    producer = subprocess.Popen([*base, "save", image], stdout=subprocess.PIPE)
+    assert producer.stdout is not None
+    consumer = subprocess.run(
+        ["ssh", remote, f"{remote_docker} load"],
+        stdin=producer.stdout,
+        text=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    producer.stdout.close()
+    producer_rc = producer.wait()
+    if producer_rc != 0 or consumer.returncode != 0:
+        output = consumer.stdout.decode("utf-8", "replace") if consumer.stdout else ""
+        raise RuntimeError(
+            f"failed to transfer Docker image {image!r} to {remote}: "
+            f"docker-save={producer_rc} remote-load={consumer.returncode}\n{output}"
+        )
+    return consumer.stdout.decode("utf-8", "replace") if consumer.stdout else ""
 
 
 def compose(base: list[str], compose_file: Path, project: str, args: list[str], *, check=True):

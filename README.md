@@ -12,7 +12,7 @@ the project a noisy, hard-to-search label: someone who does not already know
 what FPS is looking for should not learn much from the name alone.
 
 This repository is still beta-candidate software. It is suitable for controlled
-Linux/Docker testing and private lab deployments, not yet for unattended public
+Linux/Docker beta testing and lab deployments, not yet for unattended public
 production.
 
 ## Documentation

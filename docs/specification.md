@@ -1,6 +1,7 @@
 # FPS Protocol And Architecture Specification
 
-Version: 0.10, 1-RTT Zero-RTT finalization beta increment
+Version: 0.11, transcript-bound classified-record transport and adaptive shaper
+beta snapshot
 
 Implementation language: C++20, Boost.Asio, Boost.Test, Boost.JSON, Boost.Log
 and OpenSSL.
@@ -578,6 +579,14 @@ Shaper profile export CLI:
 - otherwise the command falls back to the static profile from the config;
 - only `--format json` is supported in the current schema.
 
+Server keypair CLI:
+
+- `fps_server --generate-server-keypair` prints text fields for manual use;
+- `fps_server --generate-server-keypair --format json` prints a flat JSON object
+  with `server_private_key_base64` and `server_public_key_base64`, matching the
+  server config field names;
+- unsupported keypair formats fail config/CLI parsing with a diagnostic.
+
 Offline shaper profile tooling:
 
 - `tools/pcap_to_shaper_profile.py carrier.pcap --port 443 --output
@@ -696,12 +705,14 @@ Near productionization gaps:
   ordinary carrier records can coexist without an explicit upgrade state;
 - adversarial active-probe/tamper/drop test plan;
 - automated pcap/tshark regression checks in CI-capable environments;
-- production key/UUID rotation docs;
-- public Docker operator examples for self-hosted carrier, proxy overlays and
-  routing;
-- routing/NAT deployment guides beyond isolated namespaces;
+- external protocol/security review of the current transcript-bound
+  classified-record construction;
+- automated or scheduled privileged two-host Docker/TUN soak;
+- public release signing, upgrade guide and root/TUN CI policy;
+- routing/NAT deployment guides beyond isolated namespaces and current proxy
+  overlay examples;
 - lease rotation/revocation UX beyond basic list/revoke/prune;
-- long-running soak/backpressure tests.
+- long-running backpressure and traffic-shape regression lab.
 
 See [beta-status.md](./beta-status.md) and
 [client-profiles.md](./client-profiles.md).
@@ -711,8 +722,10 @@ See [beta-status.md](./beta-status.md) and
 - **FPS link**: TCP connection between `fps_client` and `fps_server`.
 - **Cover TLS session**: real TLS session whose ordinary TLS records FPS proxies
   byte-for-byte before and after upgrade.
-- **Zero-RTT upgrade**: one encrypted auth record that authenticates a carrier
-  and enables classified FPS record insertion.
+- **Zero-RTT upgrade**: the current config namespace for the late carrier
+  authentication path. The active wire flow uses an encrypted client auth record
+  followed by an encrypted server accept record before final classified-record
+  keys are used.
 - **Classified FPS record**: encrypted FPS datagram/control record inserted as a
   TLS Application Data record and consumed by the FPS peer before reaching the
   real TLS endpoint.

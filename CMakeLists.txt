@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 project(fps
   VERSION 0.1.0
-  DESCRIPTION "FPS / Free Porn Storage v2 relay"
+  DESCRIPTION "FPS / Free Porn Storage covert TLS datagram transport"
   LANGUAGES CXX)
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)

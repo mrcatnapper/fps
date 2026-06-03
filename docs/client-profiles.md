@@ -172,14 +172,29 @@ container create root-owned host files. Prefer host-side redirection or run the
 container with the host UID/GID:
 
 ```sh
+docker run --rm -v "$PWD/config:/etc/fps:ro" fps:local \
+  fps_server --generate-client-profile --config /etc/fps/server.json \
+  --client-uuid "$CLIENT_UUID" --server-endpoint fps.example.net:8443 \
+  > client.json
+chmod 600 client.json
+
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/config:/etc/fps" fps:local \
   fps_client --write-config-from-uri 'fps://v1/...' \
   --output /etc/fps/client.json
 ```
 
+Do not write `--output /tmp/client.json` inside a one-shot `docker run --rm`
+container unless `/tmp` is bind-mounted. The file is otherwise created inside
+the temporary container and is removed with it.
+
 `--client-status-socket PATH` is explicit because native and Docker deployments
 use different runtime paths. Docker examples use `/run/fps/*.status` mounted
 through a named volume so one-shot status containers can query the daemon.
+
+Generated client profiles use the normal randomized upgrade delay sigma. Set
+`security.zero_rtt.client_upgrade_delay_sigma_ms` to `0` manually when a
+reproducible packet capture or deterministic integration lab requires a fixed
+upgrade moment.
 
 ## Security Notes
 

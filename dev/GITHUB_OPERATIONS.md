@@ -7,8 +7,9 @@ Current baseline:
 
 - public remote: `git@github.com:mrcatnapper/fps.git`;
 - default branch: `main`;
-- working branch: `develop`;
-- GitHub Pages source: `main:/docs`;
+- working branch: `develop`, currently unprotected and used for PR staging;
+- GitHub Pages source: `main:/docs`, published at
+  `https://mrcatnapper.github.io/fps/`;
 - image publishing: manual `Publish Images` workflow only.
 
 ## Routine Checks
@@ -86,6 +87,11 @@ Repository merge policy:
 
 Keep `Quality` manual/scheduled rather than required for every PR until runtime
 is stable enough to absorb its cost.
+
+Repository-defined workflows are `CI`, `Quality` and `Publish Images`.
+GitHub-managed `pages-build-deployment` and `Dependency Graph` workflows can
+also appear in the Actions UI when Pages and dependency graph features are
+enabled; they are not release gates.
 
 Security settings currently enabled:
 
@@ -207,15 +213,16 @@ ordinary code-review/check-only work.
 
 ## Protocol Review Packet
 
-Send reviewers:
+Do not reuse old review snapshots. Before an external protocol review, generate
+a fresh concise brief under `dev/` from the current implementation and include:
 
 - `docs/specification.md`;
 - `docs/testing.md`;
 - `docs/beta-status.md`;
-- `dev/PROTOCOL_REVIEW_BRIEF.md`;
-- relevant test names from `ctest -N`, especially Zero-RTT, envelope,
-  adversarial and TUN lease-routing tests.
+- the current `ctest -N` names for Zero-RTT, classified-record/envelope,
+  adversarial, shaper and TUN lease-routing tests;
+- a short summary of the latest soak evidence from `dev/WORKLOG.md`.
 
-Ask reviewers to focus on Zero-RTT transcript binding, hint precheck,
-no-timestamp/no-cache replay assumptions, envelope failure semantics and
+Ask reviewers to focus on transcript binding, hint precheck, no-timestamp/no-cache
+replay assumptions, classified-record failure semantics, shaper interaction and
 leased-client source enforcement.

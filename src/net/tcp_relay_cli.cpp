@@ -73,7 +73,7 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
             << "       " << program << " --generate-client-profile --config PATH\n"
             << "         --client-uuid UUID --server-endpoint HOST:PORT\n";
     }
-    out << "       " << program << " --generate-server-keypair\n"
+    out << "       " << program << " --generate-server-keypair [--format json]\n"
         << "       " << program << " --generate-client-uuid\n";
     if(role == RelayRole::client) {
         out << "       " << program << " --print-config-from-uri URI\n"
@@ -101,7 +101,6 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
             << "  --client-tun NAME        Profile TUN name, default fpsc0.\n"
             << "  --client-status-socket PATH\n"
             << "                           Add ops.status_socket to generated profile.\n"
-            << "  --format json|uri        Profile output format, default json.\n"
             << "  --output PATH            Write generated profile to PATH instead of stdout.\n"
             << "  --force                  Allow --output to overwrite an existing file.\n";
     }
@@ -111,8 +110,10 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
         << "  --read-buffer BYTES      Per-direction read buffer, default 65536.\n"
         << "  --log-level LEVEL        Override logging.level; one of trace, debug, info,\n"
         << "                           warning, error, fatal, off.\n"
+        << "  --format FORMAT          Output format for commands that support it; keypair supports json,\n"
+        << "                           server client-profile generation supports json|uri.\n"
         << "  --generate-server-keypair\n"
-        << "                           Print base64 X25519 server key fields for JSON.\n"
+        << "                           Print base64 X25519 server key fields; use --format json for a JSON object.\n"
         << "  --generate-client-uuid   Print a raw FPS client UUID secret.\n";
     if(role == RelayRole::client) {
         out << "  --print-config-from-uri URI\n"
@@ -194,14 +195,23 @@ void print_config_summary(std::ostream& out, const TcpRelayConfig& config, std::
     out << '\n';
 }
 
-auto run_generate_server_keypair(std::ostream& out, std::ostream& err) -> int {
+auto run_generate_server_keypair(std::string_view format, std::ostream& out, std::ostream& err) -> int {
     auto generated = random_x25519_key_pair();
     if(!generated) {
         err << "Error: failed to generate X25519 key pair\n";
         return 2;
     }
-    out << "server_private_key_base64=" << base64_encode(generated.value().private_key) << '\n'
-        << "server_public_key_base64=" << base64_encode(generated.value().public_key) << '\n';
+    const auto private_key = base64_encode(generated.value().private_key);
+    const auto public_key = base64_encode(generated.value().public_key);
+    if(format == "json") {
+        json::object root;
+        root["server_private_key_base64"] = private_key;
+        root["server_public_key_base64"] = public_key;
+        out << json::serialize(root) << '\n';
+        return 0;
+    }
+    out << "server_private_key_base64=" << private_key << '\n'
+        << "server_public_key_base64=" << public_key << '\n';
     return 0;
 }
 
@@ -992,8 +1002,12 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
     }
     if(raw.format.has_value()) {
         format_option_seen = true;
-        profile_output_option_seen = true;
-        result.client_profile.format = std::move(*raw.format);
+        if(result.command == TcpRelayCliCommand::generate_server_keypair) {
+            result.server_keypair_format = std::move(*raw.format);
+        } else {
+            profile_output_option_seen = true;
+            result.client_profile.format = std::move(*raw.format);
+        }
     }
     if(raw.output.has_value()) {
         profile_output_option_seen = true;
@@ -1114,6 +1128,10 @@ auto parse_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, st
     if(result.command == TcpRelayCliCommand::generate_server_keypair) {
         if(client_profile_option_seen || profile_output_option_seen) {
             result.error = "profile output options require --generate-client-profile or --write-config-from-uri";
+            return result;
+        }
+        if(result.server_keypair_format != "text" && result.server_keypair_format != "json") {
+            result.error = "unsupported --format value for --generate-server-keypair: expected text or json";
             return result;
         }
         if(result.status_socket_override.has_value()) {
@@ -1350,7 +1368,7 @@ auto run_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, std:
         return run_status_query(*socket_path, out, err);
     }
     case TcpRelayCliCommand::generate_server_keypair:
-        return run_generate_server_keypair(out, err);
+        return run_generate_server_keypair(parsed.server_keypair_format, out, err);
     case TcpRelayCliCommand::generate_client_uuid:
         return run_generate_client_uuid(out, err);
     case TcpRelayCliCommand::generate_client_profile:

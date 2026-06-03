@@ -28,8 +28,14 @@ docker build -f Dockerfile.alpine -t fps:alpine .
 Generate the server key pair:
 
 ```sh
-docker run --rm fps:local fps_server --generate-server-keypair
+docker run --rm fps:local fps_server --generate-server-keypair --format json \
+  > server-keypair.json
+chmod 600 server-keypair.json
 ```
+
+Copy `server_private_key_base64` and `server_public_key_base64` from that JSON
+into the server config. Avoid parsing the text output with `awk -F=` or
+`cut -d= -f2`: padded base64 keys can contain `=`.
 
 Generate one UUID per client device or profile:
 
@@ -65,6 +71,20 @@ docker compose ps
 docker compose run --rm --no-deps fps-server status
 ```
 
+Check the public port before debugging FPS itself:
+
+```sh
+# On the server host.
+ss -ltnp | grep ':443'
+
+# From the client network.
+nc -vz fps.example.net 443
+```
+
+Docker can publish a port correctly while a provider firewall or security group
+still blocks it. For public beta-style deployments, prefer `:443` unless the
+provider explicitly allows the chosen high port.
+
 For deterministic carrier traffic without an external origin, run
 `fps_carrier origin` next to the server. The `debug-carrier` compose file is a
 compact end-to-end example; production deployments can copy the same service
@@ -88,9 +108,14 @@ docker run --rm -v "$PWD/config:/etc/fps:ro" fps:local \
   --server-endpoint fps.example.net:443 \
   --client-listen 127.0.0.1:443 \
   --client-status-socket /run/fps/client.status \
-  --format json \
-  --output /tmp/client.json
+  --format json > client.json
+chmod 600 client.json
 ```
+
+The redirection above writes `client.json` on the host. Do not use
+`--output /tmp/client.json` with a one-shot `docker run --rm` unless `/tmp` is a
+bind mount; otherwise the file is created inside the temporary container and is
+removed with it.
 
 Or generate a URI for transport:
 

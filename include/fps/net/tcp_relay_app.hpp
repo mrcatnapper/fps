@@ -94,6 +94,7 @@ struct TcpRelayCliParseResult {
     std::optional<std::string> lease_revoke_client_uuid;
     std::optional<std::string> client_profile_uri;
     std::optional<std::filesystem::path> status_socket_override;
+    std::string server_keypair_format{"text"};
     ClientProfileRequest client_profile;
 };
 

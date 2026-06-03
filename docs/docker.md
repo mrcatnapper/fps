@@ -127,7 +127,7 @@ Explicit commands bypass the role runner, which is useful for key/config tooling
 docker run --rm fps:local fps_client --help
 docker run --rm fps:local fps_carrier --help
 docker run --rm fps:local fps_client --generate-client-uuid
-docker run --rm fps:local fps_server --generate-server-keypair
+docker run --rm fps:local fps_server --generate-server-keypair --format json
 ```
 
 Two short aliases use `FPS_ROLE` and `FPS_CONFIG` instead of requiring the
@@ -157,6 +157,22 @@ port `443` without editing YAML:
 ```sh
 FPS_PUBLISHED_PORT=443 docker compose up -d
 ```
+
+Validate the public carrier port before debugging FPS authentication:
+
+```sh
+# On the server host.
+ss -ltnp | grep ':443'
+docker compose ps
+
+# From the client network.
+nc -vz fps.example.net 443
+```
+
+If `docker compose ps` shows `0.0.0.0:443->8443/tcp` but the client-side `nc`
+probe times out, check the provider firewall or security group. High ports can
+be blocked even when Docker published them correctly; the beta examples assume
+public HTTPS `:443` unless the deployment explicitly opens another port.
 
 Before start, generate a server key pair, paste
 `server_private_key_base64`/`server_public_key_base64` into the mounted JSON, put
@@ -257,7 +273,8 @@ docker run --rm -v "$PWD/config:/etc/fps:ro" fps:local \
   fps_server --generate-client-profile \
   --config /etc/fps/server.json \
   --client-uuid "$CLIENT_UUID" \
-  --server-endpoint fps.example.net:8443
+  --server-endpoint fps.example.net:8443 > client.json
+chmod 600 client.json
 ```
 
 Use `--format uri` to print the same profile as a single `fps://v1/...` string.
@@ -274,7 +291,9 @@ docker run --rm -v "$PWD/config:/etc/fps" fps:local \
 Profile output helpers write files with `0600` permissions and refuse to
 overwrite existing paths unless `--force` is set. If these helpers are run from
 a root-running Docker container against a bind mount, the resulting host file is
-root-owned. Prefer one of these explicit ownership patterns:
+root-owned. Prefer one of these explicit ownership patterns, and do not write
+`--output /tmp/client.json` in an unmounted one-shot container because that file
+will disappear when the container exits:
 
 ```sh
 # Host-owned file through host redirection.
@@ -433,8 +452,21 @@ part of the config/profile schema.
 - `client did not apply server-assigned lease`: confirm the server has
   `tun.lease_pool`/`tun.lease_file`, the UUID is allowlisted, and the client has
   `tun.auto_configure=true`.
+- `target_connect_failed`: confirm `network.server`/`network.origin` points to a
+  reachable endpoint from inside the FPS container namespace. In bridge-mode
+  Docker, 127.0.0.1 is container loopback, not host loopback. The primary client
+  Docker example uses `network_mode: host` to avoid this ambiguity.
+- `no_carrier_session`: the TUN adapter received traffic before any carrier
+  authenticated. Open or restart the browser/application/debug carrier and wait
+  for `sessions.carriers_current > 0`.
+- `non_ipv4_tun_destination` or `ignored_non_ipv4_tun_packet`: usually benign
+  host/container network noise in minimal IPv4 deployments. Treat it as a
+  problem only if counters grow together with user-visible packet loss.
 - `SOCKS listener did not become reachable`: check the Dante overlay logs and
   ensure `FPS_SOCKS_LISTEN_ADDRESS` matches the server TUN address.
+- `tun.leased_client_address` exists but `sessions.carriers_current=0`: the
+  client authenticated earlier, but all carriers are now closed. Restart or
+  recreate carrier sessions before changing routes or proxy settings.
 - `multi-client smoke did not receive distinct leases`: inspect `fps-server`
   logs for Zero-RTT auth failures and stale `/var/lib/fps/leases.json` in kept
   artifacts.

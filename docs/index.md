@@ -28,8 +28,8 @@ when you need exact CLI, Docker, routing, protocol or testing details.
   such as the official Dante SOCKS5 overlay example.
 - [UUID and key rotation](./rotation.md): client revocation, lease cleanup and
   server key rotation.
-- [Release checklist](./release.md): private/public beta release-candidate
-  preflight.
+- [Release checklist](./release.md): beta release-candidate preflight and image
+  publication notes.
 
 ## Reference
 

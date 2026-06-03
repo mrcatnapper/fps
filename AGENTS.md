@@ -9,9 +9,9 @@ Scope: the whole repository from the directory that contains this file.
 - The current main specification is `./docs/specification.md`.
 - User/operator documentation lives in `./docs/`.
 - Agent and developer working artifacts live in `./dev/`
-  (`WORKLOG.md`, `ROADMAP.md`, `REVIEW.md`, `NETWORK_RECOVERY.md` and similar
-  files). The repository root should keep only this `AGENTS.md` and the short
-  `README.md`.
+  (`WORKLOG.md`, `ROADMAP.md`, `NETWORK_RECOVERY.md`, GitHub operations notes,
+  fresh review briefs and similar files). The repository root should keep only
+  this `AGENTS.md` and the short `README.md`.
 - FPS / Free Porn Storage is an experimental hidden L3 TUN tunnel carried over a
   live cover TLS session.
 - Before major changes, reread the specification and the current work log.

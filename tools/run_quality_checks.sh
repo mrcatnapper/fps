@@ -243,9 +243,9 @@ if [[ "$run_docker" == true ]]; then
   run "${docker_cmd[@]}" run --rm "$image" iperf3 --version
   docker_tmp="$(mktemp -d)"
   client_uuid="$("${docker_cmd[@]}" run --rm "$image" fps_client --generate-client-uuid)"
-  server_keys="$("${docker_cmd[@]}" run --rm "$image" fps_server --generate-server-keypair)"
-  server_private_key="$(printf '%s\n' "$server_keys" | sed -n 's/^server_private_key_base64=//p')"
-  server_public_key="$(printf '%s\n' "$server_keys" | sed -n 's/^server_public_key_base64=//p')"
+  server_keys="$("${docker_cmd[@]}" run --rm "$image" fps_server --generate-server-keypair --format json)"
+  server_private_key="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["server_private_key_base64"])' <<< "$server_keys")"
+  server_public_key="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["server_public_key_base64"])' <<< "$server_keys")"
   cat > "$docker_tmp/server.json" <<EOF
 {
   "network": {
