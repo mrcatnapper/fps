@@ -118,7 +118,7 @@ struct CodecSessionFixture {
     explicit CodecSessionFixture(std::size_t max_write_queue_bytes = 1024U * 1024U) : client_pair(connect_pair(io)), origin_pair(connect_pair(io)) {
         session = fps::net::TlsTcpCarrierSession::create(
             std::move(client_pair.bridge), std::move(origin_pair.bridge), codec_pipelines(), {},
-            {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper_profile = std::nullopt, .zero_rtt = std::nullopt}
+            {.read_buffer_size = 7, .max_write_queue_bytes = max_write_queue_bytes, .shaper = nullptr, .zero_rtt = std::nullopt}
         );
         session->start();
     }

@@ -2,6 +2,708 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-03
+
+### Stabilize shaped TUN soak before PR merge
+
+Goal:
+
+- Run the final remote multi-client soak for the adaptive TLS-record shaper PR
+  before merging.
+- Fix any regression found by the soak instead of pushing a known-bad PR state.
+
+Findings:
+
+- The first remote soak attempts reproduced a real shaped TUN data-path failure:
+  clients queued/datagram-counted C2S packets, but the server did not receive
+  TUN datagrams.
+- A local isolated netns reproduction with
+  `tests/integration/tun_zero_rtt_loopback.py --enable-shaper` confirmed the
+  product-path issue without involving the remote host.
+- Root cause: production relay passed
+  `max_envelope_padding_size = codec.max_frame_padding` into the classified
+  record codec. With shaper profiles sampling larger TLS record sizes (for
+  example 4096-byte records) and normal `codec.max_frame_padding = 64`, small
+  TUN datagrams could not be padded up to the target TLS record size. They stayed
+  blocked in the shaped queue instead of being emitted.
+- A second issue found during the first soak attempt was oversized adaptive
+  shaper snapshot control frames. Large adaptive CDFs could exceed the codec
+  frame payload limit when sent as one control frame.
+
+Changes:
+
+- Added `compact_shaper_snapshot(...)` and bounded server snapshot broadcasts to
+  16 CDF points per distribution before encoding the control frame.
+- When a relay has shaper enabled, production `TlsTcpCarrierZeroRttOptions` now
+  permits record-level envelope padding up to the TLS record payload limit while
+  keeping per-frame padding controlled by `codec.max_frame_padding`.
+- Added focused unit coverage for bounded shaper snapshot control payloads.
+- Added a client-role shaped datagram test that verifies a C2S shaped datagram
+  can be decoded by a server-side classified receiver.
+
+Verification:
+
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=shaper --catch_system_errors=no --log_level=test_suite`
+- `./build/fps_unit_tests --run_test=tls_tcp_carrier_session/client_role_shaped_datagram_decodes_on_server_side --catch_system_errors=no --log_level=test_suite`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `ctest --test-dir build --output-on-failure`
+- `sudo -n python3 tests/integration/tun_zero_rtt_loopback.py --fps-client /workspaces/build/fps_client --fps-server /workspaces/build/fps_server --carrier /workspaces/tools/fps_carrier.py --enable-shaper --carrier-count 2 --expect-carrier-count 2 --udp-count 4 --udp-payload-size 600`
+- `docker build -f Dockerfile.alpine -t fps:alpine .`
+- `docker save fps:soak-69a4d3b-padfix | ssh fpshop docker load`
+- Remote 5-minute split-host soak with server/origin on `fpshop` and two local
+  Docker clients, each with two carrier sessions:
+  - image: `fps:soak-69a4d3b-padfix`;
+  - artifacts: `captures/fps-remote-soak-48859`;
+  - leases: `10.89.0.2` and `10.89.0.3`;
+  - carrier restarts: `a1`, `b2`, then `a2` and `b1` together;
+  - UDP echo: client A `5400/5400`, client B `5400/5400`, zero loss;
+  - HTTP probes: client A `97/97`, client B `97/97`;
+  - server classified records: decoded `12088`, encoded `11979`, zero
+    decode/encode/tamper errors;
+  - server TUN counters: `packets_from_device=11880`,
+    `packets_to_device=12061`;
+  - bad log counters for classified/envelope encode/decode and oversized
+    payload were all zero;
+  - all FPS, carrier and client services were alive at collection time.
+
+Notes:
+
+- Build images locally for weak remote soak hosts and transfer them with
+  `docker save | ssh ... docker load`; do not build the image on `fpshop`.
+- The failed intermediate harness attempts are preserved under earlier
+  `captures/fps-remote-soak-*` directories, but only
+  `captures/fps-remote-soak-48859` is the successful final soak for this entry.
+
+### Add offline pcap-to-shaper-profile tool
+
+Goal:
+
+- Let operators prepare a static shaper CDF profile from a carrier-only pcap
+  without first running an FPS daemon long enough to export a live adaptive
+  snapshot.
+- Reuse one libpcap/TCP/TLS parser across pcap tools instead of keeping
+  separate local parsers.
+
+Changes:
+
+- Added `tools/fps_pcap.py` with shared libpcap loading, Ethernet/raw/SLL/SLL2,
+  IPv4/IPv6/TCP parsing, TCP connection grouping, client/server inference and
+  TLS record parsing over reassembled TCP byte streams.
+- Refactored `tools/is_pcap_looks_like_tls.py` and
+  `tools/analyze_pcap_tcp_flow.py` to use the shared parser.
+- Added `tools/pcap_to_shaper_profile.py`.
+  - Builds compact JSON shaper profiles from TLS Application Data records.
+  - Infers client/server direction from the TCP SYN/SYN-ACK handshake; if the
+    capture starts later, `--port` is used as the service-port hint.
+  - Uses full TLS record wire size, including the 5-byte TLS header, matching
+    the runtime shaper observation path.
+  - Computes inter-record delay CDFs in microseconds.
+  - Supports `--start-epoch`/`--end-epoch`, CDF bin count, summary JSON and
+    overwrite protection.
+- Added `tests/integration/pcap_shaper_profile.py`, which writes a synthetic
+  pcap with a TCP handshake and a deliberately fragmented TLS record. The test
+  exercises the TLS-shape checker, the new profile tool and the pcap flow
+  analyzer through the shared parser.
+- Added CTest `fps_pcap_shaper_profile` with `SKIP_RETURN_CODE=77` for hosts
+  without libpcap.
+- Updated `docs/specification.md`, `docs/testing.md` and
+  `docs/pcap-flow-analysis.md`.
+
+Verification:
+
+- `python3 -m py_compile tools/*.py tests/integration/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/pcap_shaper_profile.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R 'fps_pcap_shaper_profile|fps_unit_tests' --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+
+Notes:
+
+- The offline tool should be fed carrier-only baseline traffic or a selected
+  pre-upgrade window. A pcap that already includes shaped FPS records describes
+  the combined visible link, not the original carrier.
+- No remote soak was run for this small offline-tool increment.
+
+### Self-review and extended validation for shaper profile export
+
+Goal:
+
+- Review the JSON shaper profile export/import increment before the next soak
+  run.
+- Execute the extended non-soak validation suite, including sanitizer,
+  coverage, fuzz, TUN/root and Docker runtime checks.
+
+Self-review:
+
+- Reviewed the last commit (`9f436db Add JSON shaper profile export`) and the
+  changed shaper JSON/config/status paths.
+- Rechecked public-field cleanup with `rg` for stale
+  `inter_record_delay_ms_cdf` and object-style CDF examples. The only remaining
+  occurrences are intentional negative tests that prove removed formats are
+  rejected.
+- Confirmed that structured shaper events expose `delay_us` explicitly, avoiding
+  accidental sub-millisecond truncation through generic chrono serialization.
+- No code changes were needed during this review.
+
+Verification:
+
+- `FPS_JOBS=2 FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang-20 warning build and local CTest: 15/15 passed;
+  - ASan+UBSan local CTest: 15/15 passed;
+  - Valgrind unit pass: 209 test cases, zero errors/leaks;
+  - llvm-cov gate: 74.54% line coverage and 82.49% function coverage;
+  - libFuzzer smoke: all five fuzz targets passed with 64 runs.
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+  - 6/6 TUN/root tests passed.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+  - Ubuntu runtime image build and Docker smoke passed.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+  - Alpine runtime image build and Docker smoke passed.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - UDP 5.00 Mbit/s, zero packet loss, all services alive.
+- `python3 tools/docker_multi_client_sim.py --sudo --image fps:local --duration 10 --bandwidth 1M --length 1000`
+  - two clients received different leases; C2S/S2C UDP probes had zero packet
+    loss; spoofed source drop event was observed; all services alive.
+- `python3 tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - `replace_old` duplicate-UUID policy behaved as expected.
+- `python3 tools/docker_socks_smoke.py --sudo --image fps:local --proxy-image fps-dante-proxy:local --build`
+  - Dante SOCKS overlay HTTP probe passed; all services alive.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 10 --bandwidth 3M --length 1000`
+  - UDP 3.00 Mbit/s, zero packet loss, all services alive.
+- `git diff --check`
+
+Notes:
+
+- No remote soak was run in this pass by request.
+- Docker buildx was unavailable in this environment; Docker checks used the
+  existing script fallback to the classic Docker builder.
+
+### Add JSON shaper profile import/export UX
+
+Goal:
+
+- Make shaper CDF profiles directly reusable from config/status without adding a
+  separate pcap profile tool in this increment.
+- Keep the public format readable JSON, not base64, and remove old object-based
+  CDF config forms because there is no compatibility requirement yet.
+
+Changes:
+
+- Changed public shaper CDF config to compact pairs:
+  `[[value, cumulative_probability], ...]`.
+- Renamed public shaper inter-record delay fields to microseconds:
+  `inter_record_delay_us_cdf_c2s` and `inter_record_delay_us_cdf_s2c`.
+- Switched shaper scheduling delays and adaptive delay buckets to
+  microseconds; jitter config remains `jitter_ms` and is converted internally.
+- Changed structured shaper events to log explicit `delay_us`, avoiding silent
+  sub-millisecond truncation through generic chrono-to-milliseconds JSON
+  serialization.
+- Added non-secret `shaper.profile` snapshots to status JSON when shaper is
+  enabled. The snapshot contains compact CDF arrays, profile id, observed record
+  counts and adaptive readiness metadata.
+- Added `fps_client|fps_server --write-shaper-profile --config PATH --output
+  PATH [--force] [--format json]`. The command exports a live status-socket
+  snapshot when reachable and falls back to the static config profile otherwise.
+  Output uses the existing secret-file writer (`0600`, no overwrite without
+  `--force`).
+- Updated unit/integration coverage for compact CDF parsing, legacy object CDF
+  rejection, profile export permissions/overwrite behavior and status JSON
+  shaper snapshots.
+- Updated `docs/specification.md`, `docs/testing.md` and
+  `docs/pcap-flow-analysis.md`.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R fps_unit_tests --output-on-failure`
+- `ctest --test-dir build -R 'fps_status_socket|fps_cli_streams' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+
+Open:
+
+- Offline pcap-to-profile tooling remains deferred. The current export path is
+  daemon-first: run representative carriers, let adaptive CDF learn, then export
+  the live profile.
+
+### Repeat remote pcap flow analysis with offload control
+
+Goal:
+
+- Re-run the remote `fpshop` market-data carrier packet-size/timing capture
+  after disabling endpoint offload features, so captured packet sizes are closer
+  to the actual MTU-limited wire shape.
+- Keep the concrete external market-data origin out of reports and docs.
+
+Setup:
+
+- Built local Alpine runtime image `fps:pcap-offload-68f9bed`.
+- Loaded the image onto `fpshop` with `docker save ... | gzip -1 | ssh fpshop
+  'gunzip | docker load'`.
+- Ran `fps_server` on `fpshop` in host networking on TCP `443` and `fps_client`
+  locally in host networking on `127.0.0.1:7443`.
+- Used one persistent HTTPS market-data carrier connection through FPS with one
+  GET about every 0.5 seconds.
+- Set `client_upgrade_delay_ms=10000` and `client_upgrade_delay_sigma_ms=0` for
+  a deterministic visible pre-upgrade window.
+- Temporarily changed `enp1s0` on `fpshop`:
+  `gro off`, `gso off`, `tso off`, `rx-gro-hw off`; restored all four to `on`
+  after capture.
+- The first retry waited for a non-existent `event=lease_applied` log and was
+  aborted by cleanup. The second retry used `iperf3 --bidir`, which hung under
+  the asymmetric shaped C2S path. The final run used bounded Python UDP
+  send/receive probes instead, avoiding `iperf3` control-flow ambiguity.
+
+Results:
+
+- Capture artifacts are under ignored
+  `captures/fps-pcap-offload-221834/`.
+- TLS wire-shape checker passed:
+  - total TLS records: 682;
+  - client-to-server Application Data records: 177;
+  - server-to-client Application Data records: 501.
+- Carrier workload: 140 successful polls, about 4.17 MiB response body, no
+  poller errors.
+- Capture duration about 77.5 seconds; upgrade split about 10.3 seconds after
+  capture start.
+- Packet-size result after disabling offloads: max observed IP packet length
+  was 1500 bytes before and after upgrade. This confirms that earlier 8-14 KiB
+  endpoint-captured packet sizes were GRO/GSO/TSO or hypervisor aggregation
+  artifacts rather than physical wire packets.
+- Post-upgrade visible link:
+  - 3258 packets;
+  - about 0.46 Mbit/s IP throughput;
+  - IP size p50/p95/max: 1500/1500/1500 bytes;
+  - inter-packet p50/p95: about 0.004/27.8 ms.
+- Direction-specific post-upgrade shape:
+  - C2S: 600 packets, about 0.008 Mbit/s, IP p50/p95 52/308 bytes;
+  - S2C: 2658 packets, about 0.45 Mbit/s, IP p50/p95 1500/1500 bytes.
+- No `level=error` or `level=fatal` log entries in client/server logs.
+
+Docs:
+
+- Added `docs/assets/pcap-flow/market-data-remote-offload-overview.png`.
+- Added `docs/assets/pcap-flow/market-data-remote-offload-quantiles.png`.
+- Updated `docs/pcap-flow-analysis.md` with the offload-controlled repeat and
+  interpretation.
+
+Verification:
+
+- `python3 tools/is_pcap_looks_like_tls.py captures/fps-pcap-offload-221834/fps-link.pcap --port 443 --require-bidirectional --require-application-data --min-records 10 --summary captures/fps-pcap-offload-221834/tls-shape.json`
+- `python3 tools/analyze_pcap_tcp_flow.py captures/fps-pcap-offload-221834/fps-link.pcap --port 443 --split-time-epoch <epoch> --summary-json captures/fps-pcap-offload-221834/flow-summary.json --packets-csv captures/fps-pcap-offload-221834/flow-packets.csv --svg captures/fps-pcap-offload-221834/flow-plot.svg`
+- `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/fps-pcap-offload-221834/flow-packets.csv --summary-json captures/fps-pcap-offload-221834/flow-summary.json --out-prefix captures/fps-pcap-offload-221834/offload-aware-market-data --sample-size 0`
+- Remote post-check: `ethtool -k enp1s0` showed GRO/GSO/TSO/RX-GRO-HW restored
+  to `on`; `ss -ltnp` showed no leftover FPS listener on `:443`.
+
+## 2026-06-02
+
+### Randomize client Zero-RTT auth delay
+
+Goal:
+
+- Avoid a fixed, globally repeated client-auth timing offset after carrier
+  eligibility while preserving deterministic test and pcap modes.
+
+Changes:
+
+- Added `security.zero_rtt.client_upgrade_delay_sigma_ms`.
+- Default sigma is `client_upgrade_delay_ms / 3` for client configs and `0` for
+  server configs.
+- Each client-side TLS carrier samples one effective delay when bidirectional
+  Application Data and transcript requirements first become ready:
+  `clamp(client_upgrade_delay_ms + N(0, sigma_ms), 0, 2 * client_upgrade_delay_ms)`.
+- `sigma_ms=0` keeps deterministic old behavior for tests and measurements.
+- Updated protocol/testing/pcap docs and added unit coverage for clamp bounds,
+  zero-sigma behavior and config parsing.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_relay_app,tls_tcp_carrier_session --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
+### Add TCP_NODELAY runtime policy
+
+Goal:
+
+- Make the FPS relay TCP policy explicit before deeper shaper mimicry work.
+- Keep Docker as the primary runtime while documenting its limits for
+  packet-capture fidelity.
+
+Changes:
+
+- Added `network.tcp_no_delay`, default `true`, to the relay config.
+- Applied `TCP_NODELAY` to accepted and outbound relay TCP sockets before a
+  `TlsTcpCarrierSession` starts. Failure to set the option closes the candidate
+  session with `set_tcp_no_delay_failed` metadata instead of silently running
+  under an unknown TCP policy.
+- Added a small `tcp_socket_options` helper and loopback unit coverage that
+  sets and reads back the actual socket option.
+- Updated check-config summaries and docs for the new option.
+- Documented Docker/VM capture limitations: bridge/endpoint pcaps can show
+  offload or hypervisor aggregation artifacts, so physical wire-shape claims
+  require host-network/native or external-capture setups.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_relay_app --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build -R 'fps_cli_streams' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
+### Run 5-minute fpshop multi-client Alpine soak
+
+Goal:
+
+- Validate the current shaper-aware datagram fragmentation branch on the weak
+  remote `fpshop` host with multiple leased clients and multiple carrier
+  sessions.
+- Record the future workflow decision: do not build images on weak remote soak
+  hosts; build the Alpine image locally and transfer it with `docker save |
+  ssh ... docker load`.
+
+Setup:
+
+- Built local Alpine runtime image `fps:soak-multi-19b4bf0` from current
+  `develop` commit `19b4bf0`.
+- Transferred the committed repository snapshot to
+  `/tmp/fps-soak-multi-19b4bf0` on `fpshop` with `git archive`.
+- Loaded the locally built image on `fpshop` with
+  `docker save fps:soak-multi-19b4bf0 | gzip -1 | ssh fpshop 'gunzip |
+  docker load'`.
+
+Verification:
+
+- Remote command:
+  `ssh fpshop 'cd /tmp/fps-soak-multi-19b4bf0 && python3
+  tools/docker_resilience_soak.py --image fps:soak-multi-19b4bf0 --duration
+  300 --bandwidth 200K --length 512 --clients 2 --stress-backpressure
+  --stress-bandwidth 2M --startup-timeout 90 --keep-artifacts'`.
+
+Results:
+
+- Main mixed client-to-server UDP: `300.05s`, `14,649` packets,
+  `0%` loss, about `0.200 Mbit/s`, plus `551` HTTP probes.
+- Server-to-client UDP probes to both leases: `489` packets each,
+  `0%` loss.
+- Backpressure stress phase: about `2.000 Mbit/s`, `2,084` packets,
+  `0%` loss; Docker-level `write_queue_full` was not observed, which remains
+  acceptable for this routine topology/timing-dependent stress probe.
+- Spoofed-source negative path: `ignored_spoofed_tun_source=1`; valid
+  post-spoof UDP stayed healthy with `0%` loss.
+- Carrier stop/start recovery: one authenticated carrier closed with expected
+  `peer_eof`, a replacement carrier registered, and recovered UDP stayed at
+  `0%` loss.
+- Final server status: two active carriers, three accepted/authenticated
+  carrier sessions total, one intentional carrier removal, non-zero TUN
+  packet/byte counters, zero TUN write/codec/TLS/packet-too-large failures and
+  all six services running.
+- Log review found no fatal/panic/assert/sanitizer failures. Expected debug
+  `zero_rtt_upgrade_miss precheck_failed` entries appeared before
+  authentication, expected `non_ipv4_tun_destination`/`ignored_non_ipv4`
+  counters appeared from harness probes/background traffic, and carrier-origin
+  `ConnectionClosedError` corresponded to the deliberate carrier restart.
+
+Cleanup:
+
+- Temporary remote artifacts and the temporary local/remote image tag were
+  removed after log review.
+
+### Self-review and extended validation for shaper-aware fragmentation
+
+Goal:
+
+- Review `5591f4b Add shaper-aware datagram fragmentation` before PR/merge
+  work and run the extended validation set without soak.
+
+Self-review:
+
+- Queue ordering is preserved: dynamic fragmentation replaces the front shaped
+  datagram with ordered fragment queue items on the same carrier.
+- Shaper accounting is consistent: original datagram bytes are queued first,
+  fragment header overhead is added when the datagram is expanded, and each
+  fragment commit consumes `fragment_header + chunk`.
+- Small datagrams still use the unfragmented `opaque_datagram` path when they
+  fit the sampled TLS record; they are not penalized by fragment-header bounds.
+- The lower-bound block path is intentional: if a sampled TLS record cannot fit
+  even `fragment_header + 1 byte`, the datagram remains queued and no unnatural
+  larger record is emitted.
+- Residual limitation: fragment chunk size is fixed at the first split
+  decision. Later smaller shaper samples can block the next already-numbered
+  fragment until a fitting sample appears. This avoids re-fragmenting
+  fragments and preserves current wire semantics.
+- No secret/key/UUID/raw packet logging was introduced. Payload inspection is
+  limited to unit tests.
+
+Verification:
+
+- `FPS_FUZZ_RUNS=64 tools/run_quality_checks.sh --all`
+  - clang local suite passed;
+  - ASan+UBSan local suite passed;
+  - Valgrind unit pass reported 0 errors and no leaks;
+  - coverage gates passed: line coverage 74.40%, function coverage 82.20%;
+  - libFuzzer smoke passed for TLS records, covert codec, envelope, Zero-RTT
+    and TUN frames.
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:local --duration 10 --bandwidth 5M --length 1200`
+  - 4.999 Mbit/s, 0% loss, FPS TUN stats non-zero, services alive.
+- `python3 tools/docker_multi_client_sim.py --sudo --image fps:local --duration 8 --bandwidth 2M --length 900`
+  - two distinct leases, bidirectional probes at about 2 Mbit/s, 0% loss,
+    spoof drop event observed, services alive.
+- `python3 tools/docker_duplicate_uuid_sim.py --sudo --image fps:local`
+  - duplicate replacement counter observed; old client blocked, new client OK.
+- `python3 tools/docker_socks_smoke.py --sudo --build --image fps:local --proxy-image fps-dante-proxy:local`
+  - SOCKS HTTP probe OK, services alive.
+- `python3 tools/docker_tun_iperf_sim.py --sudo --image fps:alpine --duration 8 --bandwidth 3M --length 1000`
+  - 3.001 Mbit/s, 0% loss, FPS TUN stats non-zero, services alive.
+
+## 2026-06-01
+
+### Add shaper-aware opaque datagram fragmentation
+
+Goal:
+
+- Use FPS datagram fragmentation as a shaper degree of freedom instead of
+  blocking every datagram larger than the currently sampled TLS record.
+- Correct the pcap-flow report caveat around large endpoint-captured packet
+  sizes from offload/aggregation.
+
+Changes:
+
+- Added a reusable `fps/net/datagram_fragment.hpp` helper for fragment payload
+  construction and fragment-count calculation.
+- Reused that helper in `CovertDatagramTransport`.
+- Updated the authenticated shaped send path in `TlsTcpCarrierSession`:
+  - shaped non-control frames are queued as individual scheduling units;
+  - if a queued `opaque_datagram` does not fit the sampled TLS record, FPS
+    expands it into ordered `opaque_datagram_fragment` items on the same
+    carrier when the sampled record can fit a fragment header plus at least one
+    data byte;
+  - if even the smallest fragment cannot fit, the datagram remains queued and
+    the shaper emits a blocked event for that scheduling attempt;
+  - fragment header overhead is added to shaper budget accounting before the
+    first fragment is committed;
+  - shaped queue byte diagnostics now use pre-accounted classified-record
+    sizes instead of reporting zero for not-yet-encoded records.
+- Added unit coverage for:
+  - large authenticated datagram split into multiple shaped TLS records and
+    byte-for-byte reassembly;
+  - tiny datagram staying unfragmented when it fits but a fragment header would
+    not fit;
+  - blocked lower-bound case where sampled TLS record is too small for a
+    fragment header.
+- Updated `docs/specification.md` and `docs/pcap-flow-analysis.md`.
+
+Decisions:
+
+- The wire format is unchanged: the existing encrypted
+  `opaque_datagram_fragment` frame is reused.
+- Fragment count is fixed at the first split decision. Later shaper samples can
+  still block individual fragment records if their target size/padding window
+  cannot fit the next fragment.
+- The pcap report treats 8-14 KiB endpoint-captured packet sizes as
+  GRO/GSO/TSO/hypervisor aggregation artifacts, not physical Ethernet/IP
+  fragmentation evidence.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -R 'fps_unit_tests' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+### Run remote market-data carrier pcap experiment
+
+Goal:
+
+- Capture and analyze the visible `fps_client <-> fps_server` TCP flow on a
+  real remote host, avoiding local Docker loopback and kernel bypass effects.
+- Use a dense automated HTTPS market-data carrier with a visible
+  `client_upgrade_delay_ms=10000` pre-upgrade window, then send bounded TUN/FPS
+  datagrams after upgrade.
+
+Changes:
+
+- Added two public report plots under `docs/assets/pcap-flow/`:
+  `market-data-remote-overview.png` and
+  `market-data-remote-quantiles.png`.
+- Updated `docs/pcap-flow-analysis.md` with an anonymized remote-host
+  market-data experiment section, measured packet/timing quantiles and
+  interpretation.
+
+Decisions:
+
+- Do not document the concrete external market-data service name; the relevant
+  shape is periodic HTTPS GET requests with roughly 32 KiB responses.
+- Treat this as a pcap/traffic-shape experiment, not a TUN application
+  throughput benchmark. Server-to-client UDP delivery was verified at the
+  application socket. Client-to-server frames were verified through FPS daemon
+  counters because the ad-hoc UDP socket bound to the server TUN address did
+  not receive locally delivered packets in this setup.
+- The experiment shows the important asymmetry of GET-response carriers:
+  server-to-client covert capacity is much larger than client-to-server
+  capacity. The adaptive shaper correctly blocked oversized client-to-server
+  datagrams instead of forcing unnatural large request-direction records.
+
+Verification:
+
+- Remote build on `fpshop`:
+  `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release`
+  and `cmake --build build -j 2 --target fps_client fps_server`.
+- Remote tcpdump:
+  `tcpdump --immediate-mode -i <remote-iface> -s 0 -U -w fps-link.pcap 'host <client-public-ip> and tcp port 443'`.
+- Carrier workload: 150 persistent-connection HTTPS GET polls at about
+  0.5 second interval, about 4.81 MiB response bytes total.
+- `python3 tools/is_pcap_looks_like_tls.py captures/.../fps-link.pcap --port 443 --require-bidirectional --require-application-data --min-records 10 --summary captures/.../tls-shape.json`
+- `python3 tools/analyze_pcap_tcp_flow.py captures/.../fps-link.pcap --port 443 --split-time-epoch <epoch> --summary-json captures/.../flow-summary.json --packets-csv captures/.../flow-packets.csv --svg captures/.../flow-plot.svg`
+- `.venv/bin/python tools/plot_pcap_flow.py --packets-csv captures/.../flow-packets.csv --summary-json captures/.../flow-summary.json --out-prefix captures/.../market-data-flow --sample-size 0`
+- `git diff --check`
+
+Results:
+
+- Capture duration: about 75.1 s, upgrade split about 10.5 s after capture
+  start, 4576 packets captured, 0 tcpdump kernel drops.
+- TLS wire-shape checker: 1033 TLS records total, all observed FPS-link payload
+  remained parseable as TLS records.
+- Post-upgrade visible link: about 1.02 Mbit/s IP throughput, IP size p50
+  261 B, IP size p95 5844 B, inter-packet p50 0.76 ms, p95 82.7 ms.
+- Directional post-upgrade shape is strongly asymmetric:
+  client-to-server about 0.021 Mbit/s, server-to-client about 1.00 Mbit/s.
+- FPS daemon counters in the refined run: client-to-server accepted 103
+  datagram frames / 6144 bytes; server-to-client delivered 240 datagram frames /
+  294720 bytes.
+
+### Add adaptive TLS-record shaper baseline
+
+Goal:
+
+- Move the shaper from static-only CDF scheduling toward robust traffic-shape
+  mimicry by learning from real carrier TLS records.
+- Keep the implementation simple: independent adaptive CDFs for record size and
+  inter-record delay, shared across local sessions, with pcap/correlation tests
+  deferred until the baseline is stable.
+
+Changes:
+
+- Added adaptive fields to `ShaperProfile`: enable flag, minimum warmup record
+  count, minimum observed warmup window, decay and snapshot interval.
+- Taught `Shaper` to observe parsed carrier TLS records, maintain decayed
+  record-size and delay buckets, switch from static CDF to adaptive CDF after
+  warmup and expose metadata snapshots.
+- Added encrypted shaper snapshot control payloads. The server sends snapshots
+  after authentication and periodically; clients apply matching-profile
+  snapshots as advisory bootstrap data.
+- Changed relay sessions to share one process-level `Shaper`, so all open
+  carriers train one adaptive model instead of isolated per-session models.
+- Added client-side Zero-RTT upgrade delay config. Client configs default to
+  `2000 ms`, server configs to `0 ms`, giving initial carrier traffic time to
+  warm the adaptive model before FPS records are inserted.
+- Ensured shaper observations happen at TLS-record granularity, not TCP read
+  chunk granularity, and excluded inserted classified FPS records from training.
+- Updated spec/testing/pcap/roadmap/review docs for the new adaptive baseline.
+
+Decisions:
+
+- Independent size and delay CDFs are the first robust baseline. A joint
+  size/time model such as a copula remains conditional on pcap evidence.
+- Snapshot control frames contain only model metadata and profile id, never
+  UUIDs, keys, nonces, raw TLS payloads or TUN/IP payload bytes.
+- The client upgrade delay is checked on later carrier TLS records; it is not a
+  timer that injects auth into an idle carrier.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=shaper,tls_tcp_carrier_session,tcp_relay_app,tun_lease --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build -R 'fps_https_zero_rtt_(chain|hint_precheck|large_response|multi_session|adversarial)' --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -R 'fps_tun_zero_rtt_shaper|fps_tun_zero_rtt_loopback' --output-on-failure`
+- `git diff --check`
+
+Fixes during verification:
+
+- Initial full CTest failed short HTTPS Zero-RTT integrations because the new
+  product default client delay (`2000 ms`) intentionally waits for carrier
+  warmup, while those tests close quickly. Test fixtures now explicitly set
+  `client_upgrade_delay_ms=0`; product defaults remain unchanged.
+- Self-review also caught a silent snapshot `profile_id` truncation risk.
+  `Shaper` now rejects profile ids longer than the one-byte snapshot field.
+
+### Add size-aware classified-record shaping
+
+Goal:
+
+- Start the traffic-shaping implementation by making inserted classified FPS
+  records use planner-selected full TLS record wire sizes.
+- Keep ordinary carrier TLS records byte-for-byte and leave adaptive
+  pcap-level mimicry for a later increment.
+
+Changes:
+
+- Added target-size options to classified-record encoding. The encoder now pads
+  encrypted classified records to an exact outer TLS Application Data record
+  size when requested.
+- Added precise rejection for too-small target records and preserved send
+  sequence on target-size/padding validation failures.
+- Split shaper scheduling into proposal and commit steps so blocked target
+  sizes, padding limits and write-queue pressure do not consume queued covert
+  bytes, cover budget or burst allowance.
+- Wired shaped classified writes in `TlsTcpCarrierSession` to use
+  `plan.tls_record_size` as the real emitted TLS record size and to report
+  actual encoded size in shaper events.
+- Updated the TUN shaper integration fixture so shaped profiles have enough
+  configured classified-record padding capacity.
+- Updated shaper/spec/testing documentation to define record-size CDF buckets as
+  full TLS record wire sizes.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=fps_classified_record,shaper,tls_tcp_carrier_session --catch_system_errors=no --log_level=test_suite`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -R fps_tun_zero_rtt_shaper --output-on-failure`
+- `git diff --check`
+
+Open follow-up:
+
+- Add pcap-level distribution checks after the shaper can schedule against
+  learned or captured carrier profiles rather than static CDFs only.
+
 ## 2026-05-31
 
 ### Expand adversarial Zero-RTT regression coverage

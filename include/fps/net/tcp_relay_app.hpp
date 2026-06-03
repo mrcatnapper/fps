@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <iosfwd>
 #include <memory>
@@ -40,6 +41,8 @@ struct TunRelayConfig {
 
 struct ZeroRttRelayConfig {
     FpsUpgradeControllerConfig controller_config;
+    std::chrono::milliseconds client_upgrade_delay{0};
+    std::chrono::milliseconds client_upgrade_delay_sigma{0};
     bool uses_client_uuid = false;
     std::size_t allowed_client_uuid_count = 0;
 };
@@ -53,6 +56,7 @@ struct TcpRelayConfig {
     std::size_t max_frame_payload_size = kDefaultFramePayloadSize;
     std::size_t max_frame_padding_size = kDefaultFramePaddingSize;
     bool allow_fragmentation = true;
+    bool tcp_no_delay = true;
     log::LoggingConfig logging;
     std::optional<ZeroRttRelayConfig> zero_rtt;
     std::optional<TunRelayConfig> tun;
@@ -68,7 +72,7 @@ using TcpRelayConfigResult = Result<TcpRelayConfig, std::string>;
 
 BOOST_DEFINE_ENUM_CLASS(
     TcpRelayCliCommand, run, check_config, generate_server_keypair, generate_client_uuid, generate_client_profile, print_config_from_uri, write_config_from_uri,
-    status, lease_list, lease_revoke_client_uuid, lease_prune
+    write_shaper_profile, status, lease_list, lease_revoke_client_uuid, lease_prune
 )
 
 struct ClientProfileRequest {

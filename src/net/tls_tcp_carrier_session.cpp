@@ -75,9 +75,7 @@ TlsTcpCarrierSession::TlsTcpCarrierSession(
     if(config_.zero_rtt.has_value()) {
         zero_rtt_controller_.emplace(config_.zero_rtt->controller_config);
     }
-    if(config_.shaper_profile.has_value()) {
-        shaper_.emplace(*config_.shaper_profile);
-    }
+    shaper_ = config_.shaper;
 }
 
 void TlsTcpCarrierSession::start() {
@@ -214,7 +212,7 @@ auto TlsTcpCarrierSession::shaped_queue_bytes(Direction direction) const noexcep
     const auto& queue = direction == Direction::client_to_server ? client_to_server_shaped_writes_ : server_to_client_shaped_writes_;
     std::size_t bytes = 0;
     for(const auto& item : queue) {
-        const auto size = item.write.bytes.size();
+        const auto size = item.write.accounted_bytes == 0U ? item.write.bytes.size() : item.write.accounted_bytes;
         bytes = size > std::numeric_limits<std::size_t>::max() - bytes ? std::numeric_limits<std::size_t>::max() : bytes + size;
     }
     return bytes;

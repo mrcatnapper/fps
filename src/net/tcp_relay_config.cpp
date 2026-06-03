@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -155,6 +156,17 @@ struct AllowedClientConfig {
     if(!min_records) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
+    auto client_upgrade_delay =
+        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_ms", role == RelayRole::client ? 2000U : 0U);
+    if(!client_upgrade_delay) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay.error());
+    }
+    const auto default_upgrade_sigma = role == RelayRole::client ? client_upgrade_delay.value() / 3U : 0U;
+    auto client_upgrade_delay_sigma =
+        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_sigma_ms", default_upgrade_sigma);
+    if(!client_upgrade_delay_sigma) {
+        return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay_sigma.error());
+    }
 
     auto version = parse_u16_config(tree, "security.zero_rtt.version", kFpsWireVersion);
     auto capabilities = parse_u16_config(tree, "security.zero_rtt.capabilities", 1);
@@ -254,6 +266,8 @@ struct AllowedClientConfig {
                 .upgrade_direction = upgrade_direction,
                 .min_records_before_trial = min_records.value(),
             },
+        .client_upgrade_delay = std::chrono::milliseconds{client_upgrade_delay.value()},
+        .client_upgrade_delay_sigma = std::chrono::milliseconds{client_upgrade_delay_sigma.value()},
         .uses_client_uuid = role == RelayRole::client,
         .allowed_client_uuid_count = allowed_uuid_count,
     };
@@ -354,6 +368,12 @@ auto load_tcp_relay_config(std::string_view path, std::string_view target_name, 
         }
         config.read_buffer_size = *read_buffer.value();
     }
+
+    auto tcp_no_delay = bool_config(tree, "network.tcp_no_delay", true);
+    if(!tcp_no_delay) {
+        return TcpRelayConfigResult::failure(tcp_no_delay.error());
+    }
+    config.tcp_no_delay = tcp_no_delay.value();
 
     auto max_queue = optional_size_config(tree, "limits.max_session_write_queue_bytes");
     if(!max_queue) {

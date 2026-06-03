@@ -256,16 +256,22 @@ def shaper_json(enabled):
   "shaper": {
     "enabled": true,
     "profile_id": "tun-loopback-test",
-    "record_size_cdf_c2s": [{"le": 4096, "p": 1.0}],
-    "record_size_cdf_s2c": [{"le": 4096, "p": 1.0}],
-    "inter_record_delay_ms_cdf_c2s": [{"le": 1, "p": 1.0}],
-    "inter_record_delay_ms_cdf_s2c": [{"le": 1, "p": 1.0}],
+    "record_size_cdf_c2s": [[4096, 1.0]],
+    "record_size_cdf_s2c": [[4096, 1.0]],
+    "inter_record_delay_us_cdf_c2s": [[1000, 1.0]],
+    "inter_record_delay_us_cdf_s2c": [[1000, 1.0]],
     "covert_ratio_max": 1.0,
     "burst_records_max": 64,
     "jitter_ms": {"min": 0, "max": 0},
     "deterministic_seed": 7
   }
 """
+
+
+def codec_frame_padding(enable_shaper, cover_padding_size):
+    if enable_shaper:
+        return max(64, cover_padding_size)
+    return 64
 
 
 def zero_rtt_json(role):
@@ -292,7 +298,8 @@ def zero_rtt_json(role):
       "capabilities": 1,
       "max_padding_size": 64,
       "min_records_before_trial": 1,
-      "upgrade_direction": "client_to_server"
+      "upgrade_direction": "client_to_server",
+      "client_upgrade_delay_ms": 0
     }
   },
 """ % key_config
@@ -308,6 +315,7 @@ def write_json_config(
     enable_shaper,
     tun_mtu,
     codec_max_frame_payload,
+    cover_padding_size,
     lease_file=None,
 ):
     if role == "server":
@@ -336,7 +344,7 @@ def write_json_config(
 %s
   "codec": {
     "max_frame_payload": %d,
-    "max_frame_padding": 64,
+    "max_frame_padding": %d,
     "allow_fragmentation": true
   },
   "tun": {
@@ -355,6 +363,7 @@ def write_json_config(
             target,
             zero_rtt_json(role),
             codec_max_frame_payload,
+            codec_frame_padding(enable_shaper, cover_padding_size),
             tun_name,
             tun_mtu,
             lease_json,
@@ -510,6 +519,7 @@ def main():
             args.enable_shaper,
             args.tun_mtu,
             args.codec_max_frame_payload,
+            args.cover_padding_size,
             str(tmpdir / "leases.json"),
         )
         write_json_config(
@@ -522,6 +532,7 @@ def main():
             args.enable_shaper,
             args.tun_mtu,
             args.codec_max_frame_payload,
+            args.cover_padding_size,
         )
 
         try:

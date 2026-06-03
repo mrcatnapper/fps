@@ -1,6 +1,7 @@
 #include "fps/net/tcp_relay_app.hpp"
 
 #include "tcp_relay_app_helpers.hpp"
+#include "tcp_relay_shaper_json.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -28,9 +30,11 @@
 #include "fps/core/cover_session_pipeline.hpp"
 #include "fps/core/crypto.hpp"
 #include "fps/core/identity.hpp"
+#include "fps/core/protocol_constants.hpp"
 #include "fps/log/describe.hpp"
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
+#include "fps/net/tcp_socket_options.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
 #include "fps/net/tun_tunnel_adapter.hpp"
@@ -44,6 +48,7 @@ using local_stream = boost::asio::local::stream_protocol;
 namespace json = boost::json;
 
 constexpr auto kNoisyLogInterval = std::chrono::seconds{10};
+constexpr std::size_t kShaperSnapshotControlCdfPoints = 16;
 
 using detail::codec_error_message;
 using detail::classified_record_encode_error_message;
@@ -230,7 +235,7 @@ struct RepeatedLogState {
 class TcpRelayServer : public std::enable_shared_from_this<TcpRelayServer> {
 public:
     TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime)
-        : io_(io), acceptor_(io), status_acceptor_(io), config_(std::move(config)), tun_runtime_(std::move(tun_runtime)) {}
+        : io_(io), acceptor_(io), status_acceptor_(io), shaper_snapshot_timer_(io), config_(std::move(config)), tun_runtime_(std::move(tun_runtime)) {}
 
     ~TcpRelayServer() { cleanup_status_socket(); }
 
@@ -242,6 +247,9 @@ public:
                 return false;
             }
             client_instance_id_ = generated.value();
+        }
+        if(config_.shaper_profile.has_value() && !shaper_) {
+            shaper_ = std::make_shared<Shaper>(*config_.shaper_profile);
         }
 
         boost::system::error_code error;
@@ -287,8 +295,10 @@ public:
                               << " tun_enabled=" << config_.tun.has_value() << " shaper_enabled=" << config_.shaper_profile.has_value()
                               << " allow_fragmentation=" << config_.allow_fragmentation
                               << " shaper_profile=" << (config_.shaper_profile.has_value() ? config_.shaper_profile->profile_id : std::string{"none"})
-                              << " read_buffer_size=" << config_.read_buffer_size << " max_session_write_queue_bytes=" << config_.max_session_write_queue_bytes;
+                              << " read_buffer_size=" << config_.read_buffer_size << " tcp_no_delay=" << config_.tcp_no_delay
+                              << " max_session_write_queue_bytes=" << config_.max_session_write_queue_bytes;
         accept_next();
+        schedule_shaper_snapshot_timer();
         return true;
     }
 
@@ -579,9 +589,25 @@ private:
             counters_to_json(stats_.tun_tunnel_events, [](std::size_t index) { return enum_name_for_counter_index<TunTunnelEvent>(index); });
 
         json::object shaper;
+        shaper["enabled"] = static_cast<bool>(shaper_);
         shaper["queued"] = stats_.shaper_queued;
         shaper["scheduled"] = stats_.shaper_scheduled;
         shaper["blocked"] = stats_.shaper_blocked;
+        if(shaper_) {
+            const auto snapshot = shaper_->snapshot();
+            const auto& c2s = snapshot.directions[direction_index(Direction::client_to_server)];
+            const auto& s2c = snapshot.directions[direction_index(Direction::server_to_client)];
+            const auto adaptive_ready_c2s = shaper_->adaptive_ready(Direction::client_to_server);
+            const auto adaptive_ready_s2c = shaper_->adaptive_ready(Direction::server_to_client);
+            shaper["adaptive_ready_c2s"] = adaptive_ready_c2s;
+            shaper["adaptive_ready_s2c"] = adaptive_ready_s2c;
+            shaper["observed_records_c2s"] = c2s.observed_records;
+            shaper["observed_records_s2c"] = s2c.observed_records;
+            shaper["snapshot_interval_ms"] = static_cast<std::uint64_t>(std::max<std::int64_t>(0, shaper_->snapshot_interval().count()));
+            if(config_.shaper_profile.has_value()) {
+                shaper["profile"] = detail::shaper_profile_to_json(*config_.shaper_profile, snapshot, adaptive_ready_c2s, adaptive_ready_s2c);
+            }
+        }
 
         json::object root;
         root["role"] = std::string{role_name(config_.role)};
@@ -602,6 +628,7 @@ private:
             return;
         }
         boost::system::error_code ignored_boost;
+        shaper_snapshot_timer_.cancel(ignored_boost);
         status_acceptor_.cancel(ignored_boost);
         status_acceptor_.close(ignored_boost);
         std::error_code ignored_fs;
@@ -757,16 +784,42 @@ private:
         }
     }
 
-    void handle_control_frame(Direction direction, std::span<const std::byte> payload) {
+    [[nodiscard]] auto handle_control_frame(Direction direction, std::span<const std::byte> payload) -> bool {
+        if(is_shaper_snapshot_control(payload)) {
+            if(config_.role != RelayRole::client || direction != Direction::server_to_client) {
+                FPS_LOG_DEBUG("control") << "event=shaper_snapshot_ignored reason=unexpected_direction"
+                                         << " direction=" << direction_name(direction);
+                return true;
+            }
+            auto snapshot = decode_shaper_snapshot_control(payload);
+            if(!snapshot) {
+                FPS_LOG_WARNING("control") << "event=shaper_snapshot_decode_failed error=" << enum_name_or(snapshot.error());
+                return true;
+            }
+            if(!shaper_) {
+                FPS_LOG_DEBUG("control") << "event=shaper_snapshot_ignored reason=shaper_disabled";
+                return true;
+            }
+            auto applied = shaper_->apply_snapshot(snapshot.value());
+            if(!applied) {
+                FPS_LOG_WARNING("control") << "event=shaper_snapshot_apply_failed error=" << enum_name_or(applied.error());
+                return true;
+            }
+            FPS_LOG_INFO("control") << "event=shaper_snapshot_applied profile_id=" << snapshot.value().profile_id;
+            return true;
+        }
+        if(!is_tun_lease_control(payload)) {
+            return false;
+        }
         if(config_.role != RelayRole::client || direction != Direction::server_to_client) {
             FPS_LOG_DEBUG("control") << "event=control_ignored reason=unexpected_direction"
                                      << " direction=" << direction_name(direction);
-            return;
+            return true;
         }
         auto lease = decode_tun_lease_control(payload);
         if(!lease) {
             FPS_LOG_WARNING("control") << "event=tun_lease_decode_failed error=" << tun_lease_error_message(lease.error());
-            return;
+            return true;
         }
 
         tun_lease_ = lease.value();
@@ -776,6 +829,7 @@ private:
         if(config_.tun.has_value() && config_.tun->auto_configure) {
             apply_tun_lease(lease.value());
         }
+        return true;
     }
 
     void apply_tun_lease(const TunLease& lease) {
@@ -791,6 +845,52 @@ private:
         } else {
             FPS_LOG_WARNING("tun") << "event=tun_auto_config_failed name=" << name << " status=" << ::fps::log::as_json(status);
         }
+    }
+
+    void send_shaper_snapshot(std::uint64_t session_id, const std::shared_ptr<TlsTcpCarrierSession>& session) {
+        if(config_.role != RelayRole::server || !shaper_ || !session) {
+            return;
+        }
+        auto payload = encode_shaper_snapshot_control(compact_shaper_snapshot(shaper_->snapshot(), kShaperSnapshotControlCdfPoints));
+        auto queued = session->enqueue_covert_frame(Direction::server_to_client, FrameType::control, payload);
+        if(!queued) {
+            FPS_LOG_WARNING("shaper") << "event=shaper_snapshot_send_failed session_id=" << session_id
+                                      << " error=" << tls_tcp_carrier_enqueue_error_message(queued.error());
+            return;
+        }
+        FPS_LOG_DEBUG("shaper") << "event=shaper_snapshot_sent session_id=" << session_id << " payload_size=" << payload.size();
+    }
+
+    void broadcast_shaper_snapshot() {
+        if(config_.role != RelayRole::server || !shaper_) {
+            return;
+        }
+        for(auto iter = authenticated_sessions_.begin(); iter != authenticated_sessions_.end();) {
+            if(auto session = iter->second.lock()) {
+                send_shaper_snapshot(iter->first, session);
+                ++iter;
+            } else {
+                iter = authenticated_sessions_.erase(iter);
+            }
+        }
+    }
+
+    void schedule_shaper_snapshot_timer() {
+        if(config_.role != RelayRole::server || !shaper_ || shaper_->snapshot_interval().count() <= 0) {
+            return;
+        }
+        shaper_snapshot_timer_.expires_after(shaper_->snapshot_interval());
+        shaper_snapshot_timer_.async_wait([self = shared_from_this()](const boost::system::error_code& error) {
+            if(error == boost::asio::error::operation_aborted) {
+                return;
+            }
+            if(error) {
+                FPS_LOG_WARNING("shaper") << "event=shaper_snapshot_timer_failed error=" << error.message();
+                return;
+            }
+            self->broadcast_shaper_snapshot();
+            self->schedule_shaper_snapshot_timer();
+        });
     }
 
     void accept_next() {
@@ -818,6 +918,10 @@ private:
         }
         ++stats_.sessions_accepted;
 
+        if(!apply_session_tcp_options(*client_socket, session_id, "accepted")) {
+            accept_next();
+            return;
+        }
         connect_target(client_socket, session_id);
         accept_next();
     }
@@ -851,12 +955,37 @@ private:
                                                      << " target=" << endpoint_to_string(self->config_.target) << " error=" << connect_error.message();
                             return;
                         }
+                        if(!self->apply_session_tcp_options(*origin_socket, session_id, "target")) {
+                            self->close_socket(*client_socket);
+                            return;
+                        }
                         FPS_LOG_INFO("relay") << "event=target_connected session_id=" << session_id << " target=" << endpoint_to_string(self->config_.target);
                         self->start_bridge(client_socket, origin_socket, session_id);
                     }
                 );
             }
         );
+    }
+
+    [[nodiscard]] auto apply_session_tcp_options(tcp::socket& socket, std::uint64_t session_id, std::string_view socket_role) -> bool {
+        auto result = set_tcp_no_delay(socket, config_.tcp_no_delay);
+        if(result) {
+            return true;
+        }
+        ++stats_.sessions_closed;
+        record_closed_session(
+            session_id, false, relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "set_tcp_no_delay_failed")
+        );
+        FPS_LOG_WARNING("relay") << "event=set_tcp_no_delay_failed session_id=" << session_id << " socket=" << socket_role
+                                 << " enabled=" << config_.tcp_no_delay << " error=" << result.error();
+        close_socket(socket);
+        return false;
+    }
+
+    static void close_socket(tcp::socket& socket) {
+        boost::system::error_code ignored;
+        socket.cancel(ignored);
+        socket.close(ignored);
     }
 
     void start_bridge(const std::shared_ptr<tcp::socket>& client_socket, const std::shared_ptr<tcp::socket>& origin_socket, std::uint64_t session_id) {
@@ -867,6 +996,9 @@ private:
         auto runtime_state = std::make_shared<BridgeSessionRuntimeState>();
         handlers.on_covert_frame = [weak_self, session_slot, runtime_state, session_id](Direction direction, const DecodedFrame& frame) {
             if(const auto self = weak_self.lock()) {
+                if(frame.frame_type == FrameType::control && self->handle_control_frame(direction, frame.payload)) {
+                    return;
+                }
                 if(!self->tun_tunnel_) {
                     return;
                 }
@@ -881,10 +1013,6 @@ private:
                 }
                 FPS_LOG_TRACE("bridge") << "event=covert_frame session_id=" << session_id << " direction=" << direction_name(direction)
                                         << " frame_type=" << static_cast<unsigned int>(frame.frame_type) << " payload_size=" << frame.payload.size();
-                if(frame.frame_type == FrameType::control) {
-                    self->handle_control_frame(direction, frame.payload);
-                    return;
-                }
                 self->tun_tunnel_->handle_covert_frame(session, direction, frame);
             }
         };
@@ -894,6 +1022,7 @@ private:
                     --self->stats_.sessions_active;
                 }
                 ++self->stats_.sessions_closed;
+                self->authenticated_sessions_.erase(session_id);
                 self->record_closed_session(session_id, stats.zero_rtt_authenticated, stats.close);
                 if(self->tun_tunnel_) {
                     const auto session = session_slot->lock();
@@ -979,6 +1108,8 @@ private:
                     return;
                 }
                 runtime_state->authenticated_client_public_key = client_public_key;
+                self->authenticated_sessions_[session_id] = session;
+                self->send_shaper_snapshot(session_id, session);
                 if(!self->tun_tunnel_ || self->server_requires_client_instance_metadata()) {
                     return;
                 }
@@ -1043,8 +1174,11 @@ private:
         if(config_.zero_rtt.has_value()) {
             TlsTcpCarrierZeroRttOptions options;
             options.controller_config = config_.zero_rtt->controller_config;
+            options.client_upgrade_delay = config_.zero_rtt->client_upgrade_delay;
+            options.client_upgrade_delay_sigma = config_.zero_rtt->client_upgrade_delay_sigma;
             options.max_frame_payload_size = config_.max_frame_payload_size;
             options.max_frame_padding_size = config_.max_frame_padding_size;
+            options.max_envelope_padding_size = shaper_ ? kDefaultTlsRecordPayloadLimit : config_.max_frame_padding_size;
             if(config_.role == RelayRole::client && client_instance_id_.has_value()) {
                 options.client_upgrade_padding = encode_client_instance_control(*client_instance_id_);
             }
@@ -1055,7 +1189,7 @@ private:
             std::move(*client_socket), std::move(*origin_socket), passthrough_pipelines(), std::move(handlers),
             {.read_buffer_size = config_.read_buffer_size,
              .max_write_queue_bytes = config_.max_session_write_queue_bytes,
-             .shaper_profile = config_.shaper_profile,
+             .shaper = shaper_,
              .zero_rtt = std::move(zero_rtt_options)}
         );
         *session_slot = session;
@@ -1066,8 +1200,10 @@ private:
     boost::asio::io_context& io_;
     tcp::acceptor acceptor_;
     local_stream::acceptor status_acceptor_;
+    boost::asio::steady_timer shaper_snapshot_timer_;
     TcpRelayConfig config_;
     std::shared_ptr<TunRuntime> tun_runtime_;
+    std::shared_ptr<Shaper> shaper_;
     std::shared_ptr<TunTunnelAdapter> tun_tunnel_;
     std::shared_ptr<TunPacketPump> tun_pump_;
     std::unique_ptr<TunLeaseAllocator> lease_allocator_;
@@ -1078,6 +1214,7 @@ private:
     RelayAuthStats auth_stats_;
     RelayClassifiedRecordStats classified_record_stats_;
     std::deque<ClosedSessionSnapshot> recent_closed_sessions_;
+    std::unordered_map<std::uint64_t, std::weak_ptr<TlsTcpCarrierSession>> authenticated_sessions_;
     std::array<RepeatedLogState, kTunTunnelErrorCount> tun_session_error_log_limits_{};
     std::array<RepeatedLogState, kTlsParseErrorCount> tls_parse_error_log_limits_{};
     std::array<RepeatedLogState, kTunPacketPumpErrorCount> tun_write_error_log_limits_{};

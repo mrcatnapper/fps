@@ -10,6 +10,7 @@
 namespace {
 
 using fps::test::bytes;
+using fps::test::parse_record;
 using fps::test::public_key;
 using fps::test::tls_app_record;
 
@@ -128,6 +129,57 @@ BOOST_AUTO_TEST_CASE(pipeline_reports_tls_record_encode_error) {
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error().stage == fps::FpsClassifiedRecordPipelineEncodeStage::tls_record);
     BOOST_CHECK(encoded.error().tls_record_error == fps::TlsRecordLayerError::payload_too_large);
+}
+
+BOOST_AUTO_TEST_CASE(pipeline_encodes_exact_target_tls_record_size) {
+    fps::FpsClassifiedRecordPipeline sender{fps::FpsClassifiedRecordCodec{config(fps::Direction::client_to_server)}};
+    fps::FpsClassifiedRecordPipeline receiver{fps::FpsClassifiedRecordCodec{config(fps::Direction::server_to_client)}};
+    constexpr std::size_t target_size = 80U;
+
+    auto encoded = sender.encode_tls_record(
+        fps::FpsEnvelopeContent{
+            .inner_tls_bytes = {},
+            .frames = {fps::FpsEnvelopeFrame{.frame_type = fps::FrameType::ping, .flags = 0, .payload = bytes({0xaa}), .padding_size = 0}},
+            .padding_size = 0,
+        },
+        binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = target_size}
+    );
+
+    BOOST_REQUIRE(encoded);
+    BOOST_TEST(encoded.value().size() == target_size);
+    const auto record = parse_record(encoded.value());
+    BOOST_TEST(record.length + 5U == target_size);
+    auto decoded = receiver.process_inbound_tls(
+        fps::Direction::client_to_server, encoded.value(), [](fps::Direction direction) { return binding(direction); },
+        [](fps::Direction, const fps::TlsRecord&) {}
+    );
+    BOOST_TEST(!decoded.close_required);
+    BOOST_REQUIRE_EQUAL(decoded.frames.size(), 1U);
+    BOOST_CHECK(decoded.frames[0].frame_type == fps::FrameType::ping);
+    BOOST_TEST(decoded.frames[0].payload.size() == 1U);
+    BOOST_TEST(decoded.decoded_fps_records == 1U);
+}
+
+BOOST_AUTO_TEST_CASE(codec_rejects_too_small_target_without_advancing_sequence) {
+    fps::FpsClassifiedRecordCodec sender{config(fps::Direction::client_to_server)};
+
+    auto encoded =
+        sender.encode(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 54U});
+
+    BOOST_REQUIRE(!encoded);
+    BOOST_CHECK(encoded.error() == fps::FpsClassifiedRecordError::target_record_too_small);
+    BOOST_TEST(sender.next_send_sequence() == 0U);
+}
+
+BOOST_AUTO_TEST_CASE(codec_rejects_target_requiring_too_much_padding_without_advancing_sequence) {
+    fps::FpsClassifiedRecordCodec sender{config(fps::Direction::client_to_server)};
+
+    auto encoded =
+        sender.encode(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 80U});
+
+    BOOST_REQUIRE(!encoded);
+    BOOST_CHECK(encoded.error() == fps::FpsClassifiedRecordError::oversized_padding);
+    BOOST_TEST(sender.next_send_sequence() == 0U);
 }
 
 BOOST_AUTO_TEST_CASE(pipeline_exposes_pending_tls_bytes) {

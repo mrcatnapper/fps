@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::size_t kHintSize = kFpsHintSize;
 constexpr std::size_t kHintsSize = 2U * kHintSize;
+constexpr std::size_t kTlsHeaderSize = 5U;
 constexpr std::size_t kPlainHeaderSize = sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 constexpr std::size_t kFrameHeaderSize = 1U + 1U + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kMinimumWireSize = kHintsSize + kPlainHeaderSize + kAeadTagSize;
@@ -154,7 +155,9 @@ auto FpsClassifiedRecordPipelineEncodeError::tls_record(TlsRecordLayerError erro
 FpsClassifiedRecordCodec::FpsClassifiedRecordCodec(FpsClassifiedRecordConfig config)
     : config_(std::move(config)), next_send_sequence_(config_.initial_send_sequence), next_receive_sequence_(config_.initial_receive_sequence) {}
 
-auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordResult<ByteVector> {
+auto FpsClassifiedRecordCodec::encode(
+    const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options
+) -> FpsClassifiedRecordResult<ByteVector> {
     if(!validate_config() || binding.profile_id != config_.profile_id || binding.direction != config_.send_direction) {
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::invalid_config);
     }
@@ -171,7 +174,8 @@ auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const Z
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::oversized_padding);
     }
 
-    std::size_t plain_size = kPlainHeaderSize + content.padding_size;
+    auto record_padding_size = content.padding_size;
+    std::size_t plain_size = kPlainHeaderSize + record_padding_size;
     for(const auto& frame : content.frames) {
         if(frame.payload.size() > config_.max_frame_payload_size || !fits_u32(frame.payload.size())) {
             return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::oversized_payload);
@@ -188,6 +192,30 @@ auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const Z
         plain_size = *with_padding;
     }
 
+    auto visible_payload_size = checked_add(kHintsSize, plain_size);
+    visible_payload_size = visible_payload_size ? checked_add(*visible_payload_size, kAeadTagSize) : std::nullopt;
+    if(!visible_payload_size) {
+        return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::oversized_payload);
+    }
+
+    if(options.target_tls_record_size.has_value()) {
+        if(*options.target_tls_record_size < kTlsHeaderSize) {
+            return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::target_record_too_small);
+        }
+        const auto target_payload_size = *options.target_tls_record_size - kTlsHeaderSize;
+        if(target_payload_size < *visible_payload_size) {
+            return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::target_record_too_small);
+        }
+        const auto extra_padding = target_payload_size - *visible_payload_size;
+        const auto total_padding = checked_add(record_padding_size, extra_padding);
+        if(!total_padding || *total_padding > config_.max_record_padding_size || !fits_u32(*total_padding)) {
+            return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::oversized_padding);
+        }
+        record_padding_size = *total_padding;
+        plain_size += extra_padding;
+        visible_payload_size = target_payload_size;
+    }
+
     const auto sequence = next_send_sequence_;
     auto server_hint = make_server_hint(binding, config_.server_public_key, sequence);
     auto client_hint = make_client_hint(binding, config_.client_public_key, config_.server_public_key, sequence);
@@ -195,7 +223,6 @@ auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const Z
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::encrypt_failed);
     }
     const auto hints = make_hints(server_hint.value(), client_hint.value());
-    const auto visible_payload_size = kHintsSize + plain_size + kAeadTagSize;
 
     ByteVector plain;
     plain.reserve(plain_size);
@@ -203,7 +230,7 @@ auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const Z
     append_be(plain, static_cast<std::uint16_t>(0U));
     append_be(plain, sequence);
     append_be(plain, static_cast<std::uint16_t>(content.frames.size()));
-    append_be(plain, static_cast<std::uint32_t>(content.padding_size));
+    append_be(plain, static_cast<std::uint32_t>(record_padding_size));
     for(const auto& frame : content.frames) {
         plain.push_back(static_cast<std::byte>(frame.frame_type));
         plain.push_back(static_cast<std::byte>(frame.flags));
@@ -212,18 +239,18 @@ auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const Z
         append_bytes(plain, frame.payload);
         plain.insert(plain.end(), frame.padding_size, std::byte{0});
     }
-    plain.insert(plain.end(), content.padding_size, std::byte{0});
+    plain.insert(plain.end(), record_padding_size, std::byte{0});
 
     auto encrypted = aead_chacha20_poly1305_encrypt(
         send_material().key, make_nonce(send_material(), sequence),
-        make_aad(binding, config_.client_public_key, config_.server_public_key, sequence, hints, visible_payload_size), plain
+        make_aad(binding, config_.client_public_key, config_.server_public_key, sequence, hints, *visible_payload_size), plain
     );
     if(!encrypted) {
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::encrypt_failed);
     }
 
     ByteVector wire;
-    wire.reserve(visible_payload_size);
+    wire.reserve(*visible_payload_size);
     append_bytes(wire, hints);
     append_bytes(wire, encrypted.value().ciphertext);
     wire.insert(wire.end(), encrypted.value().tag.begin(), encrypted.value().tag.end());
@@ -363,9 +390,15 @@ FpsClassifiedRecordPipeline::FpsClassifiedRecordPipeline(FpsClassifiedRecordCode
 FpsClassifiedRecordPipeline::FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec, TlsRecordParser parser, TlsRecordLayerOptions record_options)
     : codec_(std::move(codec)), parser_(std::move(parser)), record_options_(record_options) {}
 
-auto FpsClassifiedRecordPipeline::encode_tls_record(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding)
+auto FpsClassifiedRecordPipeline::encode_tls_record(
+    const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options
+)
     -> FpsClassifiedRecordPipelineEncodeResult {
-    auto classified = codec_.encode(content, binding);
+    if(options.target_tls_record_size.has_value() && *options.target_tls_record_size >= kTlsHeaderSize &&
+       *options.target_tls_record_size - kTlsHeaderSize > record_options_.max_payload_size) {
+        return FpsClassifiedRecordPipelineEncodeResult::failure(FpsClassifiedRecordPipelineEncodeError::tls_record(TlsRecordLayerError::payload_too_large));
+    }
+    auto classified = codec_.encode(content, binding, options);
     if(!classified) {
         return FpsClassifiedRecordPipelineEncodeResult::failure(FpsClassifiedRecordPipelineEncodeError::classified(classified.error()));
     }

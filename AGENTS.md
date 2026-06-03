@@ -131,6 +131,10 @@ Scope: the whole repository from the directory that contains this file.
   reason in the user response and in `dev/WORKLOG.md`.
 - Integration tests that require TUN/root/sudo must be clearly separated from
   ordinary unit tests.
+- For remote `fpshop` soak runs, build the Alpine runtime image locally and
+  transfer it with `docker save | ssh ... docker load`. Do not build Docker
+  images on weak remote soak hosts unless the user explicitly asks for a remote
+  build experiment.
 
 ## Sudo And Environment
 

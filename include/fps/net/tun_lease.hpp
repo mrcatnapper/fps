@@ -66,8 +66,10 @@ struct TunLeasePruneResult {
 
 [[nodiscard]] auto encode_tun_lease_control(const TunLease& lease) -> ByteVector;
 [[nodiscard]] auto decode_tun_lease_control(std::span<const std::byte> payload) -> TunLeaseResult<TunLease>;
+[[nodiscard]] auto is_tun_lease_control(std::span<const std::byte> payload) noexcept -> bool;
 [[nodiscard]] auto encode_client_instance_control(const ClientInstanceId& client_instance_id) -> ByteVector;
 [[nodiscard]] auto decode_client_instance_control(std::span<const std::byte> payload) -> TunLeaseResult<ClientInstanceMetadata>;
+[[nodiscard]] auto is_client_instance_control(std::span<const std::byte> payload) noexcept -> bool;
 
 [[nodiscard]] auto ipv4_packet_source(std::span<const std::byte> packet) -> std::optional<std::uint32_t>;
 [[nodiscard]] auto ipv4_packet_destination(std::span<const std::byte> packet) -> std::optional<std::uint32_t>;

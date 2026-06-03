@@ -265,6 +265,15 @@ on a separate Linux host and clients on the local host. The server side should
 publish the FPS carrier listener on an externally reachable TLS port such as
 `:443`; keep carrier origin and TUN setup inside containers.
 
+On weak remote hosts, build the Alpine runtime image locally and load it
+remotely instead of compiling there:
+
+```sh
+docker build -f Dockerfile.alpine -t fps:soak-$(git rev-parse --short HEAD) .
+docker save fps:soak-$(git rev-parse --short HEAD) | \
+  ssh fps.example.net docker load
+```
+
 The current beta-candidate shape is:
 
 - one remote `fps_server` plus self-hosted `fps_carrier origin`;
@@ -292,7 +301,8 @@ notes with the release-candidate record.
 - `wss`: WebSocket-over-TLS carrier generation and relay paths.
 - `zero_rtt`: transcript-bound Zero-RTT late upgrade and classified-record path.
 - `multi_carrier`: more than one authenticated carrier session.
-- `shaper`: shaper-gated injected writes.
+- `shaper`: shaper-gated injected writes, adaptive TLS-record CDF training and
+  snapshot bootstrap.
 - `fragmentation`: TUN packet splitting/reassembly.
 - `pcap`: opt-in tcpdump/libpcap wire-shape regression.
 - `tun`: real Linux TUN/netns checks.
@@ -311,13 +321,17 @@ Unit tests cover:
   boundary tracking.
 - Classified-record and internal frame-bundle codecs, covert frames, padding,
   implicit sequence, tamper rejection and no-plaintext-metadata smoke.
-- Shaper deterministic plans, CDF validation, ratio budget, burst limit,
-  backpressure clear/block, direction isolation and profile exhaustion.
+- Shaper deterministic plans, CDF validation, ratio budget, proposal/commit
+  scheduling, target TLS record size bounds, burst limit, backpressure
+  clear/block, direction isolation, profile exhaustion, adaptive warmup,
+  observed record-size/delay sampling and encrypted snapshot encode/decode.
 - `TlsTcpCarrierSession` passthrough, Zero-RTT client-auth/server-accept/classify,
   client late upgrade, race-safe server-accept wait with cover-record fallback,
   fragmented server-accept wait, post-accept carrier passthrough plus classified
-  record insertion and unauthenticated enqueue
-  rejection.
+  record insertion, size-aware shaped classified records, shared shaper
+  observation of coalesced TCP reads as complete TLS records, shaper queue
+  preflight, shaper-aware opaque datagram fragmentation and unauthenticated
+  enqueue rejection.
 - `CovertDatagramTransport`, `TunTunnelAdapter` and `TunPacketPump` carrier
   registration/removal, generic datagram round-robin and targeted writes,
   lease-aware destination routing, strict source-IP enforcement,
@@ -329,19 +343,20 @@ Unit tests cover:
   encode/decode.
 - Config/CLI/logging JSON parsing, required network fields, Zero-RTT key and
   allowlist validation, TUN validation, shaper config, log-level override and
-  helper commands.
+  helper commands, including compact shaper CDF profile export.
 
 Local integration tests cover:
 
 - CLI stdout/stderr behavior, UUID generation, server keypair generation,
   generated client profiles, safe profile `--output`, `fps://` URI roundtrip,
   URI write-to-file import, unknown option rejection, `--check-config`,
-  lease-management option presence and log-level override.
+  lease-management option presence, shaper profile write-to-file export and
+  log-level override.
 - Local `ops.status_socket` smoke: daemon publishes a UNIX status socket,
   `--status` returns JSON counters plus `sessions.last_closed` /
   `sessions.recent_closed`, root `auth` and `classified_record` counter groups,
-  socket permissions are `0600`, and status output does not expose UUIDs or key
-  material.
+  a compact non-secret `shaper.profile` snapshot, socket permissions are `0600`,
+  and status output does not expose UUIDs or key material.
 - Linux route helper dry plans for split tunnel, full tunnel policy routing,
   carrier bypass and cleanup.
 - Reusable debug carrier direct roundtrip, including WSS echo and ordinary HTTPS
@@ -360,6 +375,8 @@ Local integration tests cover:
 - WSS passthrough, WSS Zero-RTT using reusable `fps_carrier`, and a Zero-RTT
   HTTPS browser-style request through `fps_client -> fps_server -> fps_carrier`.
 - Optional pcap TLS shape check when `-DFPS_ENABLE_PCAP_TESTS=ON`.
+- Local synthetic pcap shaper-profile generation check; it skips cleanly when
+  libpcap is unavailable.
 
 Opt-in real TUN integration covers:
 
@@ -416,6 +433,24 @@ python3 tools/is_pcap_looks_like_tls.py /tmp/fps-wire.pcap \
 The check validates TLS record framing and content types only. Timing and size
 distribution analysis remains out of scope for the regression check.
 
+Offline shaper profile generation from a carrier pcap:
+
+```sh
+python3 tools/pcap_to_shaper_profile.py /tmp/carrier-baseline.pcap \
+  --port 443 \
+  --profile-id example-origin-v1 \
+  --bins 50 \
+  --output profile.json
+```
+
+The profile tool uses the same libpcap/TCP/TLS parser as the TLS-shape checker.
+It infers client/server direction from the TCP SYN/SYN-ACK handshake when the
+capture includes it; if the capture starts later, `--port` is used as the
+service-port hint. The generated JSON can be copied into `shaper` or loaded via
+`shaper.profile_file`. Capture carrier-only baseline traffic, or restrict the
+pcap to a known pre-upgrade time window with `--start-epoch`/`--end-epoch`; a
+post-upgrade capture describes the combined visible FPS link.
+
 For exploratory traffic-shape analysis, run the Docker/TUN capture experiment:
 
 ```sh
@@ -447,6 +482,15 @@ second. Use the Docker bridge capture path for TCP reassembly; capturing on
 Linux `any` can duplicate or reorder Docker bridge packets enough to confuse
 TLS record reconstruction.
 
+Docker/VM endpoint captures can show GRO/GSO/TSO or hypervisor-aggregated packet
+sizes that are larger than physical Ethernet frames. Use these artifacts for TLS
+record syntax and coarse size/timing regressions. For physical wire-shape
+claims, capture from an external tap or disable relevant offloads for the
+measurement host and document that change.
+Set `security.zero_rtt.client_upgrade_delay_sigma_ms=0` in measurement configs
+when the exact upgrade split time matters; the beta default intentionally
+randomizes the client-auth delay around `client_upgrade_delay_ms`.
+
 For more readable research plots, use an optional local Python venv. These
 packages are not FPS runtime or build dependencies:
 
@@ -475,7 +519,9 @@ example run, plots and conclusions.
   they need a local Docker daemon, `/dev/net/tun` and `NET_ADMIN`.
 - There is no long-running soak/stress test for sustained TUN backpressure.
 - Fuzzing is bounded smoke, not a long corpus-minimization campaign.
-- Shaper does not yet assert full visible TLS record timing/size distributions.
+- Shaper unit/session tests assert exact inserted classified TLS record wire
+  sizes and adaptive per-TLS-record model behavior, but not yet full pcap-level
+  timing/size distribution mimicry.
 - Production UUID/key rotation, hardened proxy overlay policy,
   lease-management UX beyond list/revoke/prune and realistic carrier traffic
   modeling workflows remain future work.

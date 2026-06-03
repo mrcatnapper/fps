@@ -5,6 +5,7 @@
 #include <boost/asio/write.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -13,6 +14,8 @@
 #include <vector>
 
 #include "fps/core/wire.hpp"
+#include "fps/net/client_upgrade_delay.hpp"
+#include "fps/net/datagram_fragment.hpp"
 
 namespace fps::net {
 
@@ -23,7 +26,6 @@ using detail::close_info;
 using detail::close_info_from_classified_result;
 using detail::close_info_from_enqueue_error;
 using detail::covert_tls_record_size;
-using detail::frame_payload_size_sum;
 using detail::is_datagram_frame;
 using detail::tls_tcp_carrier_error_from_classified_encode;
 
@@ -36,6 +38,62 @@ namespace {
         return std::nullopt;
     }
     return std::move(parsed.records.front());
+}
+
+struct ShapeSizeBounds {
+    std::size_t min_tls_record_size = 0;
+    std::size_t max_tls_record_size = 0;
+};
+
+[[nodiscard]] auto delay_us(std::chrono::microseconds delay) noexcept -> std::uint64_t {
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(0, delay.count()));
+}
+
+[[nodiscard]] auto classified_shape_size_bounds(
+    std::span<const TlsTcpCarrierOwnedCovertFrame> frames, const std::optional<TlsTcpCarrierZeroRttOptions>& options
+) -> std::optional<ShapeSizeBounds> {
+    const auto min_size = classified_tls_record_size(frames, 0);
+    if(!min_size) {
+        return std::nullopt;
+    }
+    const auto max_padding = options.has_value() ? options->max_envelope_padding_size : 0U;
+    const auto max_size = classified_tls_record_size(frames, max_padding);
+    if(!max_size) {
+        return std::nullopt;
+    }
+    return ShapeSizeBounds{.min_tls_record_size = *min_size, .max_tls_record_size = *max_size};
+}
+
+[[nodiscard]] auto classified_record_size_for_single_frame(
+    FrameType frame_type, std::size_t payload_size, std::size_t frame_padding_size = 0, std::size_t record_padding_size = 0
+) -> std::optional<std::size_t> {
+    ByteVector payload(payload_size);
+    const TlsTcpCarrierOwnedCovertFrame frame{
+        .frame_type = frame_type,
+        .payload = std::move(payload),
+        .padding_size = frame_padding_size,
+        .flags = 0,
+    };
+    return classified_tls_record_size(std::span<const TlsTcpCarrierOwnedCovertFrame>{&frame, 1}, record_padding_size);
+}
+
+[[nodiscard]] auto classified_fragment_shape_size_bounds(
+    std::size_t max_fragment_payload_size, const std::optional<TlsTcpCarrierZeroRttOptions>& options
+) -> std::optional<ShapeSizeBounds> {
+    const auto min_payload_size = kDatagramFragmentHeaderSize + 1U;
+    if(max_fragment_payload_size < min_payload_size) {
+        return std::nullopt;
+    }
+    const auto min_size = classified_record_size_for_single_frame(FrameType::opaque_datagram_fragment, min_payload_size);
+    if(!min_size) {
+        return std::nullopt;
+    }
+    const auto max_padding = options.has_value() ? options->max_envelope_padding_size : 0U;
+    const auto max_size = classified_record_size_for_single_frame(FrameType::opaque_datagram_fragment, max_fragment_payload_size, 0, max_padding);
+    if(!max_size) {
+        return std::nullopt;
+    }
+    return ShapeSizeBounds{.min_tls_record_size = *min_size, .max_tls_record_size = *max_size};
 }
 
 } // namespace
@@ -108,6 +166,7 @@ auto TlsTcpCarrierSession::enqueue_covert_frames(Direction direction, std::span<
                     .write = WriteItem{.bytes = std::move(bytes)},
                     .payload_size = frame.payload.size(),
                     .classified_frames = {},
+                    .send_plan = std::nullopt,
                 }
             );
         } else {
@@ -193,10 +252,10 @@ void TlsTcpCarrierSession::handle_read(Direction direction, const boost::system:
     }
 
     ByteVector forward_bytes;
-    std::size_t cover_bytes = 0;
+    std::vector<std::size_t> cover_record_sizes;
     bool pause_read = false;
     const auto append_output = [&](RecordProcessOutput output) {
-        cover_bytes += output.cover_bytes;
+        cover_record_sizes.insert(cover_record_sizes.end(), output.cover_record_sizes.begin(), output.cover_record_sizes.end());
         pause_read = pause_read || output.pause_read;
         append_bytes(forward_bytes, output.bytes);
     };
@@ -220,7 +279,9 @@ void TlsTcpCarrierSession::handle_read(Direction direction, const boost::system:
         return;
     }
     enqueue_write(direction, WriteItem{.bytes = std::move(forward_bytes), .resume_read_after_write = !pause_read});
-    observe_cover_bytes(direction, cover_bytes);
+    for(const auto size : cover_record_sizes) {
+        observe_cover_record(direction, size);
+    }
 }
 
 auto TlsTcpCarrierSession::process_tls_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -233,9 +294,12 @@ auto TlsTcpCarrierSession::process_tls_record(Direction direction, const TlsReco
 auto TlsTcpCarrierSession::process_cover_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
     auto result = inbound_pipeline(direction).process_inbound_record(record);
     auto forward_bytes = std::move(result.forward_bytes);
-    const auto cover_bytes = forward_bytes.size();
     emit_process_result(direction, result);
-    return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
+    const auto forwarded = !forward_bytes.empty();
+    return RecordProcessOutput{
+        .bytes = std::move(forward_bytes),
+        .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+    };
 }
 
 auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -257,7 +321,7 @@ auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const Tl
 
         auto result = zero_rtt_controller_->process_inbound_record(direction, record);
         auto forward_bytes = std::move(result.forward_bytes);
-        const auto cover_bytes = forward_bytes.size();
+        const auto forwarded = !forward_bytes.empty();
         if(result.client_auth_accepted && !zero_rtt_authenticated_) {
             if(!result.client_public_key.has_value()) {
                 stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_client_public_key"));
@@ -283,7 +347,10 @@ auto TlsTcpCarrierSession::process_zero_rtt_record(Direction direction, const Tl
             }
         }
         emit_zero_rtt_process_result(direction, result);
-        return RecordProcessOutput{.bytes = std::move(forward_bytes), .cover_bytes = cover_bytes};
+        return RecordProcessOutput{
+            .bytes = std::move(forward_bytes),
+            .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+        };
     }
 
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction) {
@@ -306,7 +373,7 @@ auto TlsTcpCarrierSession::process_preconfirmed_client_record(Direction directio
 
     auto result = zero_rtt_controller_->process_inbound_record(direction, record);
     auto forward_tls = std::move(result.forward_bytes);
-    const auto cover_bytes = forward_tls.size();
+    const auto forwarded = !forward_tls.empty();
 
     if(!result.record_errors.empty()) {
         emit_zero_rtt_process_result(direction, result);
@@ -337,7 +404,10 @@ auto TlsTcpCarrierSession::process_preconfirmed_client_record(Direction directio
     }
 
     emit_zero_rtt_process_result(direction, result);
-    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+    return RecordProcessOutput{
+        .bytes = std::move(forward_tls),
+        .cover_record_sizes = forwarded ? std::vector<std::size_t>{record.wire.size()} : std::vector<std::size_t>{},
+    };
 }
 
 auto TlsTcpCarrierSession::process_authenticated_record(Direction direction, const TlsRecord& record) -> RecordProcessOutput {
@@ -345,21 +415,26 @@ auto TlsTcpCarrierSession::process_authenticated_record(Direction direction, con
         stop_with(close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline"));
         return {};
     }
-    auto result = inbound_classified_pipeline(direction).process_inbound_record(
+    std::vector<std::size_t> cover_record_sizes;
+    auto observation_result = inbound_classified_pipeline(direction).process_inbound_record(
         direction, record, [this](Direction record_direction) { return zero_rtt_controller_->current_transcript_snapshot(record_direction); },
-        [this](Direction record_direction, const TlsRecord& observed_record) {
+        [this, &cover_record_sizes](Direction record_direction, const TlsRecord& observed_record) {
             auto observed = zero_rtt_controller_->observe_tls_record(record_direction, observed_record);
             emit_zero_rtt_observe_result(record_direction, observed);
+            cover_record_sizes.push_back(observed_record.wire.size());
         }
     );
-    auto forward_tls = std::move(result.forward_tls_bytes);
-    const auto cover_bytes = forward_tls.size();
-    emit_classified_process_result(direction, result);
-    if(result.close_required || !result.parse_errors.empty() || !result.record_errors.empty() || !result.classified_errors.empty()) {
-        stop_with(close_info_from_classified_result(direction, result));
+    auto forward_tls = std::move(observation_result.forward_tls_bytes);
+    emit_classified_process_result(direction, observation_result);
+    if(observation_result.close_required || !observation_result.parse_errors.empty() || !observation_result.record_errors.empty() ||
+       !observation_result.classified_errors.empty()) {
+        stop_with(close_info_from_classified_result(direction, observation_result));
         return {};
     }
-    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_bytes = cover_bytes};
+    if(forward_tls.empty()) {
+        cover_record_sizes.clear();
+    }
+    return RecordProcessOutput{.bytes = std::move(forward_tls), .cover_record_sizes = std::move(cover_record_sizes)};
 }
 
 auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction direction) -> RecordProcessOutput {
@@ -370,6 +445,15 @@ auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction dire
     if(role != ZeroRttUpgradeRole::client || direction != config_.zero_rtt->controller_config.upgrade_direction || zero_rtt_client_upgrade_sent_ ||
        zero_rtt_authenticated_ || !config_.zero_rtt->auto_start_client || tls_record_parser(direction).pending_bytes() != 0U ||
        !zero_rtt_controller_->has_channel_binding()) {
+        return {};
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if(!zero_rtt_client_channel_ready_at_.has_value()) {
+        zero_rtt_client_channel_ready_at_ = now;
+        zero_rtt_effective_client_upgrade_delay_ =
+            sample_client_upgrade_delay(config_.zero_rtt->client_upgrade_delay, config_.zero_rtt->client_upgrade_delay_sigma);
+    }
+    if(now - *zero_rtt_client_channel_ready_at_ < zero_rtt_effective_client_upgrade_delay_.value_or(config_.zero_rtt->client_upgrade_delay)) {
         return {};
     }
 
@@ -387,7 +471,7 @@ auto TlsTcpCarrierSession::maybe_build_client_upgrade_after_batch(Direction dire
         }
         auto observed = zero_rtt_controller_->observe_tls_record(direction, *parsed);
         emit_zero_rtt_observe_result(direction, observed);
-        return RecordProcessOutput{.bytes = std::move(upgrade_record), .pause_read = true};
+        return RecordProcessOutput{.bytes = std::move(upgrade_record), .cover_record_sizes = {}, .pause_read = true};
     }
 
     if(handlers_.on_zero_rtt_build_error) {
@@ -476,6 +560,15 @@ auto TlsTcpCarrierSession::can_enqueue_write(Direction direction, std::size_t by
     return bytes <= config_.max_write_queue_bytes && pending_write_bytes(direction) <= config_.max_write_queue_bytes - bytes;
 }
 
+auto TlsTcpCarrierSession::can_replace_queued_write(Direction direction, std::size_t current_bytes, std::size_t replacement_bytes) const noexcept -> bool {
+    if(replacement_bytes > config_.max_write_queue_bytes) {
+        return false;
+    }
+    const auto pending = pending_write_bytes(direction);
+    const auto pending_without_current = pending > current_bytes ? pending - current_bytes : 0U;
+    return pending_without_current <= config_.max_write_queue_bytes - replacement_bytes;
+}
+
 auto TlsTcpCarrierSession::enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames)
     -> TlsTcpCarrierEnqueueResult {
     if(!classified_pipelines_) {
@@ -484,6 +577,75 @@ auto TlsTcpCarrierSession::enqueue_zero_rtt_classified_frames(Direction directio
         );
         return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::session_closed);
     }
+    const auto control_only =
+        std::all_of(frames.begin(), frames.end(), [](const TlsTcpCarrierCovertFrame& frame) { return frame.frame_type == FrameType::control; });
+
+    if(shaper_enabled() && !control_only) {
+        std::vector<ShapedWriteItem> shaped_writes;
+        shaped_writes.reserve(frames.size());
+        std::size_t total_estimated_size = 0;
+        for(const auto& frame : frames) {
+            TlsTcpCarrierOwnedCovertFrame owned_frame{
+                .frame_type = frame.frame_type,
+                .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
+                .padding_size = frame.padding_size,
+                .flags = frame.flags,
+            };
+            const auto estimated_size = classified_tls_record_size(std::span<const TlsTcpCarrierOwnedCovertFrame>{&owned_frame, 1});
+            if(!estimated_size) {
+                return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
+            }
+            const auto next_total = checked_add(total_estimated_size, *estimated_size);
+            if(!next_total) {
+                return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
+            }
+            total_estimated_size = *next_total;
+            ShapedWriteItem item{
+                .write = WriteItem{.bytes = {}, .accounted_bytes = *estimated_size},
+                .payload_size = frame.payload.size(),
+                .classified_frames = {},
+                .send_plan = std::nullopt,
+            };
+            item.classified_frames.push_back(std::move(owned_frame));
+            shaped_writes.push_back(std::move(item));
+        }
+        if(!can_enqueue_write(direction, total_estimated_size)) {
+            set_pending_close_info(close_info(TlsTcpCarrierCloseReason::write_queue_full, direction, TlsTcpCarrierCloseComponent::queue, "write_queue_full"));
+            return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
+        }
+        for(std::size_t i = 0; i < frames.size(); ++i) {
+            shaper_->enqueue_covert_payload(
+                CovertPayloadView{
+                    .direction = direction,
+                    .bytes = frames[i].payload,
+                    .priority = Priority::normal,
+                }
+            );
+            const auto bytes = shaped_writes[i].write.accounted_bytes == 0U ? shaped_writes[i].write.bytes.size() : shaped_writes[i].write.accounted_bytes;
+            pending_write_bytes(direction) += bytes;
+            shaped_write_queue(direction).push_back(std::move(shaped_writes[i]));
+            emit_shaper_event(
+                TlsTcpCarrierShaperEvent{
+                    .direction = direction,
+                    .decision = TlsTcpCarrierShaperDecision::queued,
+                    .payload_size = shaped_write_queue(direction).back().payload_size,
+                    .queue_bytes = shaped_queue_bytes(direction),
+                }
+            );
+        }
+        maybe_schedule_shaped_write(direction);
+        auto& stats = stats_for(direction);
+        for(const auto& frame : frames) {
+            add_stat(stats.covert_frames_out, 1U);
+            add_stat(stats.covert_frame_bytes_out, frame.payload.size());
+            if(is_datagram_frame(frame.frame_type)) {
+                add_stat(stats.datagram_frames_out, 1U);
+                add_stat(stats.datagram_frame_bytes_out, frame.payload.size());
+            }
+        }
+        return TlsTcpCarrierEnqueueResult::success(total_estimated_size);
+    }
+
     const auto estimated_size = classified_tls_record_size(frames);
     if(!estimated_size) {
         return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
@@ -493,39 +655,7 @@ auto TlsTcpCarrierSession::enqueue_zero_rtt_classified_frames(Direction directio
         return TlsTcpCarrierEnqueueResult::failure(TlsTcpCarrierEnqueueError::write_queue_full);
     }
 
-    const auto control_only =
-        std::all_of(frames.begin(), frames.end(), [](const TlsTcpCarrierCovertFrame& frame) { return frame.frame_type == FrameType::control; });
-    if(shaper_enabled() && !control_only) {
-        const auto payload_size = frame_payload_size_sum(frames);
-        std::vector<TlsTcpCarrierOwnedCovertFrame> owned_frames;
-        owned_frames.reserve(frames.size());
-        for(const auto& frame : frames) {
-            owned_frames.push_back(
-                TlsTcpCarrierOwnedCovertFrame{
-                    .frame_type = frame.frame_type,
-                    .payload = ByteVector{frame.payload.begin(), frame.payload.end()},
-                    .padding_size = frame.padding_size,
-                    .flags = frame.flags,
-                }
-            );
-        }
-        ByteVector budget_bytes(payload_size);
-        shaper_->enqueue_covert_payload(
-            CovertPayloadView{
-                .direction = direction,
-                .bytes = budget_bytes,
-                .priority = Priority::normal,
-            }
-        );
-        enqueue_shaped_write(
-            direction,
-            ShapedWriteItem{
-                .write = WriteItem{.bytes = {}, .accounted_bytes = *estimated_size},
-                .payload_size = payload_size,
-                .classified_frames = std::move(owned_frames),
-            }
-        );
-    } else {
+    {
         std::vector<TlsTcpCarrierOwnedCovertFrame> owned_frames;
         owned_frames.reserve(frames.size());
         for(const auto& frame : frames) {
@@ -558,6 +688,12 @@ auto TlsTcpCarrierSession::enqueue_zero_rtt_classified_frames(Direction directio
 
 auto TlsTcpCarrierSession::encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames)
     -> Result<WriteItem, TlsTcpCarrierEnqueueError> {
+    return encode_classified_write(direction, frames, 0);
+}
+
+auto TlsTcpCarrierSession::encode_classified_write(
+    Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t target_tls_record_size
+) -> Result<WriteItem, TlsTcpCarrierEnqueueError> {
     if(!classified_pipelines_ || !zero_rtt_controller_) {
         set_pending_close_info(
             close_info(TlsTcpCarrierCloseReason::internal_error, direction, TlsTcpCarrierCloseComponent::zero_rtt, "missing_classified_pipeline")
@@ -582,13 +718,17 @@ auto TlsTcpCarrierSession::encode_classified_write(Direction direction, std::spa
             }
         );
     }
+    std::optional<std::size_t> target_size;
+    if(target_tls_record_size > 0U) {
+        target_size = target_tls_record_size;
+    }
     auto encoded = outbound_classified_pipeline(direction).encode_tls_record(
         FpsEnvelopeContent{
             .inner_tls_bytes = {},
             .frames = std::move(classified_frames),
             .padding_size = 0,
         },
-        *binding
+        *binding, FpsClassifiedRecordEncodeOptions{.target_tls_record_size = target_size}
     );
     if(!encoded) {
         emit_classified_encode_error(direction, encoded.error());
@@ -608,9 +748,9 @@ auto TlsTcpCarrierSession::encode_classified_write(Direction direction, std::spa
     return Result<WriteItem, TlsTcpCarrierEnqueueError>::success(WriteItem{.bytes = std::move(record)});
 }
 
-auto TlsTcpCarrierSession::shaper_enabled() const noexcept -> bool { return shaper_.has_value(); }
+auto TlsTcpCarrierSession::shaper_enabled() const noexcept -> bool { return static_cast<bool>(shaper_); }
 
-void TlsTcpCarrierSession::observe_cover_bytes(Direction direction, std::size_t bytes) {
+void TlsTcpCarrierSession::observe_cover_record(Direction direction, std::size_t bytes) {
     if(!shaper_enabled() || bytes == 0U) {
         return;
     }
@@ -662,21 +802,216 @@ void TlsTcpCarrierSession::enqueue_shaped_write(Direction direction, ShapedWrite
     maybe_schedule_shaped_write(direction);
 }
 
+auto TlsTcpCarrierSession::split_shaped_datagram_front(Direction direction, const SendPlan& plan) -> bool {
+    if(!shaper_ || !config_.zero_rtt.has_value() || shaped_write_queue(direction).empty()) {
+        return false;
+    }
+
+    auto& queue = shaped_write_queue(direction);
+    auto& item = queue.front();
+    if(item.classified_frames.size() != 1U || item.classified_frames.front().frame_type != FrameType::opaque_datagram ||
+       item.classified_frames.front().payload.empty()) {
+        return false;
+    }
+
+    const auto& datagram = item.classified_frames.front().payload;
+    if(datagram.size() > std::numeric_limits<std::uint32_t>::max() || config_.zero_rtt->max_frame_payload_size <= kDatagramFragmentHeaderSize ||
+       plan.covert_payload_budget <= kDatagramFragmentHeaderSize) {
+        return false;
+    }
+
+    const auto max_frame_payload_size = config_.zero_rtt->max_frame_payload_size;
+    const auto max_chunk_size = std::min(
+        {datagram.size(), max_frame_payload_size - kDatagramFragmentHeaderSize, plan.covert_payload_budget - kDatagramFragmentHeaderSize}
+    );
+    if(max_chunk_size == 0U) {
+        return false;
+    }
+
+    const auto max_record_padding = config_.zero_rtt->max_envelope_padding_size;
+    std::size_t chunk_size = 0;
+    for(auto candidate = max_chunk_size; candidate > 0U; --candidate) {
+        const auto payload_size = kDatagramFragmentHeaderSize + candidate;
+        const auto record_size = classified_record_size_for_single_frame(FrameType::opaque_datagram_fragment, payload_size);
+        if(record_size.has_value() && *record_size <= plan.tls_record_size && plan.tls_record_size - *record_size <= max_record_padding) {
+            chunk_size = candidate;
+            break;
+        }
+    }
+    if(chunk_size == 0U) {
+        return false;
+    }
+
+    const auto fragment_count = fragment_count_for_size(datagram.size(), chunk_size);
+    if(!fits_fragment_count(fragment_count)) {
+        return false;
+    }
+
+    const auto total_size = static_cast<std::uint32_t>(datagram.size());
+    const auto packet_id = next_shaped_fragment_packet_id_++;
+    std::vector<ShapedWriteItem> fragments;
+    fragments.reserve(fragment_count);
+    std::size_t total_fragment_accounted = 0;
+    std::size_t total_fragment_payload = 0;
+
+    for(std::size_t index = 0, offset = 0; offset < datagram.size(); ++index) {
+        const auto bytes_remaining = datagram.size() - offset;
+        const auto current_chunk_size = std::min(chunk_size, bytes_remaining);
+        auto payload = make_datagram_fragment_payload(
+            packet_id, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), total_size,
+            std::span<const std::byte>{datagram.data(), datagram.size()}.subspan(offset, current_chunk_size)
+        );
+        const auto payload_size = payload.size();
+        TlsTcpCarrierOwnedCovertFrame frame{
+            .frame_type = FrameType::opaque_datagram_fragment,
+            .payload = std::move(payload),
+            .padding_size = 0,
+            .flags = 0,
+        };
+        const auto estimated_size = classified_tls_record_size(std::span<const TlsTcpCarrierOwnedCovertFrame>{&frame, 1});
+        if(!estimated_size) {
+            return false;
+        }
+        auto next_accounted = checked_add(total_fragment_accounted, *estimated_size);
+        if(!next_accounted) {
+            return false;
+        }
+        total_fragment_accounted = *next_accounted;
+        auto next_payload = checked_add(total_fragment_payload, payload_size);
+        if(!next_payload) {
+            return false;
+        }
+        total_fragment_payload = *next_payload;
+
+        ShapedWriteItem fragment_item{
+            .write = WriteItem{.bytes = {}, .accounted_bytes = *estimated_size},
+            .payload_size = payload_size,
+            .classified_frames = {},
+            .send_plan = std::nullopt,
+        };
+        fragment_item.classified_frames.push_back(std::move(frame));
+        fragments.push_back(std::move(fragment_item));
+        offset += current_chunk_size;
+    }
+
+    const auto current_accounted = item.write.accounted_bytes == 0U ? item.write.bytes.size() : item.write.accounted_bytes;
+    if(!can_replace_queued_write(direction, current_accounted, total_fragment_accounted)) {
+        return false;
+    }
+
+    if(total_fragment_payload > datagram.size()) {
+        ByteVector overhead(total_fragment_payload - datagram.size());
+        shaper_->enqueue_covert_payload(
+            CovertPayloadView{
+                .direction = direction,
+                .bytes = overhead,
+                .priority = Priority::normal,
+            }
+        );
+    }
+
+    auto& pending = pending_write_bytes(direction);
+    if(total_fragment_accounted > current_accounted) {
+        pending += total_fragment_accounted - current_accounted;
+    } else {
+        pending = pending > current_accounted - total_fragment_accounted ? pending - (current_accounted - total_fragment_accounted) : 0U;
+    }
+
+    queue.pop_front();
+    for(auto iter = fragments.rbegin(); iter != fragments.rend(); ++iter) {
+        queue.push_front(std::move(*iter));
+    }
+    return true;
+}
+
 void TlsTcpCarrierSession::maybe_schedule_shaped_write(Direction direction) {
     if(stopped_ || !shaper_ || shaper_timer_active(direction) || shaped_write_queue(direction).empty()) {
         return;
     }
 
     auto& item = shaped_write_queue(direction).front();
-    const auto plan = shaper_->next_send_plan(direction, item.payload_size);
-    if(!plan.allow_injected_record || plan.covert_payload_budget < item.payload_size) {
+    const auto can_split_datagram = [&]() -> bool {
+        return config_.zero_rtt.has_value() && item.classified_frames.size() == 1U &&
+               item.classified_frames.front().frame_type == FrameType::opaque_datagram && !item.classified_frames.front().payload.empty() &&
+               config_.zero_rtt->max_frame_payload_size > kDatagramFragmentHeaderSize;
+    }();
+    const auto bounds = [&]() -> std::optional<ShapeSizeBounds> {
+        if(can_split_datagram) {
+            const auto max_fragment_payload_size =
+                std::min(item.classified_frames.front().payload.size() + kDatagramFragmentHeaderSize, config_.zero_rtt->max_frame_payload_size);
+            const auto full_bounds = classified_shape_size_bounds(item.classified_frames, config_.zero_rtt);
+            const auto fragment_bounds = classified_fragment_shape_size_bounds(max_fragment_payload_size, config_.zero_rtt);
+            if(!full_bounds.has_value()) {
+                return fragment_bounds;
+            }
+            if(!fragment_bounds.has_value()) {
+                return full_bounds;
+            }
+            return ShapeSizeBounds{
+                .min_tls_record_size = std::min(full_bounds->min_tls_record_size, fragment_bounds->min_tls_record_size),
+                .max_tls_record_size = std::max(full_bounds->max_tls_record_size, fragment_bounds->max_tls_record_size),
+            };
+        }
+        if(!item.classified_frames.empty()) {
+            return classified_shape_size_bounds(item.classified_frames, config_.zero_rtt);
+        }
+        const auto size = item.write.accounted_bytes == 0U ? item.write.bytes.size() : item.write.accounted_bytes;
+        return ShapeSizeBounds{.min_tls_record_size = size, .max_tls_record_size = size};
+    }();
+    if(!bounds.has_value()) {
         emit_shaper_event(
             TlsTcpCarrierShaperEvent{
                 .direction = direction,
                 .decision = TlsTcpCarrierShaperDecision::blocked,
                 .payload_size = item.payload_size,
                 .queue_bytes = shaped_queue_bytes(direction),
-                .delay = plan.delay,
+            }
+        );
+        return;
+    }
+
+    const auto plan = shaper_->propose_send_plan(
+        SendPlanRequest{
+            .direction = direction,
+            .min_covert_payload_size = can_split_datagram ? 0U : item.payload_size,
+            .min_tls_record_size = bounds->min_tls_record_size,
+            .max_tls_record_size = bounds->max_tls_record_size,
+        }
+    );
+    auto scheduled_plan = plan;
+    const auto fits_current_item = [&]() -> bool {
+        if(plan.covert_payload_budget < item.payload_size) {
+            return false;
+        }
+        if(item.classified_frames.empty()) {
+            return true;
+        }
+        const auto min_record_size = classified_tls_record_size(item.classified_frames, 0);
+        if(!min_record_size.has_value() || *min_record_size > plan.tls_record_size) {
+            return false;
+        }
+        const auto max_padding = config_.zero_rtt.has_value() ? config_.zero_rtt->max_envelope_padding_size : 0U;
+        return plan.tls_record_size - *min_record_size <= max_padding;
+    }();
+    if(plan.allow_injected_record && !fits_current_item && can_split_datagram && split_shaped_datagram_front(direction, plan)) {
+        auto& fragment = shaped_write_queue(direction).front();
+        scheduled_plan.covert_payload_budget = fragment.payload_size;
+        fragment.send_plan = scheduled_plan;
+        shaper_timer_active(direction) = true;
+        auto self = shared_from_this();
+        auto& timer = shaper_timer(direction);
+        timer.expires_after(scheduled_plan.delay);
+        timer.async_wait([self, direction](const boost::system::error_code& error) { self->handle_shaper_timer(direction, error); });
+        return;
+    }
+    if(!plan.allow_injected_record || !fits_current_item) {
+        emit_shaper_event(
+            TlsTcpCarrierShaperEvent{
+                .direction = direction,
+                .decision = TlsTcpCarrierShaperDecision::blocked,
+                .payload_size = item.payload_size,
+                .queue_bytes = shaped_queue_bytes(direction),
+                .delay_us = delay_us(plan.delay),
                 .tls_record_size = plan.tls_record_size,
                 .covert_payload_budget = plan.covert_payload_budget,
             }
@@ -684,22 +1019,12 @@ void TlsTcpCarrierSession::maybe_schedule_shaped_write(Direction direction) {
         return;
     }
 
-    emit_shaper_event(
-        TlsTcpCarrierShaperEvent{
-            .direction = direction,
-            .decision = TlsTcpCarrierShaperDecision::scheduled,
-            .payload_size = item.payload_size,
-            .queue_bytes = shaped_queue_bytes(direction),
-            .delay = plan.delay,
-            .tls_record_size = plan.tls_record_size,
-            .covert_payload_budget = plan.covert_payload_budget,
-        }
-    );
-
+    scheduled_plan.covert_payload_budget = item.payload_size;
+    item.send_plan = scheduled_plan;
     shaper_timer_active(direction) = true;
     auto self = shared_from_this();
     auto& timer = shaper_timer(direction);
-    timer.expires_after(plan.delay);
+    timer.expires_after(scheduled_plan.delay);
     timer.async_wait([self, direction](const boost::system::error_code& error) { self->handle_shaper_timer(direction, error); });
 }
 
@@ -716,17 +1041,61 @@ void TlsTcpCarrierSession::handle_shaper_timer(Direction direction, const boost:
         return;
     }
 
-    auto item = std::move(shaped_write_queue(direction).front());
+    auto& front = shaped_write_queue(direction).front();
+    if(!front.send_plan.has_value()) {
+        maybe_schedule_shaped_write(direction);
+        return;
+    }
+    const auto plan = *front.send_plan;
+    const auto current_accounted = front.write.accounted_bytes == 0U ? front.write.bytes.size() : front.write.accounted_bytes;
+    const auto replacement_accounted = front.classified_frames.empty() ? current_accounted : plan.tls_record_size;
+    if(!can_replace_queued_write(direction, current_accounted, replacement_accounted)) {
+        shaper_->on_backpressure(direction, pending_write_bytes(direction));
+        front.send_plan.reset();
+        emit_shaper_event(
+            TlsTcpCarrierShaperEvent{
+                .direction = direction,
+                .decision = TlsTcpCarrierShaperDecision::blocked,
+                .payload_size = front.payload_size,
+                .queue_bytes = shaped_queue_bytes(direction),
+                .delay_us = delay_us(plan.delay),
+                .tls_record_size = plan.tls_record_size,
+                .covert_payload_budget = plan.covert_payload_budget,
+            }
+        );
+        return;
+    }
+
+    auto item = std::move(front);
     shaped_write_queue(direction).pop_front();
     if(!item.classified_frames.empty()) {
-        auto write = encode_classified_write(direction, item.classified_frames);
+        auto write = encode_classified_write(direction, item.classified_frames, plan.tls_record_size);
         if(!write) {
             stop_with(pending_or_default_close(close_info_from_enqueue_error(direction, write.error())));
             return;
         }
-        write.value().accounted_bytes = item.write.accounted_bytes;
+        write.value().accounted_bytes = replacement_accounted;
         item.write = std::move(write).value();
     }
+    auto& pending = pending_write_bytes(direction);
+    if(replacement_accounted > current_accounted) {
+        pending += replacement_accounted - current_accounted;
+    } else {
+        pending = pending > current_accounted - replacement_accounted ? pending - (current_accounted - replacement_accounted) : 0U;
+    }
+    shaper_->commit_send_plan(plan);
+    emit_shaper_event(
+        TlsTcpCarrierShaperEvent{
+            .direction = direction,
+            .decision = TlsTcpCarrierShaperDecision::scheduled,
+            .payload_size = item.payload_size,
+            .queue_bytes = shaped_queue_bytes(direction),
+            .delay_us = delay_us(plan.delay),
+            .tls_record_size = plan.tls_record_size,
+            .encoded_tls_record_size = item.write.bytes.size(),
+            .covert_payload_budget = plan.covert_payload_budget,
+        }
+    );
     enqueue_counted_write(direction, std::move(item.write));
     maybe_schedule_shaped_write(direction);
 }

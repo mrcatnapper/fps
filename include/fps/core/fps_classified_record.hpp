@@ -17,7 +17,7 @@ namespace fps {
 
 BOOST_DEFINE_ENUM_CLASS(
     FpsClassifiedRecordError, invalid_config, invalid_wire, inner_tls_not_supported, oversized_payload, oversized_padding, too_many_frames, sequence_overflow,
-    unsupported_version, invalid_sequence, invalid_frame_type, client_hint_mismatch, encrypt_failed, decrypt_failed
+    unsupported_version, invalid_sequence, invalid_frame_type, client_hint_mismatch, target_record_too_small, encrypt_failed, decrypt_failed
 )
 
 BOOST_DEFINE_ENUM_CLASS(FpsClassifiedRecordClassification, carrier, fps_record, invalid_fps_record)
@@ -59,6 +59,10 @@ struct FpsClassifiedRecordPipelineEncodeError {
 
 using FpsClassifiedRecordPipelineEncodeResult = Result<ByteVector, FpsClassifiedRecordPipelineEncodeError>;
 
+struct FpsClassifiedRecordEncodeOptions {
+    std::optional<std::size_t> target_tls_record_size;
+};
+
 struct FpsClassifiedRecordPipelineProcessResult {
     ByteVector forward_tls_bytes;
     std::vector<FpsEnvelopeFrame> frames;
@@ -74,7 +78,9 @@ class FpsClassifiedRecordCodec {
 public:
     explicit FpsClassifiedRecordCodec(FpsClassifiedRecordConfig config);
 
-    [[nodiscard]] auto encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordResult<ByteVector>;
+    [[nodiscard]] auto encode(
+        const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {}
+    ) -> FpsClassifiedRecordResult<ByteVector>;
     [[nodiscard]] auto decode(std::span<const std::byte> wire, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordDecodeResult;
 
     [[nodiscard]] auto next_send_sequence() const noexcept -> std::uint64_t;
@@ -100,7 +106,9 @@ public:
     explicit FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec);
     FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec, TlsRecordParser parser, TlsRecordLayerOptions record_options = {});
 
-    [[nodiscard]] auto encode_tls_record(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordPipelineEncodeResult;
+    [[nodiscard]] auto encode_tls_record(
+        const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {}
+    ) -> FpsClassifiedRecordPipelineEncodeResult;
     [[nodiscard]] auto
     process_inbound_tls(Direction direction, std::span<const std::byte> bytes, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer)
         -> FpsClassifiedRecordPipelineProcessResult;

@@ -12,7 +12,7 @@ namespace {
 auto sample_profile(std::uint64_t seed = 7) -> fps::ShaperProfile {
     const fps::DirectionProfile direction_profile{
         .record_size_cdf = {{64, 0.5}, {128, 1.0}},
-        .inter_record_delay_ms_cdf = {{10, 0.5}, {25, 1.0}},
+        .inter_record_delay_us_cdf = {{10'000, 0.5}, {25'000, 1.0}},
     };
 
     return fps::ShaperProfile{
@@ -24,6 +24,16 @@ auto sample_profile(std::uint64_t seed = 7) -> fps::ShaperProfile {
         .jitter = {std::chrono::milliseconds{0}, std::chrono::milliseconds{0}},
         .deterministic_seed = seed,
     };
+}
+
+auto adaptive_profile() -> fps::ShaperProfile {
+    auto profile = sample_profile(11);
+    profile.client_to_server.record_size_cdf = {{64, 1.0}};
+    profile.client_to_server.inter_record_delay_us_cdf = {{5'000, 1.0}};
+    profile.adaptive_min_records = 2;
+    profile.adaptive_min_observation = std::chrono::milliseconds{10};
+    profile.adaptive_decay = 1.0;
+    return profile;
 }
 
 using fps::test::payload_of_size;
@@ -38,11 +48,31 @@ BOOST_AUTO_TEST_CASE(rejects_invalid_profiles) {
     BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
 
     profile = sample_profile();
+    profile.profile_id = std::string(256, 'a');
+    BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
+
+    profile = sample_profile();
     profile.covert_ratio_max = 1.5;
     BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
 
     profile = sample_profile();
     profile.client_to_server.record_size_cdf = {{64, 0.6}, {128, 0.5}};
+    BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
+
+    profile = sample_profile();
+    profile.adaptive_decay = 0.0;
+    BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
+
+    profile = sample_profile();
+    profile.adaptive_min_records = 0;
+    BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
+
+    profile = sample_profile();
+    profile.adaptive_min_observation = std::chrono::milliseconds{-1};
+    BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
+
+    profile = sample_profile();
+    profile.snapshot_interval = std::chrono::milliseconds{-1};
     BOOST_CHECK_THROW(fps::Shaper{profile}, std::invalid_argument);
 }
 
@@ -70,6 +100,60 @@ BOOST_AUTO_TEST_CASE(enforces_cover_ratio_budget) {
     BOOST_TEST(plan.allow_injected_record);
     BOOST_TEST(plan.covert_payload_budget <= 50U);
     BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == plan.covert_payload_budget);
+}
+
+BOOST_AUTO_TEST_CASE(proposal_does_not_consume_budget_until_committed) {
+    fps::Shaper shaper{sample_profile()};
+    const auto data = payload_of_size(80);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto proposal = shaper.propose_send_plan(
+        fps::SendPlanRequest{
+            .direction = fps::Direction::client_to_server,
+            .min_covert_payload_size = 80,
+            .min_tls_record_size = 64,
+            .max_tls_record_size = 128,
+        }
+    );
+
+    BOOST_TEST(proposal.allow_injected_record);
+    BOOST_TEST(proposal.covert_payload_budget == 80U);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 80U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 0U);
+
+    shaper.commit_send_plan(proposal);
+
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 0U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 80U);
+}
+
+BOOST_AUTO_TEST_CASE(rejected_proposal_preserves_queue_budget_and_burst_state) {
+    auto profile = sample_profile();
+    profile.client_to_server.record_size_cdf = {{64, 1.0}};
+    fps::Shaper shaper{profile};
+    const auto data = payload_of_size(160);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto rejected = shaper.propose_send_plan(
+        fps::SendPlanRequest{
+            .direction = fps::Direction::client_to_server,
+            .min_covert_payload_size = 80,
+            .min_tls_record_size = 128,
+            .max_tls_record_size = 256,
+        }
+    );
+
+    BOOST_TEST(!rejected.allow_injected_record);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 160U);
+    BOOST_TEST(shaper.covert_bytes_planned(fps::Direction::client_to_server) == 0U);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
+    const auto allowed = shaper.next_send_plan(fps::Direction::client_to_server, 32, 64, 64);
+
+    BOOST_TEST(allowed.allow_injected_record);
+    BOOST_TEST(shaper.queued_bytes(fps::Direction::client_to_server) == 128U);
 }
 
 BOOST_AUTO_TEST_CASE(min_payload_size_blocks_without_consuming_budget) {
@@ -211,6 +295,105 @@ BOOST_AUTO_TEST_CASE(cover_record_resets_burst_counter) {
     shaper.observe_cover_record({fps::Direction::client_to_server, 1000, {}});
     const auto after_cover = shaper.next_send_plan(fps::Direction::client_to_server);
     BOOST_TEST(after_cover.allow_injected_record);
+}
+
+BOOST_AUTO_TEST_CASE(adaptive_model_falls_back_until_warmup) {
+    auto profile = adaptive_profile();
+    fps::Shaper shaper{profile};
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto data = payload_of_size(32);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 512, t0});
+    BOOST_TEST(!shaper.adaptive_ready(fps::Direction::client_to_server));
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto plan = shaper.next_send_plan(fps::Direction::client_to_server, 1, 64, 64);
+
+    BOOST_TEST(plan.allow_injected_record);
+    BOOST_TEST(plan.tls_record_size == 64U);
+}
+
+BOOST_AUTO_TEST_CASE(adaptive_model_uses_observed_tls_record_sizes_and_delays_after_warmup) {
+    auto profile = adaptive_profile();
+    fps::Shaper shaper{profile};
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto data = payload_of_size(32);
+
+    shaper.observe_cover_record({fps::Direction::client_to_server, 512, t0});
+    shaper.observe_cover_record({fps::Direction::client_to_server, 512, t0 + std::chrono::milliseconds{20}});
+    BOOST_TEST(shaper.adaptive_ready(fps::Direction::client_to_server));
+    shaper.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto plan = shaper.next_send_plan(fps::Direction::client_to_server, 1, 512, 512);
+
+    BOOST_TEST(plan.allow_injected_record);
+    BOOST_TEST(plan.tls_record_size == 512U);
+    BOOST_TEST(plan.delay.count() == 20'000);
+}
+
+BOOST_AUTO_TEST_CASE(shaper_snapshot_roundtrips_and_bootstraps_peer_model) {
+    auto profile = adaptive_profile();
+    fps::Shaper server{profile};
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto data = payload_of_size(32);
+
+    server.observe_cover_record({fps::Direction::client_to_server, 512, t0});
+    server.observe_cover_record({fps::Direction::client_to_server, 512, t0 + std::chrono::milliseconds{20}});
+    auto encoded = fps::encode_shaper_snapshot_control(server.snapshot());
+    BOOST_CHECK(fps::is_shaper_snapshot_control(encoded));
+    auto decoded = fps::decode_shaper_snapshot_control(encoded);
+    BOOST_REQUIRE(decoded);
+
+    fps::Shaper client{profile};
+    auto applied = client.apply_snapshot(decoded.value(), t0 + std::chrono::milliseconds{30});
+    BOOST_REQUIRE(applied);
+    BOOST_TEST(client.adaptive_ready(fps::Direction::client_to_server));
+    client.observe_cover_record({fps::Direction::client_to_server, 512, t0 + std::chrono::milliseconds{35}});
+    client.enqueue_covert_payload({fps::Direction::client_to_server, data, fps::Priority::normal});
+    const auto plan = client.next_send_plan(fps::Direction::client_to_server, 1, 512, 512);
+
+    BOOST_TEST(plan.allow_injected_record);
+    BOOST_TEST(plan.tls_record_size == 512U);
+}
+
+BOOST_AUTO_TEST_CASE(shaper_snapshot_compaction_bounds_control_payload) {
+    auto profile = adaptive_profile();
+    profile.adaptive_min_records = 2;
+    profile.adaptive_min_observation = std::chrono::milliseconds{1};
+    fps::Shaper shaper{profile};
+    const auto t0 = std::chrono::steady_clock::now();
+
+    for(std::size_t index = 1; index <= 128; ++index) {
+        const auto offset = std::chrono::milliseconds{static_cast<int>(index)};
+        shaper.observe_cover_record({fps::Direction::client_to_server, 64 + index * 8, t0 + offset});
+        shaper.observe_cover_record({fps::Direction::server_to_client, 96 + index * 9, t0 + offset});
+    }
+
+    const auto full = fps::encode_shaper_snapshot_control(shaper.snapshot());
+    const auto compact = fps::compact_shaper_snapshot(shaper.snapshot(), 16);
+    const auto encoded = fps::encode_shaper_snapshot_control(compact);
+
+    BOOST_TEST(encoded.size() < full.size());
+    BOOST_TEST(encoded.size() < 1280U);
+    auto decoded = fps::decode_shaper_snapshot_control(encoded);
+    BOOST_REQUIRE(decoded);
+    for(const auto& direction : decoded.value().directions) {
+        BOOST_TEST(direction.record_size_cdf.size() <= 16U);
+        BOOST_TEST(direction.inter_record_delay_us_cdf.size() <= 16U);
+        BOOST_TEST(direction.record_size_cdf.back().p == 1.0);
+        BOOST_TEST(direction.inter_record_delay_us_cdf.back().p == 1.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(shaper_snapshot_rejects_profile_mismatch) {
+    auto profile = adaptive_profile();
+    fps::Shaper server{profile};
+    auto snapshot = server.snapshot();
+    snapshot.profile_id = "other-profile";
+    fps::Shaper client{profile};
+
+    auto applied = client.apply_snapshot(snapshot);
+
+    BOOST_REQUIRE(!applied);
+    BOOST_CHECK(applied.error() == fps::ShaperSnapshotError::profile_mismatch);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -91,7 +91,9 @@ target_compile_definitions(fps_protocol_core PUBLIC BOOST_LOG_DYN_LINK)
 # implementation. Non-TLS carriers should plug into CovertCarrier without
 # depending on the TLS/TCP session implementation.
 add_library(fps_carrier_core
+  src/net/client_upgrade_delay.cpp
   src/net/covert_datagram_transport.cpp
+  src/net/tcp_socket_options.cpp
   src/net/tls_tcp_carrier_adapter.cpp
   src/net/tls_tcp_carrier_session.cpp
   src/net/tls_tcp_carrier_session_io.cpp)
@@ -150,6 +152,7 @@ add_library(fps_linux_runtime
   src/net/tcp_relay_config_shaper.cpp
   src/net/tcp_relay_app.cpp
   src/net/tcp_relay_cli.cpp
+  src/net/tcp_relay_shaper_json.cpp
   src/platform/linux/tun_device.cpp
   src/platform/linux/tun_runtime.cpp)
 
@@ -355,6 +358,17 @@ if(FPS_BUILD_TESTS)
         --fps-server $<TARGET_FILE:fps_server>
         --carrier ${CMAKE_CURRENT_SOURCE_DIR}/tools/fps_carrier.py)
     fps_set_test_properties(fps_carrier_http_zero_rtt 25 "integration;local;wss;zero_rtt")
+
+    add_test(NAME fps_pcap_shaper_profile
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/pcap_shaper_profile.py
+        --repo ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(fps_pcap_shaper_profile
+      PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 10
+        LABELS "integration;local;pcap;tool;shaper")
 
     if(FPS_ENABLE_PCAP_TESTS)
       add_test(NAME fps_pcap_tls_shape

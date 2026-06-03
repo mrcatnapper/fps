@@ -77,7 +77,7 @@ BOOST_AUTO_TEST_CASE(described_log_value_handles_enums_and_durations) {
         .decision = fps::net::TlsTcpCarrierShaperDecision::scheduled,
         .payload_size = 128,
         .queue_bytes = 256,
-        .delay = std::chrono::milliseconds{7},
+        .delay_us = 7000,
         .tls_record_size = 512,
         .covert_payload_budget = 96,
     };
@@ -88,7 +88,7 @@ BOOST_AUTO_TEST_CASE(described_log_value_handles_enums_and_durations) {
 
     BOOST_TEST(rendered.find(R"("direction":"client_to_server")") != std::string::npos);
     BOOST_TEST(rendered.find(R"("decision":"scheduled")") != std::string::npos);
-    BOOST_TEST(rendered.find(R"("delay":7)") != std::string::npos);
+    BOOST_TEST(rendered.find(R"("delay_us":7000)") != std::string::npos);
     BOOST_TEST(rendered.find(R"("payload_size":128)") != std::string::npos);
 }
 

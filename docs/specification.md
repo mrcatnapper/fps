@@ -132,8 +132,11 @@ Current construction:
   are unsupported because one UUID maps to one client public key and one
   persistent TUN lease identity.
 - The client builds one encrypted auth record only after observing TLS
-  Application Data in both carrier directions and enough real carrier TLS
-  records to form a bidirectional transcript binding.
+  Application Data in both carrier directions, enough real carrier TLS records
+  to form a bidirectional transcript binding and the configured client-side
+  upgrade delay. The default client delay is two seconds. It lets a fresh relay
+  observe initial carrier record-size/timing behavior before inserting FPS
+  records.
 - Upgrade associated data binds the attempt to the bidirectional TLS record
   indices, transcript byte counts, transcript hashes and profile id.
 - The transcript is an incremental cryptographic hash of visible carrier TLS
@@ -365,13 +368,54 @@ Current implemented scope:
 
 - deterministic profile-driven budget for externally injected datagram/control
   frames;
+- adaptive record-size and inter-record-delay CDF training from observed
+  carrier TLS records;
+- size-aware classified-record encoding: when the shaper selects a target TLS
+  Application Data record wire size, FPS pads the encrypted classified record to
+  that exact outer TLS record size;
+- shaper-aware datagram fragmentation: if a queued `opaque_datagram` is too
+  large for the sampled TLS record but the record can carry at least one
+  fragment header plus one byte of data, FPS expands that datagram into ordered
+  `opaque_datagram_fragment` records on the same carrier; if even the smallest
+  fragment cannot fit, the datagram stays queued and injection is blocked for
+  that scheduling attempt;
+- commit-safe shaper scheduling: rejected target sizes, padding limits and
+  write-queue pressure leave queued covert data and shaper budget intact;
 - backpressure accounting and bounded write queues;
 - fragmentation lets near-MTU TUN packets be sent as smaller covert frames.
 
+`shaper.record_size_cdf_c2s` and `shaper.record_size_cdf_s2c` buckets are full
+outer TLS record wire sizes, including the 5-byte TLS record header. A sampled
+size smaller than the classified-record overhead, or larger than the configured
+classified-record padding capacity, blocks injection until another scheduling
+attempt. `codec.max_frame_padding` also limits classified-record padding in the
+current Linux relay config. `shaper.inter_record_delay_us_cdf_c2s` and
+`shaper.inter_record_delay_us_cdf_s2c` buckets are inter-record delays in
+microseconds. Public CDF config uses compact `[value, cumulative_probability]`
+pairs, for example `[[512, 0.4], [1500, 1.0]]`.
+
+Adaptive behavior:
+
+- each relay process owns one shared `Shaper` instance when the shaper is
+  enabled; all authenticated and pre-auth carrier sessions in that process
+  train the same adaptive model;
+- observations are made after TCP bytes have been sliced into complete TLS
+  records, so `recv`/`read_some` chunk boundaries do not affect the model;
+- only ordinary forwarded carrier TLS records train the adaptive CDF. Inserted
+  classified FPS records are excluded from observations;
+- adaptive scheduling is used only after the configured minimum record count and
+  minimum observed time window are reached for a direction. Until then, the
+  static configured CDF remains the bootstrap/fallback model;
+- default warmup is 16 observed carrier records and 2000 ms per direction;
+- adaptive buckets are decayed with `adaptive.decay` to keep the model inertial
+  while still allowing it to follow long-running carrier changes;
+- the server periodically sends an encrypted shaper snapshot control frame to
+  authenticated clients. The snapshot contains CDF metadata and profile id only,
+  no payload bytes, keys, UUIDs or nonces. Clients treat it as advisory model
+  bootstrap data for faster convergence after authentication.
+
 Deferred work:
 
-- full timing/size control of inserted classified FPS records against the
-  observed carrier profile;
 - statistical assertions for record size/delay distributions;
 - profile capture tooling and classifier regression lab.
 
@@ -386,7 +430,8 @@ Minimal server-side v5 shape:
   "network": {
     "listen": "127.0.0.1:8443",
     "origin": "127.0.0.1:9443",
-    "read_buffer_size": 65536
+    "read_buffer_size": 65536,
+    "tcp_no_delay": true
   },
   "security": {
     "zero_rtt": {
@@ -397,7 +442,9 @@ Minimal server-side v5 shape:
       "allowed_client_uuids": ["123e4567-e89b-42d3-a456-426614174000"],
       "version": 5,
       "min_records_before_trial": 1,
-      "upgrade_direction": "client_to_server"
+      "upgrade_direction": "client_to_server",
+      "client_upgrade_delay_ms": 0,
+      "client_upgrade_delay_sigma_ms": 0
     }
   },
   "codec": {
@@ -435,6 +482,48 @@ config uses only inline padded RFC4648 base64 fields
 `security.zero_rtt.version` is optional and defaults to `5`. When present it
 must be `5`; pre-production wire formats are intentionally not accepted as
 compatibility modes.
+`security.zero_rtt.client_upgrade_delay_ms` defaults to `2000` for client
+configs and `0` for server configs. The delay is checked when more carrier TLS
+records arrive after bidirectional Application Data is observed; it is intended
+for continuous carrier sessions, not as a wall-clock timer that injects FPS
+bytes into an idle carrier.
+`security.zero_rtt.client_upgrade_delay_sigma_ms` defaults to one third of
+`client_upgrade_delay_ms` for client configs and `0` for server configs. Each
+client carrier samples one effective delay when the bidirectional TLS
+Application Data channel first becomes eligible for upgrade:
+`clamp(client_upgrade_delay_ms + N(0, sigma_ms), 0, 2 * client_upgrade_delay_ms)`.
+Set the sigma field to `0` for reproducible tests and packet-capture
+experiments. FPS still never sends the client auth record before observing TLS
+Application Data in both carrier directions and the required transcript records.
+
+Optional shaper adaptive fields live under `shaper.adaptive`:
+
+```json
+{
+  "shaper": {
+    "enabled": true,
+    "profile_id": "example-origin-v5",
+    "record_size_cdf_c2s": [[512, 0.4], [1500, 1.0]],
+    "record_size_cdf_s2c": [[512, 0.4], [1500, 1.0]],
+    "inter_record_delay_us_cdf_c2s": [[20000, 0.5], [100000, 1.0]],
+    "inter_record_delay_us_cdf_s2c": [[20000, 0.5], [100000, 1.0]],
+    "adaptive": {
+      "enabled": true,
+      "min_records": 16,
+      "min_observation_ms": 2000,
+      "decay": 0.98,
+      "snapshot_interval_ms": 30000
+    }
+  }
+}
+```
+
+`network.tcp_no_delay` defaults to `true` and is applied to both accepted and
+outbound FPS relay TCP sockets. This disables Nagle on the FPS link so shaped
+classified TLS records are not delayed or coalesced by an implicit TCP policy.
+Other TCP knobs such as corking, socket buffer sizes, keepalive and quick ACK
+are intentionally not part of the beta config; batching belongs to the shaper,
+and platform-specific TCP heuristics can create new fingerprints.
 
 Validation rules:
 
@@ -468,7 +557,8 @@ Operational status:
   carrier lifecycle counters, duplicate UUID replacement counters,
   `sessions.last_closed`, bounded `sessions.recent_closed`, auth counters under
   `auth`, classified-record counters under `classified_record`, TUN packet/drop
-  counters and shaper/backpressure counters;
+  counters, shaper/backpressure counters and, when enabled,
+  `shaper.profile` with a non-secret compact CDF snapshot;
 - `auth` contains candidate, authenticated, precheck failure, unknown-client,
   decrypt failure and server-accept failure counters;
 - `classified_record` contains decode/encode failure, tamper/invalid and
@@ -477,6 +567,34 @@ Operational status:
   and non-secret direction/component/stage/error names;
 - status output must not include UUID values, private/public keys, raw client
   instance ids, raw TLS payloads, raw TUN packets or IP payload bytes.
+
+Shaper profile export CLI:
+
+- `fps_client --write-shaper-profile --config client.json --output profile.json
+  [--force]` and the same `fps_server` command write a normalized shaper profile
+  JSON file with `0600` permissions;
+- if `ops.status_socket` or `--status-socket PATH` is reachable, the exported
+  profile uses the live adaptive CDF snapshot from `shaper.profile`;
+- otherwise the command falls back to the static profile from the config;
+- only `--format json` is supported in the current schema.
+
+Offline shaper profile tooling:
+
+- `tools/pcap_to_shaper_profile.py carrier.pcap --port 443 --output
+  profile.json` builds the same compact JSON shaper profile from a captured TLS
+  carrier TCP session;
+- the tool uses libpcap, reassembles each TCP direction by sequence number and
+  parses TLS records independently of packet or `recv` boundaries;
+- client/server direction is inferred from the TCP SYN/SYN-ACK handshake when
+  present. If the pcap starts after the handshake, `--port PORT` is used as a
+  service-port hint;
+- by default only TLS Application Data records are sampled. The record-size CDF
+  uses full TLS record wire size including the 5-byte TLS header, matching the
+  runtime shaper observation path; delay CDFs are inter-record delays in
+  microseconds;
+- the pcap should represent carrier-only baseline traffic or a deliberately
+  selected pre-upgrade window. A pcap that already contains shaped FPS records
+  describes the combined visible flow, not the original carrier baseline.
 
 Client profile CLI:
 

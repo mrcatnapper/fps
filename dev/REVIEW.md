@@ -104,6 +104,14 @@ Date: 2026-05-29
     generic carrier pool, while `TunTunnelAdapter` keeps lease/source
     enforcement keyed by carrier metadata.
 
+15. **Shaper has a real adaptive baseline, but not a statistical proof.** The
+    relay now shares one `Shaper` per process, trains record-size and
+    inter-record-delay CDFs from parsed carrier TLS records, delays client
+    upgrade by default so fresh sessions can warm the model, and lets servers
+    send encrypted CDF snapshots to clients. This reduces manual profile
+    dependence, but pcap-level packet-size/timing checks are still needed before
+    claiming traffic-shape mimicry.
+
 ## Decisions Captured
 
 - `security.zero_rtt` remains the only carrier authentication mechanism.
@@ -156,3 +164,5 @@ Date: 2026-05-29
   and half-close handling should not grow more tightly coupled.
 - Plan UUID/key rotation and revocation workflow beyond basic lease
   prune/revoke.
+- Use the pcap flow experiment to compare adaptive shaper captures against the
+  previous unshaped baseline before adding more complex copula/joint models.

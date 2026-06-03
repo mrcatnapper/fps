@@ -97,6 +97,16 @@ without claiming resistance to advanced timing/size traffic analysis.
   carrier TLS records are forwarded byte-for-byte, while opaque
   datagram/control data is inserted as separate hint-classified TLS Application
   Data records.
+- [x] Add first size-aware shaper increment: inserted classified FPS records can
+  be padded to planner-selected full TLS record wire sizes with commit-safe
+  queue/budget handling.
+- [x] Add first adaptive shaper baseline: shared per-process TLS-record
+  size/delay CDF training, delayed client upgrade warmup and encrypted server
+  snapshot bootstrap for clients.
+- Add pcap-level statistical shaper checks for packet-size and timing
+  distributions over representative carrier profiles.
+- Decide from pcap experiments whether independent adaptive CDFs are sufficient
+  or whether size/time correlation needs a copula or another joint model.
 - After review, decide whether transcript-bound one-time hints can evolve into
   a handshake-less FPS record classifier inspired by stream-transcript covert
   channels, or whether explicit upgrade plus classified-record insertion remains

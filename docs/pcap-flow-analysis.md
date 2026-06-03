@@ -115,15 +115,23 @@ traffic-shape mimicry.
 
 ## Engineering Conclusion
 
-The next traffic-analysis work should focus on classified-record scheduling and shaping,
-not on TLS record syntactic validity alone. Useful next experiments:
+The next traffic-analysis work should focus on classified-record scheduling and
+shaping, not on TLS record syntactic validity alone. The first shaper increment
+now pads inserted classified FPS records to planner-selected full TLS record
+wire sizes. The current shaper baseline also trains an adaptive CDF from parsed
+carrier TLS records across sessions and can bootstrap clients with encrypted
+server snapshots. This is necessary, but not sufficient, for statistical
+mimicry.
+Useful next experiments:
 
 - compare a pure carrier capture against carrier-plus-FPS captures at several
   TUN rates;
-- cap or pace covert datagram frames so they do not create a separate near-MTU packet
-  band;
-- schedule FPS envelopes against the carrier's observed cadence instead of
-  flushing immediately whenever TUN data is available;
+- cap or pace covert datagram frames so they do not create a separate near-MTU
+  packet band;
+- evaluate whether adaptive CDF scheduling reduces the near-MTU packet band and
+  cadence shift visible in this baseline capture;
+- add a pcap-level check that compares observed post-upgrade record-size and
+  inter-packet distributions against the learned carrier model;
 - rerun the same pcap analysis over real browser/application carrier sessions,
   not only the deterministic debug carrier;
 - keep `is_pcap_looks_like_tls.py` as a basic wire-shape regression, but add a
@@ -131,3 +139,230 @@ not on TLS record syntactic validity alone. Useful next experiments:
 
 For now, treat these plots as a diagnostic baseline. They show that FPS is
 syntactically TLS-shaped, but not yet statistically shaped.
+
+## Remote Market-Data Carrier Experiment
+
+The next experiment moved away from local Docker loopback and debug WSS traffic.
+It used a real remote Linux host for `fps_server`, captured the public
+`fps_client <-> fps_server` link on the remote host's Ethernet interface, and
+used periodic HTTPS GET requests to a public cryptocurrency exchange market-data
+API as the carrier. The exact external service is intentionally not part of the
+project documentation; the relevant traffic shape is a small client request
+followed by a response of roughly 32 KiB.
+
+Experiment parameters:
+
+- `fps_server` ran on the remote host and listened on TCP port `443`;
+- `fps_client` ran locally and connected to that public endpoint;
+- the capture filter selected only the client public IP and server TCP port
+  `443`, excluding the server's separate outbound connection to the origin;
+- the market-data poller used one persistent HTTPS connection, one GET about
+  every 0.5 seconds, and 150 total polls;
+- `security.zero_rtt.client_upgrade_delay_ms` was set to `10000`, so the plots
+  have a visible pre-upgrade learning window;
+- `security.zero_rtt.client_upgrade_delay_sigma_ms` should be set to `0` when
+  reproducing this experiment so the upgrade split is deterministic;
+- the shaper used adaptive record-size and inter-record-delay CDF learning with
+  encrypted server-to-client CDF snapshots;
+- after upgrade, bounded UDP probes produced opaque FPS datagrams over the TUN
+  adapter.
+
+Readable plots from the refined run:
+
+![Remote market-data carrier packet size and timing overview](./assets/pcap-flow/market-data-remote-overview.png)
+
+![Remote market-data carrier packet-size and inter-packet quantiles](./assets/pcap-flow/market-data-remote-quantiles.png)
+
+Wire-shape check:
+
+```text
+total TLS records: 1033
+client -> server Application Data records: 255
+server -> client Application Data records: 774
+content types observed: ChangeCipherSpec, Handshake, ApplicationData
+tcpdump kernel drops: 0
+```
+
+Carrier workload:
+
+| Metric | Value |
+| --- | ---: |
+| Capture duration | about 75.1 s |
+| Upgrade split | about 10.5 s after capture start |
+| Market-data polls | 150 |
+| Market-data response bytes | about 4.81 MiB total |
+| Captured packets | 4576 |
+
+Visible FPS TCP-link packet statistics:
+
+Important capture caveat: these packet-size values come from an endpoint capture
+on a virtualized Linux host. Large values such as 8-14 KiB are expected when
+GRO/GSO/TSO, checksum offload or hypervisor-side aggregation are active; they
+represent coalesced packets as exposed to `tcpdump`, not Ethernet frames of that
+size on the physical wire and not IP fragmentation. The TLS record parser check
+below still validates the byte-stream shape, but exact L2/MTU-size conclusions
+require capturing after offload is disabled or from an external tap.
+
+| Phase | Duration | Packets | IP throughput | IP size p50 | IP size p95 | inter-packet p50 | inter-packet p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before upgrade | about 10.1 s | 184 | about 0.56 Mbit/s | 261 B | 14532 B | 0.94 ms | 473 ms |
+| after upgrade | about 64.5 s | 4392 | about 1.02 Mbit/s | 261 B | 5844 B | 0.76 ms | 82.7 ms |
+
+Direction-specific post-upgrade statistics:
+
+| Direction | Packets | IP throughput | IP size p50 | IP size p95 | TCP payload p50 | TCP payload p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| client to server | 2189 | about 0.021 Mbit/s | 52 B | 261 B | 0 B | 209 B |
+| server to client | 2203 | about 1.00 Mbit/s | 3212 B | 5844 B | 3160 B | 5792 B |
+
+FPS/TUN signal from daemon counters:
+
+| Direction | Probe | FPS daemon result |
+| --- | --- | --- |
+| client to server | small UDP datagrams | 103 datagram frames, 6144 bytes accepted by the server-side FPS session |
+| server to client | 240 UDP datagrams, 1200-byte payloads | 240 datagram frames, 294720 bytes delivered to the client-side FPS session |
+
+An earlier diagnostic run attempted 256-byte client-to-server UDP payloads before
+the shaper-aware fragmentation pass. The adaptive shaper learned that this
+carrier's client-to-server TLS records were small request records; it therefore
+kept the oversized covert payload queued instead of emitting a larger,
+easier-to-fingerprint client-to-server TLS record. That was the correct
+security-biased behavior for the baseline shaper, but it also showed why FPS
+datagram fragmentation belongs directly in the shaped send path: if the next
+datagram is too large for the sampled TLS record, FPS should split it into
+smaller opaque datagram fragments; if the fragment is smaller than the sampled
+record, the classified-record codec can fill the remainder with encrypted
+padding.
+
+The refined run used smaller client-to-server UDP payloads so FPS could insert
+classified records in both directions. The ad-hoc UDP socket bound to the
+server's own TUN address did not receive those local packets, so this experiment
+does not claim an application-level client-to-server UDP throughput number.
+The daemon counters are still useful for the pcap question: FPS did encode,
+send, classify and accept client-to-server datagram frames without breaking TLS
+record syntax.
+
+### Offload-Controlled Remote Repeat
+
+The same remote-host experiment was repeated with endpoint offload effects
+explicitly reduced on the capture host. Before starting `tcpdump`, the remote
+Ethernet interface was changed from:
+
+```text
+tcp-segmentation-offload: on
+generic-segmentation-offload: on
+generic-receive-offload: on
+rx-gro-hw: on
+```
+
+to:
+
+```text
+tcp-segmentation-offload: off
+generic-segmentation-offload: off
+generic-receive-offload: off
+rx-gro-hw: off
+```
+
+The original settings were restored after the capture. This is still an
+endpoint capture inside a virtualized environment, not an external tap, but it
+removes the impossible 8-14 KiB endpoint packet artifacts seen in the earlier
+run. In this repeat, all observed IP packets were at or below 1500 bytes.
+
+Readable plots from the offload-controlled run:
+
+![Offload-controlled remote market-data packet size and timing overview](./assets/pcap-flow/market-data-remote-offload-overview.png)
+
+![Offload-controlled remote market-data packet-size and inter-packet quantiles](./assets/pcap-flow/market-data-remote-offload-quantiles.png)
+
+Experiment parameters:
+
+- `fps_server` ran on the remote host, in host networking, on TCP port `443`;
+- `fps_client` ran locally and connected to that public endpoint;
+- capture filter: client public IP plus server TCP port `443`, excluding the
+  server's separate outbound connection to the origin;
+- one persistent HTTPS market-data carrier connection, one GET about every
+  0.5 seconds, 140 successful polls and about 4.17 MiB of response body;
+- `security.zero_rtt.client_upgrade_delay_ms=10000` and
+  `security.zero_rtt.client_upgrade_delay_sigma_ms=0`;
+- after upgrade, bounded UDP probes generated opaque TUN datagrams in both
+  directions: small client-to-server probes and denser server-to-client probes.
+
+Wire-shape check:
+
+```text
+total TLS records: 682
+client -> server Application Data records: 177
+server -> client Application Data records: 501
+content types observed: ChangeCipherSpec, Handshake, ApplicationData
+```
+
+Visible FPS TCP-link packet statistics:
+
+| Phase | Duration | Packets | IP throughput | IP size max | IP size p50 | IP size p95 | inter-packet p50 | inter-packet p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before upgrade | about 10.2 s | 566 | about 0.51 Mbit/s | 1500 B | 1500 B | 1500 B | 0.004 ms | 24.2 ms |
+| after upgrade | about 66.8 s | 3258 | about 0.46 Mbit/s | 1500 B | 1500 B | 1500 B | 0.004 ms | 27.8 ms |
+
+Direction-specific post-upgrade statistics:
+
+| Direction | Packets | IP throughput | IP size p50 | IP size p95 | TCP payload p50 | TCP payload p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| client to server | 600 | about 0.008 Mbit/s | 52 B | 308 B | 0 B | 256 B |
+| server to client | 2658 | about 0.45 Mbit/s | 1500 B | 1500 B | 1448 B | 1448 B |
+
+The offload-controlled capture confirms the earlier interpretation with a
+cleaner packet-size view. The response-heavy carrier naturally produces many
+MTU-sized server-to-client packets, while the client-to-server direction remains
+sparse and request-sized. FPS preserved parseable TLS record syntax after
+upgrade and did not create endpoint-captured packets larger than the interface
+MTU once GRO/GSO/TSO effects were disabled.
+
+The very small inter-packet medians should not be overinterpreted as physical
+wire timing. They are endpoint `tcpdump` timestamps for bursts of already
+segmented packets in a virtualized environment. They are useful for regression
+comparison between runs on the same host, but final mimicry claims still require
+an external capture point or a controlled bare-metal capture setup.
+
+### Remote-Carrier Interpretation
+
+This capture is closer to a real automated carrier than the local WSS debug
+baseline. It shows three practical points:
+
+- the link remains syntactically TLS-shaped after upgrade;
+- the adaptive shaper respects directional carrier asymmetry instead of forcing
+  large records into the thin client-to-server request stream;
+- a dense response-heavy HTTPS polling carrier can provide useful
+  server-to-client covert capacity, but it is not a balanced full-duplex carrier
+  unless the application naturally sends larger client-to-server records too.
+
+The next useful research step is to repeat the same measurement with carriers
+whose application protocol is naturally full-duplex or client-upload-heavy, then
+compare post-upgrade CDF drift against the carrier-only baseline.
+
+For repeatable follow-up runs, a live adaptive profile can be exported from a
+running daemon with `fps_client --write-shaper-profile --config client.json
+--output profile.json` or the equivalent `fps_server` command. The exported JSON
+uses compact CDF pairs and can be used as a static bootstrap profile for later
+captures without replaying the original training window.
+
+When FPS has not been deployed yet, a baseline can also be prepared offline from
+a carrier-only pcap:
+
+```sh
+python3 tools/pcap_to_shaper_profile.py carrier-baseline.pcap \
+  --port 443 \
+  --profile-id example-origin-v1 \
+  --output profile.json
+```
+
+This uses TCP reassembly and TLS record parsing rather than packet boundaries.
+It therefore remains valid when the pcap contains fragmented or coalesced TCP
+segments, as long as the selected TCP stream is complete enough to parse TLS
+records.
+
+For future shaper experiments, treat Docker bridge and VM endpoint captures as
+operational diagnostics rather than final wire evidence. They can validate TLS
+record syntax and shaper behavior at the byte-stream level, but physical packet
+size claims require an external capture point or an endpoint measurement with
+offload effects explicitly controlled.
