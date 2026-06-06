@@ -4,6 +4,74 @@
 
 ## 2026-06-06
 
+### Android Docker build and connected native smoke
+
+Goal:
+
+- Add a real Android runtime smoke path that loads `libfps_android_native.so`
+  and calls `FpsNative.nativeCoreSmoke()` on a device or emulator.
+- Add a reproducible Android Docker build/test image so host SDK/NDK/vcpkg
+  paths are no longer required for ordinary Android assemble/unit checks.
+
+Planned steps:
+
+- Add an `androidTest` instrumented smoke test for `nativeVersion()` and
+  `nativeCoreSmoke() == "ok"`.
+- Add `Dockerfile.android` for Ubuntu 24.04, JDK, Android command-line tools,
+  SDK platform/build tools, NDK 28.2, SDK CMake, vcpkg and Android OpenSSL
+  triplets.
+- Add `tools/run_android_checks.sh` with host, Docker and opt-in connected
+  modes.
+- Add a GitHub Actions Android build job that uses `Dockerfile.android` for
+  Gradle unit tests and APK assembly, but does not require an emulator.
+- Update Android testing/developer docs and verify host/Docker Android checks
+  plus the regular Linux regression baseline.
+
+Completed:
+
+- Added `NativeCoreSmokeInstrumentedTest`, an `androidTest` that loads
+  `libfps_android_native.so` and verifies both `nativeVersion()` and the
+  OpenSSL/Asio-backed `nativeCoreSmoke()` path on a real Android runtime.
+- Added AndroidX test runner dependencies and configured the app
+  instrumentation runner.
+- Added `Dockerfile.android`, a Ubuntu 24.04 Android build/test image with JDK
+  21, Android command-line tools, platform/build-tools 36, NDK 28.2, SDK CMake,
+  isolated Boost headers from Ubuntu packages and Android OpenSSL from vcpkg.
+- Added `tools/run_android_checks.sh` with host, Docker and opt-in connected
+  modes. The default host/Docker check runs JVM unit tests, debug APK assembly
+  and debug androidTest APK assembly; connected mode requires an attached
+  device/emulator.
+- Added a GitHub Actions `android-build` job that builds `Dockerfile.android`
+  and runs the same non-emulator Android checks in the container.
+- Updated public testing/specification docs and Android developer notes. The
+  docs now treat Docker as the reproducible Android build environment, while
+  emulator/device execution remains an explicit runtime check.
+- Self-review found that the Android helper still defaulted to host SDK paths
+  outside Docker. Changed `tools/run_android_checks.sh` so the default outside
+  Docker is the reproducible Docker path, while the image sets
+  `FPS_ANDROID_DOCKER=1` to run host checks inside the container.
+
+Verification:
+
+- `tools/run_android_checks.sh --host`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh`
+- `tools/run_android_checks.sh --connected` exited with code 2 because no
+  attached Android device/emulator was in the `device` state; this is expected
+  for the opt-in runtime check in the current workspace.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `cmake -S . -B build && cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON && cmake --build cmake-build-tun -j 2 && sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local-gcc tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_COMPILER=clang FPS_DOCKER_IMAGE=fps:local-clang tools/run_quality_checks.sh --docker`
+- `FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `git diff --check`
+
 ### Android core OpenSSL smoke
 
 Goal:

@@ -166,6 +166,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Extend Android native smoke to reusable protocol/datagram/TLS-TCP carrier
   sources with Android OpenSSL and Boost.Asio, without importing Linux
   daemon/config/runtime code.
+- [x] Add a reproducible Android Docker build/test image plus an opt-in
+  connected instrumented native smoke for device/emulator runtime validation.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
   `dev/ANDROID_APP_PLAN.md`: prototype the accepted app-owned carrier plus
   two-phase lease/TUN runtime model.

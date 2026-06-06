@@ -54,6 +54,11 @@ Current Android policy:
 - Android links OpenSSL as the vcpkg triplet `libcrypto.a`, so the APK native
   library should not need a separate `libcrypto.so`.
 
+`Dockerfile.android` exists to make this Android dependency boundary
+reproducible. It installs the Android SDK/NDK and only the Android OpenSSL vcpkg
+triplets. It must not become the dependency model for Linux, Alpine, product
+Docker images or Boost.
+
 Rules:
 
 - keep product code behind project facades (`FPS_LOG_*`, crypto helpers,

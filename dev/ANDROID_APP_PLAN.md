@@ -9,12 +9,15 @@ handoff artifact, not operator documentation.
   protocol code.
 - Maintain a minimal Android app module that can be built from the command line
   without Android Studio.
+- Keep ordinary Android build/unit checks reproducible in `Dockerfile.android`
+  so host SDK/NDK/vcpkg paths are optional for CI and routine rebuilds.
 - Build a JNI native library for `arm64-v8a` and `x86_64` that reuses:
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold headless: no real VPN lifecycle, GUI, emulator or carrier
-  manager yet.
+- Keep the scaffold mostly headless: no real VPN lifecycle, GUI or carrier
+  manager yet. A connected instrumented smoke exists, but it is opt-in and runs
+  only when an external Android device or emulator is attached.
 
 ## Environment
 
@@ -48,6 +51,19 @@ ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
 Do not use vcpkg for Linux, Docker, Alpine or Boost in this project. Those
 paths continue to use distro packages or the existing isolated Boost header
 root.
+
+The same environment is available without relying on host SDK paths:
+
+```bash
+tools/run_android_checks.sh
+tools/run_android_checks.sh --docker
+```
+
+`Dockerfile.android` is a CI/build image, not an Android emulator image and not
+the Linux product runtime image. It installs the Android SDK/NDK and Android
+OpenSSL triplets, then runs the host Android checks inside the container.
+Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
+SDK use must be requested explicitly with `--host`.
 
 ## Accepted Runtime Direction
 
@@ -93,6 +109,12 @@ Linux-oriented CMake targets:
 ## Verification
 
 ```bash
-./gradlew :android:app:testDebugUnitTest
-./gradlew :android:app:assembleDebug
+tools/run_android_checks.sh
+tools/run_android_checks.sh --docker
+tools/run_android_checks.sh --host
+tools/run_android_checks.sh --connected
 ```
+
+`--connected` requires `adb devices` to show a device or emulator in the
+`device` state. It installs and runs the instrumented native smoke on that
+runtime; it is not part of ordinary CI.

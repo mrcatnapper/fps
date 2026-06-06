@@ -94,7 +94,26 @@ Local non-Docker Python runtime dependencies are pinned in
 ## Android Bootstrap Checks
 
 The Android client scaffold is command-line only; Android Studio is not
-required. Install the Android SDK under `/opt/android-sdk` and export:
+required. The preferred reproducible path is Docker:
+
+```sh
+tools/run_android_checks.sh
+tools/run_android_checks.sh --docker
+```
+
+Outside Docker, no arguments default to `--docker`. Inside `Dockerfile.android`,
+the container sets `FPS_ANDROID_DOCKER=1`, so no arguments default to the host
+Gradle checks against the SDK installed in the image. This keeps ordinary
+Android verification independent from host SDK/NDK/vcpkg paths.
+
+`Dockerfile.android` installs JDK 21, Android command-line tools, platform 36,
+build-tools 36.0.0, NDK 28.2, SDK CMake and Android OpenSSL through vcpkg. This
+image is a build/test image, not the FPS product runtime image. It deliberately
+does not include an emulator; connected tests run against an external device or
+emulator through the host `adb` server.
+
+Host SDK checks remain available for developers who already have a local SDK.
+Install the Android SDK under `/opt/android-sdk` and export:
 
 ```sh
 export ANDROID_HOME=/opt/android-sdk
@@ -120,14 +139,31 @@ ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
 This vcpkg usage is intentionally limited to Android OpenSSL. Linux, Docker,
 Alpine and Boost dependency paths are not managed by vcpkg.
 
-Run Android checks through the repository Gradle wrapper, not the old system
-Gradle:
+Run host Android checks through the repository helper or the Gradle wrapper, not
+the old system Gradle:
 
 ```sh
+tools/run_android_checks.sh --host
 ./gradlew :android:app:tasks --all
 ./gradlew :android:app:testDebugUnitTest
 ./gradlew :android:app:assembleDebug
+./gradlew :android:app:assembleDebugAndroidTest
 ```
+
+`tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
+and assembles the instrumented test APK. It does not require an emulator.
+
+To execute the native runtime smoke on an attached device or emulator:
+
+```sh
+adb devices
+tools/run_android_checks.sh --connected
+```
+
+The connected check runs `:android:app:connectedDebugAndroidTest`, loads
+`libfps_android_native.so` on the target, and calls the JNI `nativeVersion()` and
+`nativeCoreSmoke()` paths. It is opt-in because it requires a real Android
+runtime.
 
 The current native Android smoke builds `fps_android_native` for `arm64-v8a` and
 `x86_64`. It reuses the FPS IPv4 TCP/UDP 5-tuple parser and links a reusable
@@ -166,8 +202,8 @@ The repository defines three GitHub Actions workflow files:
 
 - `CI`: runs on pull requests, pushes to `main` and manual dispatch. It covers
   `ubuntu-24.04 x gcc/clang` local builds/tests through the repository
-  `Dockerfile` `ci` stage, plus Docker build/runtime smoke for Ubuntu
-  GCC/clang and Alpine GCC images.
+  `Dockerfile` `ci` stage, Docker build/runtime smoke for Ubuntu GCC/clang and
+  Alpine GCC images, and the Android Docker build/unit/APK assembly smoke.
 - `Quality`: runs on schedule and manual dispatch. It executes
   `tools/run_quality_checks.sh --all` inside the same `Dockerfile` `ci` stage,
   including clang-20, ASan/UBSan, Valgrind, llvm-cov and bounded libFuzzer

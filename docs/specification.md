@@ -680,6 +680,10 @@ Linux-specific runtime is separate:
   operator paths remain outside Android targets. Header-only
   Boost.Describe/MP11/Endian remain usable on Android through an isolated Boost
   header root.
+- Android build/unit checks are reproducible through `Dockerfile.android`.
+  Runtime validation is intentionally separate: the connected instrumented smoke
+  loads the native library and calls the core smoke on an attached device or
+  emulator, but emulator execution is not required for ordinary Linux CI.
 
 ## 9. Observability
 
