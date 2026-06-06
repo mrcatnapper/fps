@@ -286,7 +286,8 @@ application-specific payload.
 
 `CovertDatagramTransport` maintains the generic carrier pool:
 
-- `add_carrier_session` is called only after Zero-RTT authentication;
+- generic `CovertCarrier` handles are registered only after Zero-RTT
+  authentication;
 - outbound opaque datagrams select carriers round-robin while respecting
   closed/full queues;
 - if one carrier write queue is full, the transport tries another carrier;

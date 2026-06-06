@@ -31,10 +31,32 @@ Completed so far:
   follow-up work.
 - Updated the specification, beta status and roadmap to describe the intended
   platform boundary more precisely.
+- Split CMake targets into narrow `fps_datagram_core`, concrete
+  `fps_tls_tcp_carrier`, `fps_tun_adapter`, narrow `fps_core` and
+  `fps_linux_runtime`.
+- Decoupled `TunTunnelAdapter` from `TlsTcpCarrierSession`. It now registers
+  generic `CovertCarrier` handles by `CarrierId`, returns replaced carrier ids
+  for duplicate-client replacement, and receives inbound decoded frames by
+  carrier id.
+- Rewired the Linux relay runtime to use `session_id` as the carrier id and to
+  own the `CarrierId -> TlsTcpCarrierSession` mapping for stopping replaced
+  duplicate-UUID sessions.
+- Rewrote `test_tun_tunnel_adapter` around fake `CovertCarrier` fixtures so the
+  TUN adapter tests no longer require concrete TLS/TCP sessions.
 
 Verification:
 
-- Pending; documentation pass only so far.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `git diff --check`
 
 ## 2026-06-03
 

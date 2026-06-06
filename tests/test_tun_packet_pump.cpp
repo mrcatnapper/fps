@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
 #include "support/fps_test_helpers.hpp"
 
 namespace {
@@ -237,7 +238,7 @@ BOOST_AUTO_TEST_CASE(read_packet_from_fd_enqueues_datagram_frame_to_carrier_sess
     CodecSessionFixture fixture;
     auto fds = socket_pair();
     fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
-    BOOST_CHECK(manager.add_carrier_session(fixture.session));
+    BOOST_CHECK(manager.add_carrier(fps::net::make_tls_tcp_carrier_adapter(1, fixture.session)));
     auto pump = fps::net::TunPacketPump::create(fixture.io, fds[0].release(), manager, fps::net::TunPacketPumpConfig{.mtu = 64});
     const auto packet = bytes({0x45, 0x00, 0x00, 0x14, 0xbb});
     fps::ByteVector received(expected_tls_record_size(packet.size()));

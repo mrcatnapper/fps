@@ -87,22 +87,30 @@ target_link_libraries(fps_protocol_core
 
 target_compile_definitions(fps_protocol_core PUBLIC BOOST_LOG_DYN_LINK)
 
-# Generic covert datagram scheduling plus the current TLS-over-TCP carrier
-# implementation. Non-TLS carriers should plug into CovertCarrier without
-# depending on the TLS/TCP session implementation.
-add_library(fps_carrier_core
+# Generic covert datagram scheduling. Product adapters and concrete carriers
+# plug into CovertCarrier without depending on the current TLS/TCP session.
+add_library(fps_datagram_core
+  src/net/covert_datagram_transport.cpp)
+
+fps_configure_library(fps_datagram_core)
+
+target_link_libraries(fps_datagram_core
+  PUBLIC
+    fps_protocol_core)
+
+# Current concrete TLS-over-TCP carrier implementation.
+add_library(fps_tls_tcp_carrier
   src/net/client_upgrade_delay.cpp
-  src/net/covert_datagram_transport.cpp
   src/net/tcp_socket_options.cpp
   src/net/tls_tcp_carrier_adapter.cpp
   src/net/tls_tcp_carrier_session.cpp
   src/net/tls_tcp_carrier_session_io.cpp)
 
-fps_configure_library(fps_carrier_core)
+fps_configure_library(fps_tls_tcp_carrier)
 
-target_link_libraries(fps_carrier_core
+target_link_libraries(fps_tls_tcp_carrier
   PUBLIC
-    fps_protocol_core
+    fps_datagram_core
     Boost::system)
 
 add_library(fps_tun_adapter
@@ -115,13 +123,13 @@ fps_configure_library(fps_tun_adapter)
 
 target_link_libraries(fps_tun_adapter
   PUBLIC
-    fps_carrier_core
+    fps_datagram_core
   PRIVATE
     Boost::filesystem
     Boost::json)
 
 add_library(fps_core INTERFACE)
-target_link_libraries(fps_core INTERFACE fps_protocol_core fps_carrier_core fps_tun_adapter)
+target_link_libraries(fps_core INTERFACE fps_protocol_core fps_datagram_core)
 
 if(FPS_BUILD_FUZZERS)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -164,6 +172,7 @@ target_include_directories(fps_linux_runtime
 target_link_libraries(fps_linux_runtime
   PUBLIC
     fps_tun_adapter
+    fps_tls_tcp_carrier
   PRIVATE
     Boost::filesystem
     Boost::json

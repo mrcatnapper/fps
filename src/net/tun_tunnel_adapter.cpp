@@ -4,8 +4,6 @@
 #include <stdexcept>
 #include <utility>
 
-#include "fps/net/tls_tcp_carrier_adapter.hpp"
-
 namespace fps::net {
 
 TunTunnelAdapter::TunTunnelAdapter(TunTunnelConfig config, TunTunnelHandlers handlers)
@@ -29,23 +27,23 @@ TunTunnelAdapter::TunTunnelAdapter(TunTunnelConfig config, TunTunnelHandlers han
     }
 }
 
-auto TunTunnelAdapter::add_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session) -> bool { return add_carrier_session(session, std::nullopt); }
+auto TunTunnelAdapter::add_carrier(CovertCarrier carrier) -> bool { return add_carrier(std::move(carrier), std::nullopt); }
 
-auto TunTunnelAdapter::add_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session, std::optional<std::uint32_t> assigned_client_ipv4) -> bool {
-    return add_carrier_session_with_metadata(session, assigned_client_ipv4, std::nullopt).added;
+auto TunTunnelAdapter::add_carrier(CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4) -> bool {
+    return add_carrier_with_metadata(std::move(carrier), assigned_client_ipv4, std::nullopt).added;
 }
 
-auto TunTunnelAdapter::add_carrier_session_with_metadata(
-    const std::shared_ptr<TlsTcpCarrierSession>& session, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id
-) -> TunTunnelCarrierRegistration {
+auto TunTunnelAdapter::add_carrier_with_metadata(CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id)
+    -> TunTunnelCarrierRegistration {
     TunTunnelCarrierRegistration result;
-    if(!session) {
+    if(carrier.id == kNoCarrierId) {
         return result;
     }
 
     prune_expired_carriers();
-    for(const auto& carrier : carrier_sessions_) {
-        if(carrier.session.lock() == session) {
+    const auto carrier_id = carrier.id;
+    for(const auto& existing : carrier_sessions_) {
+        if(existing.id == carrier_id) {
             return result;
         }
     }
@@ -55,12 +53,11 @@ auto TunTunnelAdapter::add_carrier_session_with_metadata(
             std::remove_if(
                 carrier_sessions_.begin(), carrier_sessions_.end(),
                 [&](const CarrierEntry& carrier) {
-                    auto locked = carrier.session.lock();
-                    if(!locked) {
+                    if(!transport_.is_carrier(carrier.id)) {
                         return true;
                     }
                     if(carrier.assigned_client_ipv4 == assigned_client_ipv4 && carrier.client_instance_id != client_instance_id) {
-                        result.replaced_sessions.push_back(std::move(locked));
+                        result.replaced_carrier_ids.push_back(carrier.id);
                         (void)transport_.remove_carrier_if(carrier.id);
                         return true;
                     }
@@ -72,14 +69,12 @@ auto TunTunnelAdapter::add_carrier_session_with_metadata(
         next_carrier_index_ = carrier_sessions_.empty() ? 0 : next_carrier_index_ % carrier_sessions_.size();
     }
 
-    const auto carrier_id = allocate_carrier_id();
-    if(!transport_.add_carrier(make_tls_tcp_carrier_adapter(carrier_id, session))) {
+    if(!transport_.add_carrier(std::move(carrier))) {
         return result;
     }
     carrier_sessions_.push_back(
         CarrierEntry{
             .id = carrier_id,
-            .session = session,
             .assigned_client_ipv4 = assigned_client_ipv4,
             .client_instance_id = client_instance_id,
         }
@@ -88,13 +83,10 @@ auto TunTunnelAdapter::add_carrier_session_with_metadata(
     return result;
 }
 
-auto TunTunnelAdapter::is_carrier_session(const std::shared_ptr<TlsTcpCarrierSession>& session) const noexcept -> bool {
-    const auto* carrier = find_carrier_entry(session);
-    return carrier != nullptr && transport_.is_carrier(carrier->id);
-}
+auto TunTunnelAdapter::is_carrier(CarrierId carrier_id) const noexcept -> bool { return find_carrier_entry(carrier_id) != nullptr && transport_.is_carrier(carrier_id); }
 
-auto TunTunnelAdapter::remove_carrier_session_if(const std::shared_ptr<TlsTcpCarrierSession>& session) noexcept -> bool {
-    if(!session) {
+auto TunTunnelAdapter::remove_carrier_if(CarrierId carrier_id) noexcept -> bool {
+    if(carrier_id == kNoCarrierId) {
         return false;
     }
 
@@ -103,11 +95,10 @@ auto TunTunnelAdapter::remove_carrier_session_if(const std::shared_ptr<TlsTcpCar
         std::remove_if(
             carrier_sessions_.begin(), carrier_sessions_.end(),
             [&](const CarrierEntry& carrier) {
-                const auto locked = carrier.session.lock();
-                if(!locked) {
+                if(!transport_.is_carrier(carrier.id)) {
                     return true;
                 }
-                if(locked == session) {
+                if(carrier.id == carrier_id) {
                     (void)transport_.remove_carrier_if(carrier.id);
                     removed = true;
                     return true;
@@ -125,7 +116,7 @@ auto TunTunnelAdapter::remove_carrier_session_if(const std::shared_ptr<TlsTcpCar
     return removed;
 }
 
-void TunTunnelAdapter::clear_carrier_sessions() noexcept {
+void TunTunnelAdapter::clear_carriers() noexcept {
     carrier_sessions_.clear();
     next_carrier_index_ = 0;
     transport_.clear_carrier_sessions();
@@ -157,8 +148,7 @@ auto TunTunnelAdapter::try_enqueue_on_carriers(std::span<const std::byte> packet
         next_carrier_index_ %= carrier_sessions_.size();
         const auto index = next_carrier_index_;
         auto& carrier = carrier_sessions_[index];
-        auto session = carrier.session.lock();
-        if(!session) {
+        if(!transport_.is_carrier(carrier.id)) {
             (void)transport_.remove_carrier_if(carrier.id);
             carrier_sessions_.erase(carrier_sessions_.begin() + static_cast<std::ptrdiff_t>(index));
             continue;
@@ -223,14 +213,13 @@ auto TunTunnelAdapter::handle_tun_packet_to_leased_client(std::span<const std::b
     return attempt.saw_matching_carrier ? attempt.result : TunTunnelResult::failure(TunTunnelError::unassigned_tun_destination);
 }
 
-void TunTunnelAdapter::handle_covert_frame(Direction direction, const DecodedFrame& frame) { handle_covert_frame(nullptr, direction, frame); }
+void TunTunnelAdapter::handle_covert_frame(Direction direction, const DecodedFrame& frame) { handle_covert_frame(kNoCarrierId, direction, frame); }
 
-void TunTunnelAdapter::handle_covert_frame(const std::shared_ptr<TlsTcpCarrierSession>& session, Direction direction, const DecodedFrame& frame) {
-    const auto* carrier = find_carrier_entry(session);
-    if(session && carrier == nullptr) {
+void TunTunnelAdapter::handle_covert_frame(CarrierId carrier_id, Direction direction, const DecodedFrame& frame) {
+    if(carrier_id != kNoCarrierId && find_carrier_entry(carrier_id) == nullptr) {
         return;
     }
-    transport_.handle_covert_frame(carrier == nullptr ? kNoCarrierId : carrier->id, direction, frame);
+    transport_.handle_covert_frame(carrier_id, direction, frame);
 }
 
 auto TunTunnelAdapter::outbound_tun_direction() const noexcept -> Direction { return transport_.outbound_direction(); }
@@ -244,7 +233,7 @@ void TunTunnelAdapter::prune_expired_carriers() {
         std::remove_if(
             carrier_sessions_.begin(), carrier_sessions_.end(),
             [&](const CarrierEntry& carrier) {
-                const auto expired = carrier.session.expired();
+                const auto expired = !transport_.is_carrier(carrier.id);
                 if(expired) {
                     (void)transport_.remove_carrier_if(carrier.id);
                     return true;
@@ -259,43 +248,6 @@ void TunTunnelAdapter::prune_expired_carriers() {
     } else {
         next_carrier_index_ %= carrier_sessions_.size();
     }
-}
-
-auto TunTunnelAdapter::allocate_carrier_id() -> CarrierId {
-    for(;;) {
-        auto id = next_carrier_id_++;
-        if(next_carrier_id_ == kNoCarrierId) {
-            next_carrier_id_ = 1;
-        }
-        if(id == kNoCarrierId || find_carrier_entry(id) != nullptr) {
-            continue;
-        }
-        return id;
-    }
-}
-
-auto TunTunnelAdapter::find_carrier_entry(const std::shared_ptr<TlsTcpCarrierSession>& session) -> CarrierEntry* {
-    if(!session) {
-        return nullptr;
-    }
-    for(auto& carrier : carrier_sessions_) {
-        if(carrier.session.lock() == session) {
-            return &carrier;
-        }
-    }
-    return nullptr;
-}
-
-auto TunTunnelAdapter::find_carrier_entry(const std::shared_ptr<TlsTcpCarrierSession>& session) const -> const CarrierEntry* {
-    if(!session) {
-        return nullptr;
-    }
-    for(const auto& carrier : carrier_sessions_) {
-        if(carrier.session.lock() == session) {
-            return &carrier;
-        }
-    }
-    return nullptr;
 }
 
 auto TunTunnelAdapter::find_carrier_entry(CarrierId carrier_id) -> CarrierEntry* {

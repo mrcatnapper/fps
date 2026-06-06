@@ -35,6 +35,7 @@
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
 #include "fps/net/tcp_socket_options.hpp"
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
 #include "fps/net/tun_tunnel_adapter.hpp"
@@ -305,6 +306,7 @@ public:
 private:
     struct BridgeSessionRuntimeState {
         std::optional<X25519PublicKey> authenticated_client_public_key;
+        std::optional<CarrierId> carrier_id;
         bool carrier_registered = false;
     };
 
@@ -389,23 +391,29 @@ private:
             assigned_lease = lease.value();
         }
 
-        auto registration = tun_tunnel_->add_carrier_session_with_metadata(
-            session, assigned_lease.has_value() ? std::optional<std::uint32_t>{assigned_lease->client_ipv4} : std::nullopt, client_instance_id
+        const auto carrier_id = static_cast<CarrierId>(session_id);
+        auto registration = tun_tunnel_->add_carrier_with_metadata(
+            make_tls_tcp_carrier_adapter(carrier_id, session),
+            assigned_lease.has_value() ? std::optional<std::uint32_t>{assigned_lease->client_ipv4} : std::nullopt, client_instance_id
         );
         if(!registration.added) {
-            state.carrier_registered = tun_tunnel_->is_carrier_session(session);
+            state.carrier_registered = tun_tunnel_->is_carrier(carrier_id);
+            if(state.carrier_registered) {
+                state.carrier_id = carrier_id;
+            }
             FPS_LOG_DEBUG("relay") << "event=carrier_already_registered source=zero_rtt session_id=" << session_id
                                    << " carrier_count=" << tun_tunnel_->carrier_count();
             return {.registered = false, .assigned_lease = std::move(assigned_lease)};
         }
 
         state.carrier_registered = true;
+        state.carrier_id = carrier_id;
         ++stats_.carriers_registered;
-        if(!registration.replaced_sessions.empty()) {
-            stats_.carriers_removed += static_cast<std::uint64_t>(registration.replaced_sessions.size());
+        if(!registration.replaced_carrier_ids.empty()) {
+            stats_.carriers_removed += static_cast<std::uint64_t>(registration.replaced_carrier_ids.size());
             ++stats_.duplicate_client_replacements;
             FPS_LOG_WARNING("relay") << "event=duplicate_client_replaced session_id=" << session_id
-                                     << " replaced_carriers=" << registration.replaced_sessions.size() << " carrier_count=" << tun_tunnel_->carrier_count();
+                                     << " replaced_carriers=" << registration.replaced_carrier_ids.size() << " carrier_count=" << tun_tunnel_->carrier_count();
         }
         FPS_LOG_INFO("relay") << "event=carrier_registered source=zero_rtt session_id=" << session_id << " carrier_count=" << tun_tunnel_->carrier_count();
 
@@ -423,9 +431,18 @@ private:
             }
         }
 
-        for(const auto& replaced : registration.replaced_sessions) {
-            if(replaced && replaced != session) {
+        for(const auto replaced_id : registration.replaced_carrier_ids) {
+            if(replaced_id == carrier_id) {
+                continue;
+            }
+            auto iter = authenticated_sessions_.find(replaced_id);
+            if(iter == authenticated_sessions_.end()) {
+                continue;
+            }
+            if(auto replaced = iter->second.lock()) {
                 replaced->stop();
+            } else {
+                authenticated_sessions_.erase(iter);
             }
         }
         return {.registered = true, .assigned_lease = std::move(assigned_lease)};
@@ -1003,7 +1020,7 @@ private:
                     return;
                 }
                 const auto session = session_slot->lock();
-                if(!self->tun_tunnel_->is_carrier_session(session)) {
+                if(!runtime_state->carrier_id.has_value() || !self->tun_tunnel_->is_carrier(*runtime_state->carrier_id)) {
                     if(self->try_handle_pre_registration_control(session_id, session, *runtime_state, direction, frame)) {
                         return;
                     }
@@ -1013,10 +1030,10 @@ private:
                 }
                 FPS_LOG_TRACE("bridge") << "event=covert_frame session_id=" << session_id << " direction=" << direction_name(direction)
                                         << " frame_type=" << static_cast<unsigned int>(frame.frame_type) << " payload_size=" << frame.payload.size();
-                self->tun_tunnel_->handle_covert_frame(session, direction, frame);
+                self->tun_tunnel_->handle_covert_frame(*runtime_state->carrier_id, direction, frame);
             }
         };
-        handlers.on_closed = [weak_self, session_slot, session_id](const TlsTcpCarrierSessionStats& stats) {
+        handlers.on_closed = [weak_self, runtime_state, session_id](const TlsTcpCarrierSessionStats& stats) {
             if(const auto self = weak_self.lock()) {
                 if(self->stats_.sessions_active > 0U) {
                     --self->stats_.sessions_active;
@@ -1025,8 +1042,8 @@ private:
                 self->authenticated_sessions_.erase(session_id);
                 self->record_closed_session(session_id, stats.zero_rtt_authenticated, stats.close);
                 if(self->tun_tunnel_) {
-                    const auto session = session_slot->lock();
-                    if(self->tun_tunnel_->remove_carrier_session_if(session)) {
+                    const auto removed = runtime_state->carrier_id.has_value() && self->tun_tunnel_->remove_carrier_if(*runtime_state->carrier_id);
+                    if(removed) {
                         ++self->stats_.carriers_removed;
                         FPS_LOG_INFO("relay") << "event=carrier_removed session_id=" << session_id << " carrier_count=" << self->tun_tunnel_->carrier_count();
                     }
