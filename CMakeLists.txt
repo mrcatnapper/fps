@@ -118,6 +118,7 @@ target_link_libraries(fps_tls_tcp_carrier
 
 add_library(fps_tun_adapter
   src/net/tun_lease.cpp
+  src/net/tun_packet.cpp
   src/net/tun_runtime.cpp
   src/net/tun_tunnel_adapter.cpp
   src/net/tun_packet_pump.cpp)
@@ -239,6 +240,7 @@ if(FPS_BUILD_TESTS)
     tests/test_tls_record_layer.cpp
     tests/test_tls_record_parser.cpp
     tests/test_tun_lease.cpp
+    tests/test_tun_packet.cpp
     tests/test_tun_packet_pump.cpp
     tests/test_wire.cpp
     tests/test_zero_rtt_upgrade.cpp)

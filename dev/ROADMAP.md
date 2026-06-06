@@ -30,6 +30,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   platform-neutral core so Android does not duplicate the profile format.
 - [x] Add an injectable TCP socket-protection hook so Android can protect
   carrier sockets before connect without forking the relay connect path.
+- [x] Add an outbound TUN packet policy hook with IPv4 TCP/UDP 5-tuple parsing
+  so Android can enforce split-tunnel UID allowlists before covert enqueue.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -159,9 +161,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
 - Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
-  full config parsing reusable where useful, add a socket-protection hook, and
-  prototype the accepted app-owned carrier plus two-phase lease/TUN Android
-  runtime model.
+  full config parsing reusable where useful, then prototype the accepted
+  app-owned carrier plus two-phase lease/TUN Android runtime model.
 
 ## Phase 7: Fuzzing And Soak
 

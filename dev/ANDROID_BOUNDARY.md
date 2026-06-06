@@ -24,6 +24,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   `connect`. Linux uses a no-op protector; Android can call
   `VpnService.protect(fd)` on the opened native socket before it can be captured
   by the VPN.
+- TUN packets read from the platform fd can be filtered before covert enqueue
+  through `TunTunnelHandlers::on_outbound_tun_packet`. The hook receives raw
+  packet bytes plus an optional parsed IPv4 TCP/UDP 5-tuple for Android
+  `ConnectivityManager.getConnectionOwnerUid(...)` split-tunnel enforcement.
 
 ## Implemented In This Increment
 
@@ -46,6 +50,9 @@ starts. It is a developer handoff document, not user/operator documentation.
   normalization into platform-neutral core.
 - Added a reusable TCP socket-protection hook and changed the relay outbound
   connect path to explicitly open, protect and only then connect target sockets.
+- Added `parse_ipv4_flow_tuple(...)` and an outbound TUN packet policy hook so
+  Android can fail closed for packets whose initiating UID is not in the
+  configured split-tunnel allowlist.
 
 ## Follow-Up Increments
 
@@ -74,6 +81,11 @@ starts. It is a developer handoff document, not user/operator documentation.
   create/configure the Android `VpnService` fd and start the native TUN pump.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
+- Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for
+  anti-leak policy. Android should also install an outbound TUN packet policy:
+  parse the TCP/UDP 5-tuple, ask `ConnectivityManager.getConnectionOwnerUid`,
+  allow only configured UIDs and drop `INVALID_UID`, unsupported protocols,
+  malformed packets and unknown fragments by default.
 - Keep the C++ core synchronous and same-executor. Android should expose a thin
   async/JNI facade that posts all native operations onto the FPS `io_context`.
 
@@ -86,6 +98,10 @@ starts. It is a developer handoff document, not user/operator documentation.
 - A local DNS proxy that maps selected carrier origins to FPS may help external
   carrier UX later, but it should not be part of the first Android beta. It must
   avoid resolving FPS's own carrier sockets back into the VPN.
+- Synthetic TCP RST for policy-rejected TCP SYN packets and UDP flow-decision
+  caching are useful UX/performance improvements, but first Android beta can
+  start with simple fail-closed packet drops and add those refinements after
+  device testing.
 - Passing already-protected Java/Kotlin sockets or fds into native code is a
   possible alternative to a C++ protector hook, but it complicates Boost.Asio
   ownership, resolver behavior and connect lifecycle.

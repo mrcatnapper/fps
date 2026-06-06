@@ -663,6 +663,12 @@ Linux-specific runtime is separate:
 - The first Android direction is app-owned carrier sessions, socket protection
   through `TcpSocketProtector`, hostname resolution through Android's underlying
   network, two-phase lease-before-TUN startup and split tunnel by default.
+- TUN adapters can install an outbound packet policy hook before covert
+  enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
+  TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android
+  should use this boundary to call the platform connection-owner API and
+  fail closed for UIDs outside the configured split-tunnel allowlist. The hook
+  must not log UUIDs, keys, raw packets or payload bytes.
 
 ## 9. Observability
 

@@ -63,6 +63,11 @@ Completed so far:
   outbound connect path now explicitly opens the target socket, invokes the
   protector, then connects. Linux uses a no-op protector; Android can wire this
   to `VpnService.protect(fd)` without copying the connect path.
+- Added `parse_ipv4_flow_tuple(...)` and an outbound TUN packet policy hook.
+  The hook receives raw packet bytes, optional parsed IPv4 TCP/UDP 5-tuple and
+  non-secret parse errors before covert enqueue, so Android can ask the platform
+  connection-owner API and fail closed for UIDs outside the split-tunnel
+  allowlist.
 
 Verification:
 
@@ -72,6 +77,7 @@ Verification:
 - `cmake -S . -B build`
 - `cmake --build build -j 2`
 - `./build/fps_unit_tests --run_test=tcp_socket_protector --catch_system_errors=no`
+- `./build/fps_unit_tests --run_test=tun_packet,tun_tunnel_adapter,enum_helpers --catch_system_errors=no`
 - `ctest --test-dir build --output-on-failure`
 - `ctest --test-dir build -L local --output-on-failure`
 - `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`

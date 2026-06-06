@@ -32,17 +32,37 @@ auto client_instance_id(std::uint8_t seed) -> fps::net::ClientInstanceId {
     return id;
 }
 
+void write_u16(fps::ByteVector& packet, std::size_t offset, std::uint16_t value) {
+    packet[offset] = static_cast<std::byte>((value >> 8U) & 0xffU);
+    packet[offset + 1U] = static_cast<std::byte>(value & 0xffU);
+}
+
+void write_u32(fps::ByteVector& packet, std::size_t offset, std::uint32_t value) {
+    packet[offset] = static_cast<std::byte>((value >> 24U) & 0xffU);
+    packet[offset + 1U] = static_cast<std::byte>((value >> 16U) & 0xffU);
+    packet[offset + 2U] = static_cast<std::byte>((value >> 8U) & 0xffU);
+    packet[offset + 3U] = static_cast<std::byte>(value & 0xffU);
+}
+
 auto ipv4_packet(std::uint32_t source, std::uint32_t destination) -> fps::ByteVector {
     auto packet = payload_of_size(20);
     packet[0] = static_cast<std::byte>(0x45U);
-    auto write_u32 = [&](std::size_t offset, std::uint32_t value) {
-        packet[offset] = static_cast<std::byte>((value >> 24U) & 0xffU);
-        packet[offset + 1U] = static_cast<std::byte>((value >> 16U) & 0xffU);
-        packet[offset + 2U] = static_cast<std::byte>((value >> 8U) & 0xffU);
-        packet[offset + 3U] = static_cast<std::byte>(value & 0xffU);
-    };
-    write_u32(12, source);
-    write_u32(16, destination);
+    write_u32(packet, 12, source);
+    write_u32(packet, 16, destination);
+    return packet;
+}
+
+auto tcp_ipv4_packet(std::uint32_t source, std::uint32_t destination, std::uint16_t source_port, std::uint16_t destination_port) -> fps::ByteVector {
+    fps::ByteVector packet(40);
+    packet[0] = static_cast<std::byte>(0x45U);
+    write_u16(packet, 2, 40);
+    packet[8] = static_cast<std::byte>(64);
+    packet[9] = static_cast<std::byte>(6);
+    write_u32(packet, 12, source);
+    write_u32(packet, 16, destination);
+    write_u16(packet, 20, source_port);
+    write_u16(packet, 22, destination_port);
+    packet[32] = static_cast<std::byte>(0x50);
     return packet;
 }
 
@@ -146,6 +166,97 @@ BOOST_AUTO_TEST_CASE(client_role_enqueues_tun_packet_client_to_server) {
     BOOST_CHECK(carrier.frames[0].direction == fps::Direction::client_to_server);
     BOOST_CHECK(carrier.frames[0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_CHECK(carrier.frames[0].payload == packet);
+}
+
+BOOST_AUTO_TEST_CASE(outbound_policy_receives_tcp_flow_tuple_before_enqueue) {
+    auto carrier = fake_carrier(1);
+    const auto source = ipv4(10, 66, 0, 2);
+    const auto destination = ipv4(203, 0, 113, 10);
+    std::vector<fps::net::TunFlowTuple> flows;
+    std::vector<std::size_t> packet_sizes;
+    std::vector<fps::net::TunTunnelEvent> events;
+    fps::net::TunTunnelAdapter manager{
+        fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64},
+        fps::net::TunTunnelHandlers{
+            .on_tun_packet = {},
+            .on_outbound_tun_packet =
+                [&](const fps::net::TunPacketPolicyContext& context) {
+                    BOOST_CHECK(context.role == fps::RelayRole::client);
+                    packet_sizes.push_back(context.packet.size());
+                    BOOST_REQUIRE(context.flow.has_value());
+                    BOOST_CHECK(!context.flow_error.has_value());
+                    flows.push_back(*context.flow);
+                    return fps::net::TunPacketPolicyDecision::allow;
+                },
+            .on_event = [&](fps::net::TunTunnelEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier(carrier.as_carrier()));
+
+    const auto packet = tcp_ipv4_packet(source, destination, 49152, 443);
+    auto queued = manager.handle_tun_packet(packet);
+
+    BOOST_REQUIRE(queued);
+    BOOST_REQUIRE_EQUAL(flows.size(), 1U);
+    BOOST_CHECK(flows[0].protocol == fps::net::TunIpProtocol::tcp);
+    BOOST_TEST(flows[0].source_ipv4 == source);
+    BOOST_TEST(flows[0].source_port == 49152U);
+    BOOST_TEST(flows[0].destination_ipv4 == destination);
+    BOOST_TEST(flows[0].destination_port == 443U);
+    BOOST_REQUIRE_EQUAL(packet_sizes.size(), 1U);
+    BOOST_TEST(packet_sizes[0] == packet.size());
+    BOOST_TEST(events.empty());
+    BOOST_REQUIRE_EQUAL(carrier.frames.size(), 1U);
+    BOOST_CHECK(carrier.frames[0].payload == packet);
+}
+
+BOOST_AUTO_TEST_CASE(outbound_policy_can_drop_packet_before_enqueue) {
+    auto carrier = fake_carrier(1);
+    std::vector<fps::net::TunTunnelEvent> events;
+    fps::net::TunTunnelAdapter manager{
+        fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64},
+        fps::net::TunTunnelHandlers{
+            .on_tun_packet = {},
+            .on_outbound_tun_packet = [](const fps::net::TunPacketPolicyContext&) { return fps::net::TunPacketPolicyDecision::drop; },
+            .on_event = [&](fps::net::TunTunnelEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier(carrier.as_carrier()));
+
+    auto result = manager.handle_tun_packet(tcp_ipv4_packet(ipv4(10, 66, 0, 2), ipv4(203, 0, 113, 10), 49152, 443));
+
+    BOOST_REQUIRE(!result);
+    BOOST_CHECK(result.error() == fps::net::TunTunnelError::packet_rejected_by_policy);
+    BOOST_TEST(carrier.frames.empty());
+    BOOST_REQUIRE_EQUAL(events.size(), 1U);
+    BOOST_CHECK(events[0] == fps::net::TunTunnelEvent::ignored_by_tun_policy);
+}
+
+BOOST_AUTO_TEST_CASE(outbound_policy_can_fail_closed_for_unparseable_flow) {
+    auto carrier = fake_carrier(1);
+    std::vector<fps::net::TunTunnelEvent> events;
+    fps::net::TunTunnelAdapter manager{
+        fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64},
+        fps::net::TunTunnelHandlers{
+            .on_tun_packet = {},
+            .on_outbound_tun_packet =
+                [](const fps::net::TunPacketPolicyContext& context) {
+                    BOOST_CHECK(context.flow_error.has_value());
+                    return context.flow.has_value() ? fps::net::TunPacketPolicyDecision::allow : fps::net::TunPacketPolicyDecision::drop;
+                },
+            .on_event = [&](fps::net::TunTunnelEvent event) { events.push_back(event); },
+        }
+    };
+    BOOST_CHECK(manager.add_carrier(carrier.as_carrier()));
+
+    auto result = manager.handle_tun_packet(bytes({0x45, 0x00, 0x00, 0x14}));
+
+    BOOST_REQUIRE(!result);
+    BOOST_CHECK(result.error() == fps::net::TunTunnelError::packet_rejected_by_policy);
+    BOOST_TEST(carrier.frames.empty());
+    BOOST_REQUIRE_EQUAL(events.size(), 2U);
+    BOOST_CHECK(events[0] == fps::net::TunTunnelEvent::unparseable_tun_flow);
+    BOOST_CHECK(events[1] == fps::net::TunTunnelEvent::ignored_by_tun_policy);
 }
 
 BOOST_AUTO_TEST_CASE(server_role_enqueues_tun_packet_server_to_client) {

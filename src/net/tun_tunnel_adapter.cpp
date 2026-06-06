@@ -131,6 +131,9 @@ auto TunTunnelAdapter::handle_tun_packet(std::span<const std::byte> packet) -> T
     if(packet.size() > config_.max_tun_packet_size) {
         return TunTunnelResult::failure(TunTunnelError::packet_too_large);
     }
+    if(!should_send_outbound_packet(packet)) {
+        return TunTunnelResult::failure(TunTunnelError::packet_rejected_by_policy);
+    }
 
     if(config_.role == RelayRole::server && config_.enforce_leased_clients) {
         return handle_tun_packet_to_leased_client(packet);
@@ -187,6 +190,29 @@ auto TunTunnelAdapter::try_enqueue_on_carriers(std::span<const std::byte> packet
     }
     attempt.result = TunTunnelResult::failure(TunTunnelError::no_carrier_session);
     return attempt;
+}
+
+auto TunTunnelAdapter::should_send_outbound_packet(std::span<const std::byte> packet) const -> bool {
+    if(!handlers_.on_outbound_tun_packet) {
+        return true;
+    }
+
+    std::optional<TunFlowTuple> flow;
+    std::optional<TunPacketParseError> flow_error;
+    auto parsed = parse_ipv4_flow_tuple(packet);
+    if(parsed) {
+        flow = parsed.value();
+    } else {
+        flow_error = parsed.error();
+        emit_event(TunTunnelEvent::unparseable_tun_flow);
+    }
+
+    const auto decision = handlers_.on_outbound_tun_packet(TunPacketPolicyContext{.role = config_.role, .packet = packet, .flow = flow, .flow_error = flow_error});
+    if(decision == TunPacketPolicyDecision::drop) {
+        emit_event(TunTunnelEvent::ignored_by_tun_policy);
+        return false;
+    }
+    return true;
 }
 
 auto TunTunnelAdapter::handle_tun_packet_round_robin(std::span<const std::byte> packet) -> TunTunnelResult {

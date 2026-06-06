@@ -197,7 +197,8 @@ template <typename Enum>
 }
 
 [[nodiscard]] auto should_rate_limit_tun_session_error(TunTunnelError error) noexcept -> bool {
-    return error == TunTunnelError::no_carrier_session || error == TunTunnelError::write_queue_full || error == TunTunnelError::non_ipv4_tun_destination;
+    return error == TunTunnelError::no_carrier_session || error == TunTunnelError::write_queue_full || error == TunTunnelError::non_ipv4_tun_destination ||
+           error == TunTunnelError::packet_rejected_by_policy;
 }
 
 [[nodiscard]] auto should_rate_limit_tls_parse_error(TlsParseError error) noexcept -> bool { return error == TlsParseError::invalid_header; }

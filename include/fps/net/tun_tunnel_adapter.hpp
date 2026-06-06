@@ -12,6 +12,7 @@
 #include "fps/core/types.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
 #include "fps/net/tun_lease.hpp"
+#include "fps/net/tun_packet.hpp"
 
 namespace fps::net {
 
@@ -26,15 +27,25 @@ struct TunTunnelConfig {
 
 BOOST_DEFINE_ENUM_CLASS(
     TunTunnelError, no_carrier_session, session_closed, empty_packet, packet_too_large, codec_error, tls_record_error, write_queue_full,
-    non_ipv4_tun_destination, unassigned_tun_destination, wrong_executor
+    non_ipv4_tun_destination, unassigned_tun_destination, wrong_executor, packet_rejected_by_policy
 )
 
 BOOST_DEFINE_ENUM_CLASS(
     TunTunnelEvent, ignored_non_datagram_frame, ignored_wrong_direction, ignored_malformed_fragment, ignored_out_of_order_fragment, ignored_mismatched_fragment,
-    ignored_oversized_fragment, ignored_reassembly_limit, ignored_non_ipv4_tun_packet, ignored_unassigned_tun_source, ignored_spoofed_tun_source
+    ignored_oversized_fragment, ignored_reassembly_limit, ignored_non_ipv4_tun_packet, ignored_unassigned_tun_source, ignored_spoofed_tun_source,
+    unparseable_tun_flow, ignored_by_tun_policy
 )
 
 using TunTunnelResult = Result<std::size_t, TunTunnelError>;
+
+BOOST_DEFINE_ENUM_CLASS(TunPacketPolicyDecision, allow, drop)
+
+struct TunPacketPolicyContext {
+    RelayRole role{RelayRole::client};
+    std::span<const std::byte> packet;
+    std::optional<TunFlowTuple> flow;
+    std::optional<TunPacketParseError> flow_error;
+};
 
 struct TunTunnelCarrierRegistration {
     bool added = false;
@@ -42,8 +53,9 @@ struct TunTunnelCarrierRegistration {
 };
 
 struct TunTunnelHandlers {
-    std::function<void(ByteVector)> on_tun_packet;
-    std::function<void(TunTunnelEvent)> on_event;
+    std::function<void(ByteVector)> on_tun_packet = {};
+    std::function<TunPacketPolicyDecision(const TunPacketPolicyContext&)> on_outbound_tun_packet = {};
+    std::function<void(TunTunnelEvent)> on_event = {};
 };
 
 class TunTunnelAdapter {
@@ -82,6 +94,7 @@ private:
     };
 
     [[nodiscard]] auto try_enqueue_on_carriers(std::span<const std::byte> packet, std::optional<std::uint32_t> assigned_destination) -> CarrierEnqueueAttempt;
+    [[nodiscard]] auto should_send_outbound_packet(std::span<const std::byte> packet) const -> bool;
     [[nodiscard]] auto handle_tun_packet_round_robin(std::span<const std::byte> packet) -> TunTunnelResult;
     [[nodiscard]] auto handle_tun_packet_to_leased_client(std::span<const std::byte> packet) -> TunTunnelResult;
     void prune_expired_carriers();
