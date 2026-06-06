@@ -57,6 +57,12 @@ Scope: the whole repository from the directory that contains this file.
 - Keep the Markdown work log in `dev/WORKLOG.md`.
 - In the log, record date, goal, decisions, completed steps, verification
   commands, open questions and links to relevant commits.
+- For large increments, first write the nearest tactical plan into an
+  appropriate Markdown file, usually `dev/WORKLOG.md` with a clear
+  "currently in progress" marker or a dedicated `dev/*.md` brief. At the end of
+  the increment, remove the in-progress marker or mark the plan as completed.
+  This is required so another agent can resume after context loss without
+  reconstructing the plan from chat history.
 - After context reset or handoff to another agent, first read `AGENTS.md`,
   `dev/WORKLOG.md`, `docs/specification.md` and Git history.
 - For both incremental and strategic planning, prefer the Pareto principle
@@ -117,6 +123,11 @@ Scope: the whole repository from the directory that contains this file.
 ## Testing
 
 - Any meaningful code change should come with unit or integration tests.
+- For large or contract-sensitive increments, prefer TDD: add focused failing
+  tests first, commit or clearly stage the intended red contract when useful,
+  and only then implement the production change. Red tests are part of the
+  handoff surface; after context loss they should make the desired behavior
+  obvious without requiring chat history.
 - For C++ unit tests, use Boost.Test unless the user agrees otherwise.
 - Cover edge cases:
   - fragmented/coalesced TLS records;
