@@ -2,6 +2,40 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-06
+
+### Start Android boundary hardening
+
+Goal:
+
+- Prepare the C++ core for Android application work by tightening the
+  protocol/datagram/TUN/Linux boundaries before adding any Android-specific
+  implementation.
+
+Decisions:
+
+- First preserve the tactical plan in documentation so the refactor can survive
+  context resets.
+- Treat `fps_core` as the narrow protocol/datagram layer. TLS/TCP carrier and
+  TUN adapter are explicit opt-in layers above it.
+- Decouple `TunTunnelAdapter` from `TlsTcpCarrierSession` in this increment.
+  The TUN adapter should register generic `CovertCarrier` handles by
+  `CarrierId`; the Linux relay runtime remains responsible for mapping carrier
+  ids back to concrete sessions and stopping replaced sessions.
+- Leave `TunRuntime` semantic cleanup, reusable config/profile parsing and
+  Android `VpnService.protect()`/DNS design for follow-up increments.
+
+Completed so far:
+
+- Added `dev/ANDROID_BOUNDARY.md` with findings, current increment scope and
+  follow-up work.
+- Updated the specification, beta status and roadmap to describe the intended
+  platform boundary more precisely.
+
+Verification:
+
+- Pending; documentation pass only so far.
+
 ## 2026-06-03
 
 ### Full verification before UX-footgun PR

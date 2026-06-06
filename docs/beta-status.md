@@ -33,9 +33,9 @@ and signed artifacts remain deferred.
   explicit TLS-over-TCP carrier sessions (`TlsTcpCarrierSession`) and the
   current `TunTunnelAdapter`. TUN is the first and most important product
   adapter for VPN service, but the datagram transport no longer assumes that
-  every covert payload is an IP packet. Build targets now reflect that split:
-  protocol core, carrier/datagram core, TUN adapter and Linux runtime can be
-  linked separately.
+  every covert payload is an IP packet. The Android boundary hardening plan in
+  `dev/ANDROID_BOUNDARY.md` tracks the remaining target/API cleanup before
+  Android application work starts.
 - Docker is the primary Linux runtime path. The base image contains FPS binaries,
   `fps_carrier`, route/debug tooling and the operator entrypoint, but no embedded
   SOCKS/HTTP proxy daemon.
@@ -162,6 +162,10 @@ Those remain release-hardening concerns.
 - Traffic-shape mimicry remains incomplete. FPS now has classified-record
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
+- Android reuse still needs boundary hardening beyond the Linux beta runtime:
+  TUN must depend only on generic covert datagram carriers, enqueue executor
+  affinity must be explicit, config/profile parsing should be shareable, and
+  Android must define `VpnService.protect()` plus DNS/route behavior.
 
 ## Public Beta Gate
 

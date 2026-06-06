@@ -62,10 +62,11 @@ Implementation boundary:
 - `fps_protocol_core` owns protocol primitives: TLS record parsing/wrapping,
   transcript-bound Zero-RTT, classified FPS records, envelope/frame codecs and
   shaping decisions. It does not open sockets or TUN devices.
-- `fps_carrier_core` owns the generic unreliable datagram transport contract:
+- `fps_datagram_core` owns the generic unreliable datagram transport contract:
   `CovertDatagramTransport` schedules opaque datagram frames across abstract
   `CovertCarrier` handles identified by `CarrierId`. This layer does not assume
   that the carrier is TLS, TCP, SSH, WebRTC or any other concrete protocol.
+- `fps_tls_tcp_carrier` owns the current TLS-over-TCP carrier implementation.
 - `TlsTcpCarrierSession` is the current concrete carrier implementation. It is
   deliberately named TLS/TCP because it owns TCP socket reads/writes, TLS record
   slicing, carrier transcript tracking, Zero-RTT state transitions and
@@ -630,19 +631,21 @@ Client profile CLI:
 
 ## 8.1 Platform Boundary
 
-`fps_core` is the platform-neutral layer intended for future Android reuse:
-crypto, Zero-RTT, classified-record codec, session/carrier scheduling, TUN framing,
-lease/control payloads and TUN packet pump do not depend on Linux `ip` or
-`/dev/net/tun`.
+`fps_core` is the narrow platform-neutral layer intended for future Android
+reuse: crypto, Zero-RTT, classified-record codec and generic datagram
+scheduling. TUN framing/adaptation and the TLS/TCP carrier are explicit opt-in
+targets above that core.
 
 Linux-specific runtime is separate:
 
 - `fps_linux_runtime` contains relay CLI app, Linux TUN open and production
   `TunRuntime`;
 - `TunRuntime` is injected into the relay app and provides TUN opening plus
-  no-shell `ip` execution;
+  no-shell `ip` execution. This remains a Linux runtime concern and should be
+  replaced by semantic Android `VpnService` operations in a later increment;
 - unit tests use fake runtime/configurator objects. Android should later provide
-  a `VpnService` file descriptor and Android network configurator.
+  a `VpnService` file descriptor, protected carrier sockets and Android network
+  configurator.
 
 ## 9. Observability
 
