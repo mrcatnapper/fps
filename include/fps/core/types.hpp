@@ -7,15 +7,24 @@
 #include <utility>
 #include <vector>
 
+#if !defined(FPS_DISABLE_BOOST_HEADERS) && __has_include("fps/core/enum.hpp")
 #include "fps/core/enum.hpp"
+#define FPS_CORE_TYPES_HAS_BOOST_DESCRIBE 1
+#endif
 
 namespace fps {
 
-BOOST_DEFINE_FIXED_ENUM_CLASS(Direction, std::uint8_t, client_to_server, server_to_client)
+enum class Direction : std::uint8_t { client_to_server, server_to_client };
 
-BOOST_DEFINE_FIXED_ENUM_CLASS(RelayRole, std::uint8_t, client, server)
+enum class RelayRole : std::uint8_t { client, server };
 
-BOOST_DEFINE_FIXED_ENUM_CLASS(Priority, std::uint8_t, bulk, normal, control)
+enum class Priority : std::uint8_t { bulk, normal, control };
+
+#if defined(FPS_CORE_TYPES_HAS_BOOST_DESCRIBE)
+BOOST_DESCRIBE_ENUM(Direction, client_to_server, server_to_client)
+BOOST_DESCRIBE_ENUM(RelayRole, client, server)
+BOOST_DESCRIBE_ENUM(Priority, bulk, normal, control)
+#endif
 
 using ByteVector = std::vector<std::byte>;
 

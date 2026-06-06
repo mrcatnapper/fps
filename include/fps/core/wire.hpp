@@ -1,6 +1,9 @@
 #pragma once
 
+#if !defined(FPS_DISABLE_BOOST_HEADERS) && __has_include(<boost/endian/conversion.hpp>)
 #include <boost/endian/conversion.hpp>
+#define FPS_CORE_WIRE_HAS_BOOST_ENDIAN 1
+#endif
 
 #include <array>
 #include <cstddef>
@@ -31,9 +34,16 @@ void append_be(ByteVector& out, Integer value) {
     static_assert(std::is_integral_v<Integer>);
     static_assert(std::is_unsigned_v<Integer>);
 
+#if defined(FPS_CORE_WIRE_HAS_BOOST_ENDIAN)
     const auto wire_value = boost::endian::native_to_big(value);
     const auto* first = reinterpret_cast<const std::byte*>(&wire_value);
     out.insert(out.end(), first, first + sizeof(Integer));
+#else
+    for(std::size_t i = 0; i < sizeof(Integer); ++i) {
+        const auto shift = (sizeof(Integer) - 1U - i) * 8U;
+        out.push_back(static_cast<std::byte>((value >> shift) & static_cast<Integer>(0xffU)));
+    }
+#endif
 }
 
 template <typename Integer>
@@ -41,9 +51,18 @@ template <typename Integer>
     static_assert(std::is_integral_v<Integer>);
     static_assert(std::is_unsigned_v<Integer>);
 
+#if defined(FPS_CORE_WIRE_HAS_BOOST_ENDIAN)
     Integer wire_value{};
     std::memcpy(&wire_value, bytes.data() + offset, sizeof(Integer));
     return boost::endian::big_to_native(wire_value);
+#else
+    Integer value{};
+    for(std::size_t i = 0; i < sizeof(Integer); ++i) {
+        value <<= 8U;
+        value |= static_cast<Integer>(std::to_integer<unsigned int>(bytes[offset + i]));
+    }
+    return value;
+#endif
 }
 
 } // namespace fps

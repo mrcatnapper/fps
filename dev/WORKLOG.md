@@ -4,6 +4,83 @@
 
 ## 2026-06-06
 
+### Android client bootstrap
+
+Goal:
+
+- Prepare a command-line Android/Kotlin/NDK development baseline without
+  installing Android Studio.
+- Add the first Android application scaffold and a small JNI/native smoke that
+  proves existing platform-neutral C++ code can be built for Android.
+
+Decisions:
+
+- Use Kotlin for the Android application layer: `VpnService`, lifecycle,
+  profile import, carrier configuration, split-tunnel policy and status UI will
+  live there.
+- Keep FPS protocol/datagram/TUN parsing logic in C++ and expose it through a
+  narrow JNI/C ABI. Kotlin/Native is not used.
+- Do not try to cross-link the full Linux daemon or broad `fps_core` target in
+  this first increment. `fps_core` still depends on Boost/OpenSSL components
+  that need a deliberate Android dependency strategy.
+- The first native Android smoke should reuse an already dependency-light core
+  boundary, `parse_ipv4_flow_tuple(...)`, because Android split-tunnel policy
+  needs this 5-tuple and it builds without Linux runtime, TUN device code,
+  Boost.JSON, Boost.Log or OpenSSL.
+- Target API 29+ because `ConnectivityManager.getConnectionOwnerUid(...)` is
+  the intended Android UID-policy API.
+
+Planned steps:
+
+- Install command-line Android SDK tooling under `/opt/android-sdk`: platform
+  tools, API 36 platform/build tools, NDK 28.2 and CMake.
+- Add a Gradle wrapper and a minimal Kotlin Android app module.
+- Add a JNI bridge plus Kotlin wrapper that exposes native IPv4 TCP/UDP
+  5-tuple parsing to headless JVM tests.
+- Add developer documentation for SDK setup and the next native-dependency
+  work required before full FPS core linkage.
+- Verify Android assemble/unit tests and the existing local Linux regression
+  suite.
+
+Completed:
+
+- Installed command-line Android SDK tooling under `/opt/android-sdk`:
+  command-line tools 20.0, platform-tools 37.0.0, Android platform/build-tools
+  36, NDK 28.2.13676358 and SDK CMake 3.22.1.
+- Added Gradle wrapper 9.1.0 and a minimal Kotlin Android app module.
+- Added a `VpnService` shell, Kotlin split-tunnel policy model with headless
+  JUnit tests, and a JNI native library target for `arm64-v8a`/`x86_64`.
+- Reused `parse_ipv4_flow_tuple(...)` in the Android native target. To make that
+  possible without leaking host system headers, Android CMake now creates an
+  isolated generated include root containing only `boost/` from
+  `FPS_ANDROID_BOOST_DIR` (default `/usr/include/boost`). Boost.Describe,
+  Boost.MP11 and Boost.Endian remain active in Android native code.
+- Diagnosed the original Android Boost.Describe failure: adding `/usr/include`
+  to an NDK target lets host glibc headers override or participate in NDK
+  `#include_next` lookup. The fix is an isolated Boost header root, not
+  disabling Describe.
+- Added an Android `FPS_LOG_*` stream backend over `__android_log_print`, while
+  Linux continues to use Boost.Log behind the same facade. The Android macro
+  now checks the runtime severity threshold before constructing the stream, so
+  disabled log statements do not evaluate or format `<<` arguments.
+- Added `dev/ANDROID_APP_PLAN.md` plus public testing/specification notes for
+  the current Android scaffold and the remaining Boost/OpenSSL dependency work.
+
+Verification:
+
+- `java -version`
+- `sdkmanager --version`
+- `adb version`
+- `/opt/android-sdk/ndk/28.2.13676358/ndk-build --version`
+- `./gradlew :android:app:tasks --all`
+- `./gradlew :android:app:testDebugUnitTest :android:app:assembleDebug`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Verify Android boundary hardening PR
 
 Goal:

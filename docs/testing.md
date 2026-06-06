@@ -91,6 +91,49 @@ Useful environment variables:
 Local non-Docker Python runtime dependencies are pinned in
 `requirements-runtime.txt`.
 
+## Android Bootstrap Checks
+
+The Android client scaffold is command-line only; Android Studio is not
+required. Install the Android SDK under `/opt/android-sdk` and export:
+
+```sh
+export ANDROID_HOME=/opt/android-sdk
+export ANDROID_SDK_ROOT=/opt/android-sdk
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+```
+
+Required SDK packages for the current scaffold:
+
+```sh
+sdkmanager "platform-tools" "platforms;android-36" \
+  "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+```
+
+Run Android checks through the repository Gradle wrapper, not the old system
+Gradle:
+
+```sh
+./gradlew :android:app:tasks --all
+./gradlew :android:app:testDebugUnitTest
+./gradlew :android:app:assembleDebug
+```
+
+The current native Android smoke builds `fps_android_native` for `arm64-v8a` and
+`x86_64` and reuses the FPS IPv4 TCP/UDP 5-tuple parser. It does not yet link
+the full FPS protocol core.
+
+Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
+root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to
+Android CMake targets; that leaks host libc headers into the NDK sysroot. To
+use another Boost header installation, pass:
+
+```sh
+./gradlew :android:app:assembleDebug \
+  -Pandroid.injected.cmake.configure.arguments=-DFPS_ANDROID_BOOST_DIR=/path/to/boost
+```
+
+Compiled Boost/OpenSSL Android dependency handling remains a separate follow-up.
+
 ## GitHub Actions CI
 
 The repository defines three GitHub Actions workflow files:

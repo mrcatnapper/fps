@@ -1,6 +1,10 @@
 #pragma once
 
+#if !defined(FPS_DISABLE_BOOST_HEADERS) && __has_include(<boost/describe/class.hpp>) && __has_include(<boost/describe/enum.hpp>)
 #include <boost/describe/class.hpp>
+#include <boost/describe/enum.hpp>
+#define FPS_NET_TUN_PACKET_HAS_BOOST_DESCRIBE 1
+#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -11,12 +15,33 @@
 
 namespace fps::net {
 
-BOOST_DEFINE_FIXED_ENUM_CLASS(TunIpProtocol, std::uint8_t, tcp, udp)
+enum class TunIpProtocol : std::uint8_t { tcp, udp };
 
-BOOST_DEFINE_ENUM_CLASS(
-    TunPacketParseError, empty_packet, non_ipv4_packet, ipv4_header_too_short, ipv4_total_length_too_short, non_initial_fragment, unsupported_protocol,
-    transport_header_too_short, invalid_tcp_header_length
+enum class TunPacketParseError {
+    empty_packet,
+    non_ipv4_packet,
+    ipv4_header_too_short,
+    ipv4_total_length_too_short,
+    non_initial_fragment,
+    unsupported_protocol,
+    transport_header_too_short,
+    invalid_tcp_header_length,
+};
+
+#if defined(FPS_NET_TUN_PACKET_HAS_BOOST_DESCRIBE)
+BOOST_DESCRIBE_ENUM(TunIpProtocol, tcp, udp)
+BOOST_DESCRIBE_ENUM(
+    TunPacketParseError,
+    empty_packet,
+    non_ipv4_packet,
+    ipv4_header_too_short,
+    ipv4_total_length_too_short,
+    non_initial_fragment,
+    unsupported_protocol,
+    transport_header_too_short,
+    invalid_tcp_header_length
 )
+#endif
 
 struct TunFlowTuple {
     TunIpProtocol protocol{TunIpProtocol::tcp};
@@ -25,7 +50,9 @@ struct TunFlowTuple {
     std::uint32_t destination_ipv4{};
     std::uint16_t destination_port{};
 };
+#if defined(FPS_NET_TUN_PACKET_HAS_BOOST_DESCRIBE)
 BOOST_DESCRIBE_STRUCT(TunFlowTuple, (), (protocol, source_ipv4, source_port, destination_ipv4, destination_port))
+#endif
 
 using TunFlowTupleResult = Result<TunFlowTuple, TunPacketParseError>;
 
