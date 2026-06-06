@@ -624,6 +624,9 @@ Client profile CLI:
   client JSON;
 - `fps_client --write-config-from-uri URI --output PATH [--force]` decodes and
   writes client JSON with the same secret-file overwrite rules;
+- `fps://v1` decoding is implemented in platform-neutral core. It normalizes the
+  JSON profile and validates the client UUID plus server public key before the
+  Linux CLI writes or prints it;
 - the generated profile contains `client_uuid`, `server_public_key_base64`,
   profile id, carrier endpoint, codec settings and client-side TUN
   auto-configuration defaults;
@@ -636,9 +639,9 @@ Client profile CLI:
 ## 8.1 Platform Boundary
 
 `fps_core` is the narrow platform-neutral layer intended for future Android
-reuse: crypto, Zero-RTT, classified-record codec and generic datagram
-scheduling. TUN framing/adaptation and the TLS/TCP carrier are explicit opt-in
-targets above that core.
+reuse: crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
+normalization and generic datagram scheduling. TUN framing/adaptation and the
+TLS/TCP carrier are explicit opt-in targets above that core.
 
 Linux-specific runtime is separate:
 

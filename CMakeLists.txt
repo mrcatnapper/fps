@@ -60,6 +60,7 @@ function(fps_configure_library target_name)
 endfunction()
 
 add_library(fps_protocol_core
+  src/core/client_profile.cpp
   src/core/cover_session_pipeline.cpp
   src/core/covert_codec.cpp
   src/core/crypto.cpp
@@ -82,6 +83,7 @@ target_link_libraries(fps_protocol_core
   PRIVATE
     Boost::log
     Boost::log_setup
+    Boost::json
     Boost::thread
     OpenSSL::Crypto)
 
@@ -216,6 +218,7 @@ if(FPS_BUILD_TESTS)
 
   add_executable(fps_unit_tests
     tests/test_main.cpp
+    tests/test_client_profile.cpp
     tests/test_cover_session_pipeline.cpp
     tests/test_covert_codec.cpp
     tests/test_crypto.cpp

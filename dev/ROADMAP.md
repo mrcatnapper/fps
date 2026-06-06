@@ -26,6 +26,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   link/address operations so platform code owns OS-specific configuration.
 - [x] Make the generic carrier enqueue contract executor-explicit and reject
   wrong-thread synchronous enqueue calls before session queues are touched.
+- [x] Move `fps://v1` client profile URI import and JSON validation into
+  platform-neutral core so Android does not duplicate the profile format.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -155,8 +157,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
 - Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
-  config/profile parsing reusable, decide if Android needs an async wrapper over
-  the synchronous carrier executor contract, and design
+  full config parsing reusable where useful, decide if Android needs an async
+  wrapper over the synchronous carrier executor contract, and design
   `VpnService.protect()`/DNS behavior before Android implementation work.
 
 ## Phase 7: Fuzzing And Soak

@@ -51,6 +51,10 @@ Completed so far:
   optional `can_enqueue_now`, the TLS/TCP carrier adapter ties that guard to the
   session owner thread, and wrong-thread calls return `wrong_executor` without
   touching session queues.
+- Extracted `fps://v1` client profile URI encode/decode and normalized profile
+  JSON validation into `fps_protocol_core`. Linux CLI profile import/export now
+  uses the shared helper, and Android can reuse the same UUID/server-public-key
+  validation without linking Linux runtime.
 
 Verification:
 

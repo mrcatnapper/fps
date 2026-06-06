@@ -12,8 +12,8 @@ starts. It is a developer handoff document, not user/operator documentation.
   `CarrierId`, lease IPv4 and encrypted client-instance metadata. It no longer
   includes or stores `TlsTcpCarrierSession`.
 - `fps_core` is the narrow Android-facing aggregate: protocol core plus generic
-  datagram core. The current TLS/TCP carrier and TUN adapter are explicit
-  opt-in targets above it.
+  datagram core plus reusable `fps://v1` client profile normalization. The
+  current TLS/TCP carrier and TUN adapter are explicit opt-in targets above it.
 - `TunRuntime` is injectable and exposes semantic operations: open TUN, set link
   MTU, bring link up and replace IPv4 address. Linux `ip` argv generation is
   contained in the Linux runtime.
@@ -38,12 +38,13 @@ starts. It is a developer handoff document, not user/operator documentation.
   `TunRuntime` link/address operations.
 - Made carrier enqueue executor affinity explicit through `CovertCarrier` and
   the TLS/TCP carrier adapter.
+- Moved `fps://v1` client profile URI encode/decode and profile JSON
+  normalization into platform-neutral core.
 
 ## Follow-Up Increments
 
-- Extract profile/config parsing that Android must share: `fps://v1`, UUID
-  validation, server-public-key validation and normalized non-secret profile
-  output.
+- Decide how much full relay config parsing Android should reuse directly,
+  beyond the shared `fps://v1` profile import layer.
 - Define the Android `VpnService` design: TUN fd ownership, `protect()` for
   carrier sockets, DNS/route behavior, lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
