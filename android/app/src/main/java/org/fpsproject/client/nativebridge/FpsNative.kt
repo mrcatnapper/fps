@@ -9,5 +9,7 @@ object FpsNative {
 
     external fun nativeVersion(): String
 
+    external fun nativeCoreSmoke(): String
+
     external fun parseIpv4FlowTuple(packet: ByteArray): TunFlowTuple?
 }

@@ -4,6 +4,62 @@
 
 ## 2026-06-06
 
+### Android core OpenSSL smoke
+
+Goal:
+
+- Extend the Android native smoke from the 5-tuple parser to reusable FPS core
+  components that depend on OpenSSL and Boost.Asio.
+- Keep vcpkg usage limited to Android OpenSSL only; Linux, Docker, Alpine and
+  Boost dependency paths must remain unchanged.
+
+Planned steps:
+
+- Install `openssl:arm64-android` and `openssl:x64-android` through the existing
+  `/opt/vcpkg` tree with `ANDROID_NDK_HOME` pointing at NDK 28.2.
+- Extend Android CMake with `FPS_ANDROID_VCPKG_ROOT`, ABI-to-vcpkg-triplet
+  mapping and explicit OpenSSL include/library paths.
+- Add an Android static smoke library built from protocol core,
+  `CovertDatagramTransport`, socket-protection/options and TLS/TCP carrier
+  session sources, while still excluding Linux runtime/config/CLI/TUN device
+  code.
+- Extend the JNI smoke with an OpenSSL-backed `nativeCoreSmoke()` entry point
+  that performs random bytes, X25519, HKDF, AEAD and Boost.Asio object
+  construction without network access.
+- Update Android/C++ testing documentation and verify Gradle Android builds,
+  Linux build/tests and diff hygiene.
+
+Completed:
+
+- Installed Android OpenSSL through the existing vcpkg tree:
+  `openssl:arm64-android` and `openssl:x64-android`.
+- Added Android CMake `FPS_ANDROID_VCPKG_ROOT`, ABI-to-triplet mapping and
+  explicit static `libcrypto.a` linkage. This path is Android-only; Linux,
+  Docker, Alpine and Boost remain outside vcpkg.
+- Added `fps_android_core_smoke`, a static Android NDK smoke library built from
+  protocol codec/crypto, Zero-RTT, classified records, shaper, generic covert
+  datagram transport, socket protection/options, TLS/TCP carrier session
+  sources and TUN packet parsing.
+- Added `FpsNative.nativeCoreSmoke()`, which runs OpenSSL-backed random bytes,
+  X25519 public/private checks, HKDF-SHA256, ChaCha20-Poly1305 roundtrip and
+  constructs Boost.Asio `io_context`/TCP socket objects without connecting.
+- Updated Android developer notes, cross-platform C++ policy, public testing
+  instructions, roadmap and specification to describe the new Android core
+  smoke boundary.
+
+Verification:
+
+- `ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 /opt/vcpkg/vcpkg install openssl:arm64-android openssl:x64-android`
+- `./gradlew :android:app:testDebugUnitTest :android:app:assembleDebug`
+- `readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libfps_android_native.so | rg 'NEEDED|RUNPATH|RPATH'`
+- `readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/x86_64/libfps_android_native.so | rg 'NEEDED|RUNPATH|RPATH'`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Android client bootstrap
 
 Goal:

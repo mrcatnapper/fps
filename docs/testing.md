@@ -99,6 +99,7 @@ required. Install the Android SDK under `/opt/android-sdk` and export:
 ```sh
 export ANDROID_HOME=/opt/android-sdk
 export ANDROID_SDK_ROOT=/opt/android-sdk
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358
 export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
 ```
 
@@ -108,6 +109,16 @@ Required SDK packages for the current scaffold:
 sdkmanager "platform-tools" "platforms;android-36" \
   "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
 ```
+
+Install Android OpenSSL through the existing vcpkg checkout:
+
+```sh
+ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
+  /opt/vcpkg/vcpkg install openssl:arm64-android openssl:x64-android
+```
+
+This vcpkg usage is intentionally limited to Android OpenSSL. Linux, Docker,
+Alpine and Boost dependency paths are not managed by vcpkg.
 
 Run Android checks through the repository Gradle wrapper, not the old system
 Gradle:
@@ -119,8 +130,11 @@ Gradle:
 ```
 
 The current native Android smoke builds `fps_android_native` for `arm64-v8a` and
-`x86_64` and reuses the FPS IPv4 TCP/UDP 5-tuple parser. It does not yet link
-the full FPS protocol core.
+`x86_64`. It reuses the FPS IPv4 TCP/UDP 5-tuple parser and links a reusable
+native core smoke library built from protocol codec/crypto, generic covert
+datagram transport and TLS/TCP carrier sources. The smoke intentionally excludes
+Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
+operator paths.
 
 Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
 root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to
@@ -132,7 +146,19 @@ use another Boost header installation, pass:
   -Pandroid.injected.cmake.configure.arguments=-DFPS_ANDROID_BOOST_DIR=/path/to/boost
 ```
 
-Compiled Boost/OpenSSL Android dependency handling remains a separate follow-up.
+Boost.Asio/Boost.System are used header-only in this Android target through
+`BOOST_ERROR_CODE_HEADER_ONLY` and `BOOST_SYSTEM_NO_DEPRECATED`. OpenSSL is
+linked from the Android vcpkg triplet as `libcrypto.a`.
+
+Optional native dependency sanity check:
+
+```sh
+readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libfps_android_native.so \
+  | grep -E 'NEEDED|RUNPATH|RPATH'
+```
+
+The output should reference Android runtime libraries such as `liblog.so`,
+`libm.so`, `libdl.so` and `libc.so`, not host paths under `/usr/lib`.
 
 ## GitHub Actions CI
 

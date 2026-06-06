@@ -672,12 +672,14 @@ Linux-specific runtime is separate:
   should use this boundary to call the platform connection-owner API and
   fail closed for UIDs outside the configured split-tunnel allowlist. The hook
   must not log UUIDs, keys, raw packets or payload bytes.
-- The current Android scaffold intentionally does not link the full C++ core
-  yet. Full Android core linkage still needs a reproducible dependency strategy
-  for compiled Boost/OpenSSL pieces such as Boost.JSON/Boost.System where
-  linked and OpenSSL, or narrower Android-facing targets that avoid those
-  dependencies where possible. Header-only Boost.Describe/MP11/Endian remain
-  usable on Android through an isolated Boost header root.
+- The current Android scaffold links a native smoke boundary made of protocol
+  codec/crypto, generic covert datagram transport, TLS/TCP carrier sources and
+  the TUN 5-tuple parser. Android OpenSSL is cross-built through vcpkg only for
+  Android triplets; Boost.Asio/Boost.System are used header-only in that smoke.
+  Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
+  operator paths remain outside Android targets. Header-only
+  Boost.Describe/MP11/Endian remain usable on Android through an isolated Boost
+  header root.
 
 ## 9. Observability
 

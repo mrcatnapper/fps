@@ -42,6 +42,18 @@ Boost.JSON where linked, Boost.System and OpenSSL must be cross-built for
 Android or hidden behind narrower platform interfaces before broad native-core
 linkage.
 
+Current Android policy:
+
+- vcpkg is used only for Android OpenSSL (`openssl:arm64-android` and
+  `openssl:x64-android` under `/opt/vcpkg`);
+- Linux, Docker and Alpine builds do not use vcpkg;
+- Boost is not supplied by vcpkg for Android. Header-only Boost use goes through
+  `FPS_ANDROID_BOOST_DIR` and the generated isolated `boost/` include root;
+- Boost.Asio/Boost.System are compiled header-only in the Android smoke with
+  `BOOST_ERROR_CODE_HEADER_ONLY` and `BOOST_SYSTEM_NO_DEPRECATED`;
+- Android links OpenSSL as the vcpkg triplet `libcrypto.a`, so the APK native
+  library should not need a separate `libcrypto.so`.
+
 Rules:
 
 - keep product code behind project facades (`FPS_LOG_*`, crypto helpers,
