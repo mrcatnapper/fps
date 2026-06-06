@@ -20,6 +20,10 @@ starts. It is a developer handoff document, not user/operator documentation.
 - `CovertCarrier` enqueue is a synchronous same-executor contract. The transport
   checks `can_enqueue_now` when provided and rejects wrong-thread calls before
   touching session queues.
+- Outbound TCP carrier connects go through `TcpSocketProtector` before
+  `connect`. Linux uses a no-op protector; Android can call
+  `VpnService.protect(fd)` on the opened native socket before it can be captured
+  by the VPN.
 
 ## Implemented In This Increment
 
@@ -40,13 +44,15 @@ starts. It is a developer handoff document, not user/operator documentation.
   the TLS/TCP carrier adapter.
 - Moved `fps://v1` client profile URI encode/decode and profile JSON
   normalization into platform-neutral core.
+- Added a reusable TCP socket-protection hook and changed the relay outbound
+  connect path to explicitly open, protect and only then connect target sockets.
 
 ## Follow-Up Increments
 
 - Decide how much full relay config parsing Android should reuse directly,
   beyond the shared `fps://v1` profile import layer.
-- Define the Android `VpnService` design: TUN fd ownership, `protect()` for
-  carrier sockets, DNS/route behavior, lifecycle/reconnect and status reporting.
+- Define the Android `VpnService` design: TUN fd ownership, DNS/route behavior,
+  lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 
@@ -58,9 +64,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Carrier behavior should be app-configurable at the Android layer: for example
   periodic HTTPS GETs, TCP keepalive-friendly requests or WSS stream probes. This
   does not require protocol-core changes yet.
-- Add a platform socket-protection hook before Android carrier `connect`. Linux
-  remains no-op; Android calls `VpnService.protect(fd)` before the socket can be
-  captured by the VPN.
+- Use the platform socket-protection hook before Android carrier `connect`.
+  Linux remains no-op; Android calls `VpnService.protect(fd)` before the socket
+  can be captured by the VPN.
 - Resolve FPS server/carrier hostnames through Android's underlying
   `ConnectivityManager.Network`, then pass resolved endpoints into native code.
   Do not rely on native resolver behavior after VPN activation.

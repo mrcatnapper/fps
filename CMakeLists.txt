@@ -104,6 +104,7 @@ target_link_libraries(fps_datagram_core
 add_library(fps_tls_tcp_carrier
   src/net/client_upgrade_delay.cpp
   src/net/tcp_socket_options.cpp
+  src/net/tcp_socket_protector.cpp
   src/net/tls_tcp_carrier_adapter.cpp
   src/net/tls_tcp_carrier_session.cpp
   src/net/tls_tcp_carrier_session_io.cpp)
@@ -232,6 +233,7 @@ if(FPS_BUILD_TESTS)
     tests/test_covert_datagram_transport.cpp
     tests/test_tun_tunnel_adapter.cpp
     tests/test_shaper.cpp
+    tests/test_tcp_socket_protector.cpp
     tests/test_tls_tcp_carrier_session.cpp
     tests/test_tcp_relay_app.cpp
     tests/test_tls_record_layer.cpp

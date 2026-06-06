@@ -235,8 +235,14 @@ struct RepeatedLogState {
 
 class TcpRelayServer : public std::enable_shared_from_this<TcpRelayServer> {
 public:
-    TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime)
-        : io_(io), acceptor_(io), status_acceptor_(io), shaper_snapshot_timer_(io), config_(std::move(config)), tun_runtime_(std::move(tun_runtime)) {}
+    TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector)
+        : io_(io)
+        , acceptor_(io)
+        , status_acceptor_(io)
+        , shaper_snapshot_timer_(io)
+        , config_(std::move(config))
+        , tun_runtime_(std::move(tun_runtime))
+        , socket_protector_(std::move(socket_protector)) {}
 
     ~TcpRelayServer() { cleanup_status_socket(); }
 
@@ -959,17 +965,35 @@ private:
                                              << " target=" << endpoint_to_string(self->config_.target) << " error=" << error.message();
                     return;
                 }
-                boost::asio::async_connect(
-                    *origin_socket, results,
-                    [self, client_socket, origin_socket, resolver, session_id](const boost::system::error_code& connect_error, const tcp::endpoint&) {
-                        if(connect_error) {
+                std::vector<tcp::endpoint> endpoints;
+                for(const auto& result : results) {
+                    endpoints.push_back(result.endpoint());
+                }
+                async_protected_connect(
+                    origin_socket, std::move(endpoints), self->socket_protector_,
+                    TcpSocketProtectContext{.role = self->config_.role,
+                                            .session_id = session_id,
+                                            .target_host = self->config_.target.host,
+                                            .target_port = self->config_.target.port},
+                    [self, client_socket, origin_socket, resolver, session_id](TcpProtectedConnectResult result) {
+                        if(!result.protect_error.empty()) {
+                            ++self->stats_.sessions_closed;
+                            self->record_closed_session(
+                                session_id, false,
+                                relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_socket_protect_failed")
+                            );
+                            FPS_LOG_WARNING("relay") << "event=target_socket_protect_failed session_id=" << session_id
+                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << result.protect_error;
+                            return;
+                        }
+                        if(result.error) {
                             ++self->stats_.sessions_closed;
                             self->record_closed_session(
                                 session_id, false,
                                 relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_connect_failed")
                             );
                             FPS_LOG_WARNING("relay") << "event=target_connect_failed session_id=" << session_id
-                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << connect_error.message();
+                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << result.error.message();
                             return;
                         }
                         if(!self->apply_session_tcp_options(*origin_socket, session_id, "target")) {
@@ -1220,6 +1244,7 @@ private:
     boost::asio::steady_timer shaper_snapshot_timer_;
     TcpRelayConfig config_;
     std::shared_ptr<TunRuntime> tun_runtime_;
+    std::shared_ptr<TcpSocketProtector> socket_protector_;
     std::shared_ptr<Shaper> shaper_;
     std::shared_ptr<TunTunnelAdapter> tun_tunnel_;
     std::shared_ptr<TunPacketPump> tun_pump_;
@@ -1240,9 +1265,13 @@ private:
 
 } // namespace
 
-auto run_tcp_relay(const TcpRelayConfig& config) -> int { return run_tcp_relay(config, linux_platform::make_linux_tun_runtime()); }
+auto run_tcp_relay(const TcpRelayConfig& config) -> int { return run_tcp_relay(config, linux_platform::make_linux_tun_runtime(), make_noop_tcp_socket_protector()); }
 
 auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime) -> int {
+    return run_tcp_relay(config, std::move(tun_runtime), make_noop_tcp_socket_protector());
+}
+
+auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector) -> int {
     log::init_console_logging(config.logging);
     FPS_LOG_INFO("relay") << "event=start role=" << role_name(config.role) << " log_level=" << log::severity_to_string(config.logging.level);
 
@@ -1251,7 +1280,10 @@ auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun
         if(!tun_runtime) {
             tun_runtime = linux_platform::make_linux_tun_runtime();
         }
-        auto server = std::make_shared<TcpRelayServer>(io, config, std::move(tun_runtime));
+        if(!socket_protector) {
+            socket_protector = make_noop_tcp_socket_protector();
+        }
+        auto server = std::make_shared<TcpRelayServer>(io, config, std::move(tun_runtime), std::move(socket_protector));
         if(!server->start()) {
             return 1;
         }

@@ -28,6 +28,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   wrong-thread synchronous enqueue calls before session queues are touched.
 - [x] Move `fps://v1` client profile URI import and JSON validation into
   platform-neutral core so Android does not duplicate the profile format.
+- [x] Add an injectable TCP socket-protection hook so Android can protect
+  carrier sockets before connect without forking the relay connect path.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for

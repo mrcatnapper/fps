@@ -59,6 +59,10 @@ Completed so far:
   platform socket protection before connect, DNS through Android underlying
   network, lease-before-TUN startup, split tunnel by default and a thin async
   facade that posts into the native `io_context`.
+- Added `TcpSocketProtector` as the platform socket-protection seam. The relay
+  outbound connect path now explicitly opens the target socket, invokes the
+  protector, then connects. Linux uses a no-op protector; Android can wire this
+  to `VpnService.protect(fd)` without copying the connect path.
 
 Verification:
 
@@ -67,6 +71,7 @@ Verification:
 - `python3 tests/integration/docker_artifacts.py --repo /workspaces`
 - `cmake -S . -B build`
 - `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_socket_protector --catch_system_errors=no`
 - `ctest --test-dir build --output-on-failure`
 - `ctest --test-dir build -L local --output-on-failure`
 - `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`

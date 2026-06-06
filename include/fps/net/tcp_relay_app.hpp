@@ -13,6 +13,7 @@
 #include "fps/core/fps_upgrade_controller.hpp"
 #include "fps/core/protocol_constants.hpp"
 #include "fps/log/logging.hpp"
+#include "fps/net/tcp_socket_protector.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_lease.hpp"
 #include "fps/net/tun_runtime.hpp"
@@ -103,6 +104,7 @@ struct TcpRelayCliParseResult {
 
 auto run_tcp_relay(const TcpRelayConfig& config) -> int;
 auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime) -> int;
+auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector) -> int;
 auto run_tcp_relay_cli(int argc, char** argv, std::string_view target_flag, std::string_view target_name, RelayRole role, std::ostream& out, std::ostream& err)
     -> int;
 

@@ -657,10 +657,12 @@ Linux-specific runtime is separate:
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
-- The first Android direction is app-owned carrier sessions, explicit
-  `VpnService.protect(fd)` before carrier connect, hostname resolution through
-  Android's underlying network, two-phase lease-before-TUN startup and split
-  tunnel by default.
+- Outbound TCP carrier connects use an injectable `TcpSocketProtector`. The
+  current Linux runtime passes a no-op protector, while Android should call
+  `VpnService.protect(fd)` after socket open and before connect;
+- The first Android direction is app-owned carrier sessions, socket protection
+  through `TcpSocketProtector`, hostname resolution through Android's underlying
+  network, two-phase lease-before-TUN startup and split tunnel by default.
 
 ## 9. Observability
 
