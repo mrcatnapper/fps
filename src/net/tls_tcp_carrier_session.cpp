@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "fps/core/enum.hpp"
@@ -82,11 +83,14 @@ void TlsTcpCarrierSession::start() {
     if(stopped_) {
         return;
     }
+    enqueue_thread_id_ = std::this_thread::get_id();
     pump(Direction::client_to_server);
     pump(Direction::server_to_client);
 }
 
 void TlsTcpCarrierSession::stop() { stop_with(close_info(TlsTcpCarrierCloseReason::normal_stop, std::nullopt, TlsTcpCarrierCloseComponent::session)); }
+
+auto TlsTcpCarrierSession::is_enqueue_thread() const noexcept -> bool { return enqueue_thread_id_ == std::this_thread::get_id(); }
 
 void TlsTcpCarrierSession::stop_with(TlsTcpCarrierCloseInfo close_info) {
     if(stopped_) {

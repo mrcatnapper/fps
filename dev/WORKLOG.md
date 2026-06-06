@@ -47,6 +47,10 @@ Completed so far:
   semantic link/address operations. Linux `ip` argv construction now lives only
   in `src/platform/linux/tun_runtime.cpp`, while core code calls platform-neutral
   operations.
+- Made `CovertCarrier` enqueue affinity explicit. The generic transport checks
+  optional `can_enqueue_now`, the TLS/TCP carrier adapter ties that guard to the
+  session owner thread, and wrong-thread calls return `wrong_executor` without
+  touching session queues.
 
 Verification:
 

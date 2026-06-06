@@ -230,6 +230,9 @@ auto CovertDatagramTransport::inbound_direction() const noexcept -> Direction { 
 auto CovertDatagramTransport::max_datagram_size() const noexcept -> std::size_t { return config_.max_datagram_size; }
 
 auto CovertDatagramTransport::enqueue_datagram_on_carrier(CovertCarrier& carrier, std::span<const std::byte> datagram) -> CovertDatagramResult {
+    if(carrier.can_enqueue_now && !carrier.can_enqueue_now()) {
+        return CovertDatagramResult::failure(CovertDatagramError::wrong_executor);
+    }
     if(datagram.size() > config_.max_frame_payload_size) {
         if(!config_.allow_fragmentation || !fits_u32(datagram.size())) {
             return CovertDatagramResult::failure(CovertDatagramError::datagram_too_large);

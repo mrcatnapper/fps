@@ -322,6 +322,8 @@ auto TunTunnelAdapter::map_transport_error(CovertDatagramError error) -> TunTunn
         return TunTunnelError::tls_record_error;
     case CovertDatagramError::write_queue_full:
         return TunTunnelError::write_queue_full;
+    case CovertDatagramError::wrong_executor:
+        return TunTunnelError::wrong_executor;
     }
     return TunTunnelError::session_closed;
 }

@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <sys/socket.h>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -262,6 +263,25 @@ BOOST_AUTO_TEST_CASE(read_packet_from_fd_enqueues_datagram_frame_to_carrier_sess
     BOOST_CHECK(frame.payload == packet);
     BOOST_TEST(fixture.client_pair.external.available() == 0U);
     pump->stop();
+}
+
+BOOST_AUTO_TEST_CASE(tls_carrier_adapter_rejects_enqueue_from_non_owner_thread) {
+    CodecSessionFixture fixture;
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
+    BOOST_CHECK(manager.add_carrier(fps::net::make_tls_tcp_carrier_adapter(1, fixture.session)));
+
+    std::optional<fps::net::TunTunnelError> error;
+    std::thread other_thread{[&] {
+        auto result = manager.handle_tun_packet(bytes({0x45, 0x00, 0x00, 0x14}));
+        if(!result) {
+            error = result.error();
+        }
+    }};
+    other_thread.join();
+
+    BOOST_REQUIRE(error.has_value());
+    BOOST_CHECK(*error == fps::net::TunTunnelError::wrong_executor);
+    BOOST_CHECK(manager.is_carrier(1));
 }
 
 BOOST_AUTO_TEST_CASE(read_packet_without_carrier_reports_session_error_and_continues) {

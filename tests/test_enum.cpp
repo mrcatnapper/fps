@@ -69,8 +69,9 @@ BOOST_AUTO_TEST_CASE(operational_enums_have_stable_described_names) {
     FPS_CHECK_ENUM_NAME(fps::TlsRecordLayerError, payload_too_large);
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeError, unknown_client_id);
     FPS_CHECK_ENUM_NAME(fps::ZeroRttUpgradeRole, server);
+    FPS_CHECK_ENUM_NAME(fps::net::CovertDatagramError, wrong_executor);
     FPS_CHECK_ENUM_NAME(fps::net::EndpointParseError, unsupported_ipv6_literal);
-    FPS_CHECK_ENUM_NAME(fps::net::TunTunnelError, unassigned_tun_destination);
+    FPS_CHECK_ENUM_NAME(fps::net::TunTunnelError, wrong_executor);
     FPS_CHECK_ENUM_NAME(fps::net::TunTunnelEvent, ignored_reassembly_limit);
     FPS_CHECK_ENUM_NAME(fps::net::TlsTcpCarrierCloseComponent, classified_record_encode);
     FPS_CHECK_ENUM_NAME(fps::net::TlsTcpCarrierCloseReason, write_queue_full);

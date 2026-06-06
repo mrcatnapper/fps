@@ -17,9 +17,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - `TunRuntime` is injectable and exposes semantic operations: open TUN, set link
   MTU, bring link up and replace IPv4 address. Linux `ip` argv generation is
   contained in the Linux runtime.
-- Runtime enqueue calls are effectively same-executor operations. Android JNI or
-  Kotlin callbacks must not call into session queues from arbitrary threads
-  until the enqueue contract is made explicit.
+- `CovertCarrier` enqueue is a synchronous same-executor contract. The transport
+  checks `can_enqueue_now` when provided and rejects wrong-thread calls before
+  touching session queues.
 
 ## Implemented In This Increment
 
@@ -36,6 +36,8 @@ starts. It is a developer handoff document, not user/operator documentation.
   the concrete TLS/TCP carrier target.
 - Replaced the Linux-shaped `run_ip_command(...)` boundary with semantic
   `TunRuntime` link/address operations.
+- Made carrier enqueue executor affinity explicit through `CovertCarrier` and
+  the TLS/TCP carrier adapter.
 
 ## Follow-Up Increments
 
@@ -44,6 +46,5 @@ starts. It is a developer handoff document, not user/operator documentation.
   output.
 - Define the Android `VpnService` design: TUN fd ownership, `protect()` for
   carrier sockets, DNS/route behavior, lifecycle/reconnect and status reporting.
-- Make carrier enqueue executor affinity explicit, preferably by posting enqueue
-  requests onto the session executor or documenting and testing a single
-  executor-only contract.
+- Decide whether Android should keep the same synchronous executor-only
+  contract or introduce a separate async adapter for UI/JNI-facing calls.

@@ -24,7 +24,8 @@ struct CovertDatagramTransportConfig {
 };
 
 BOOST_DEFINE_ENUM_CLASS(
-    CovertDatagramError, no_carrier_session, session_closed, empty_datagram, datagram_too_large, codec_error, tls_record_error, write_queue_full
+    CovertDatagramError, no_carrier_session, session_closed, empty_datagram, datagram_too_large, codec_error, tls_record_error, write_queue_full,
+    wrong_executor
 )
 
 BOOST_DEFINE_ENUM_CLASS(
@@ -45,6 +46,7 @@ struct CovertCarrier {
     CarrierId id{kNoCarrierId};
     std::function<CovertDatagramResult(Direction, std::span<const CovertCarrierFrame>)> enqueue_frames;
     std::function<bool()> is_alive;
+    std::function<bool()> can_enqueue_now;
 };
 
 struct CovertDatagramHandlers {

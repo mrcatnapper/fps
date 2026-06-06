@@ -12,6 +12,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "fps/core/cover_session_pipeline.hpp"
@@ -166,6 +167,7 @@ public:
 
     void start();
     void stop();
+    [[nodiscard]] auto is_enqueue_thread() const noexcept -> bool;
     [[nodiscard]] auto
     enqueue_covert_frame(Direction direction, FrameType frame_type, std::span<const std::byte> payload, std::size_t padding_size = 0, std::uint8_t flags = 0)
         -> TlsTcpCarrierEnqueueResult;
@@ -305,6 +307,7 @@ private:
     std::optional<std::chrono::milliseconds> zero_rtt_effective_client_upgrade_delay_;
     std::optional<TlsTcpCarrierCloseInfo> pending_close_info_;
     TlsTcpCarrierSessionStats stats_;
+    std::thread::id enqueue_thread_id_;
 };
 
 } // namespace fps::net

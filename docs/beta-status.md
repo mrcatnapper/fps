@@ -163,9 +163,9 @@ Those remain release-hardening concerns.
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
 - Android reuse still needs boundary work beyond the Linux beta runtime:
-  enqueue executor affinity must be explicit, config/profile parsing should be
-  shareable, and Android must define `VpnService.protect()` plus DNS/route
-  behavior.
+  config/profile parsing should be shareable, Android must decide whether to
+  keep the synchronous carrier executor contract or wrap it in an async adapter,
+  and Android must define `VpnService.protect()` plus DNS/route behavior.
 
 ## Public Beta Gate
 

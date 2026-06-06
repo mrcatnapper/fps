@@ -288,6 +288,9 @@ application-specific payload.
 
 - generic `CovertCarrier` handles are registered only after Zero-RTT
   authentication;
+- carrier enqueue is synchronous and same-executor: callers must submit
+  datagrams from the carrier owner executor; implementations may reject calls
+  from other threads with `wrong_executor`;
 - outbound opaque datagrams select carriers round-robin while respecting
   closed/full queues;
 - if one carrier write queue is full, the transport tries another carrier;
@@ -647,7 +650,10 @@ Linux-specific runtime is separate:
   operations with `VpnService`;
 - unit tests use fake runtime/configurator objects. Android should later provide
   a `VpnService` file descriptor, protected carrier sockets and Android network
-  configurator.
+  configurator;
+- Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
+  threads. They must post work onto the FPS/carrier executor or use a future
+  async adapter API.
 
 ## 9. Observability
 

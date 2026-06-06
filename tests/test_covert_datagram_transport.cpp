@@ -25,6 +25,7 @@ struct StoredCarrierFrame {
 struct FakeCarrier {
     fps::net::CarrierId id{};
     bool alive = true;
+    bool can_enqueue = true;
     std::size_t max_queued_payload_bytes = 1024U * 1024U;
     std::vector<std::vector<StoredCarrierFrame>> writes;
 
@@ -57,6 +58,7 @@ struct FakeCarrier {
                 return fps::net::CovertDatagramResult::success(bytes);
             },
             .is_alive = [this] { return alive; },
+            .can_enqueue_now = [this] { return can_enqueue; },
         };
     }
 };
@@ -128,6 +130,20 @@ BOOST_AUTO_TEST_CASE(targeted_write_uses_requested_carrier_only) {
     BOOST_REQUIRE_EQUAL(second.writes[0].size(), 1U);
     BOOST_CHECK(second.writes[0][0].frame_type == fps::FrameType::opaque_datagram);
     BOOST_CHECK(second.writes[0][0].payload == datagram);
+}
+
+BOOST_AUTO_TEST_CASE(wrong_executor_guard_prevents_enqueue) {
+    FakeCarrier carrier{1};
+    carrier.can_enqueue = false;
+    fps::net::CovertDatagramTransport transport{fps::net::CovertDatagramTransportConfig{.role = fps::RelayRole::client, .max_datagram_size = 64}};
+    BOOST_CHECK(transport.add_carrier(carrier.as_carrier()));
+
+    auto queued = transport.try_write(bytes({0x01, 0x02, 0x03}));
+
+    BOOST_REQUIRE(!queued);
+    BOOST_CHECK(queued.error() == fps::net::CovertDatagramError::wrong_executor);
+    BOOST_TEST(carrier.writes.empty());
+    BOOST_CHECK(transport.is_carrier(carrier.id));
 }
 
 BOOST_AUTO_TEST_CASE(fragmented_datagram_reassembles_with_source_carrier) {

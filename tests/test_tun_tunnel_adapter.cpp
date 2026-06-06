@@ -70,6 +70,7 @@ struct CapturedFrame {
 struct FakeCarrier {
     fps::net::CarrierId id = fps::net::kNoCarrierId;
     bool alive = true;
+    bool can_enqueue = true;
     std::size_t max_queue_bytes = std::numeric_limits<std::size_t>::max();
     std::size_t queued_bytes = 0;
     std::vector<CapturedFrame> frames;
@@ -104,6 +105,7 @@ struct FakeCarrier {
                 return fps::net::CovertDatagramResult::success(batch_bytes);
             },
             .is_alive = [this]() { return alive; },
+            .can_enqueue_now = [this]() { return can_enqueue; },
         };
     }
 };
@@ -373,6 +375,20 @@ BOOST_AUTO_TEST_CASE(write_queue_full_from_only_carrier_is_reported) {
     BOOST_REQUIRE(!result);
     BOOST_CHECK(result.error() == fps::net::TunTunnelError::write_queue_full);
     BOOST_TEST(carrier.frames.empty());
+}
+
+BOOST_AUTO_TEST_CASE(wrong_executor_from_carrier_is_reported_without_removal) {
+    auto carrier = fake_carrier(1);
+    carrier.can_enqueue = false;
+    fps::net::TunTunnelAdapter manager{fps::net::TunTunnelConfig{.role = fps::RelayRole::client, .max_tun_packet_size = 64}};
+    BOOST_CHECK(manager.add_carrier(carrier.as_carrier()));
+
+    auto result = manager.handle_tun_packet(bytes({0x45, 0x00, 0x00, 0x14}));
+
+    BOOST_REQUIRE(!result);
+    BOOST_CHECK(result.error() == fps::net::TunTunnelError::wrong_executor);
+    BOOST_TEST(carrier.frames.empty());
+    BOOST_CHECK(manager.is_carrier(carrier.id));
 }
 
 BOOST_AUTO_TEST_CASE(carrier_pool_registers_multiple_carriers_and_removes_them) {

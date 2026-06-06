@@ -24,6 +24,8 @@ without claiming resistance to advanced timing/size traffic analysis.
   components without relying on a broad convenience aggregate.
 - [x] Replace Linux-shaped TUN command callbacks with semantic `TunRuntime`
   link/address operations so platform code owns OS-specific configuration.
+- [x] Make the generic carrier enqueue contract executor-explicit and reject
+  wrong-thread synchronous enqueue calls before session queues are touched.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -153,9 +155,9 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
 - Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
-  enqueue executor affinity explicit, extract profile/config parsing for reuse,
-  and design `VpnService.protect()`/DNS behavior before Android implementation
-  work.
+  config/profile parsing reusable, decide if Android needs an async wrapper over
+  the synchronous carrier executor contract, and design
+  `VpnService.protect()`/DNS behavior before Android implementation work.
 
 ## Phase 7: Fuzzing And Soak
 

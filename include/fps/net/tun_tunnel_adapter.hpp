@@ -26,7 +26,7 @@ struct TunTunnelConfig {
 
 BOOST_DEFINE_ENUM_CLASS(
     TunTunnelError, no_carrier_session, session_closed, empty_packet, packet_too_large, codec_error, tls_record_error, write_queue_full,
-    non_ipv4_tun_destination, unassigned_tun_destination
+    non_ipv4_tun_destination, unassigned_tun_destination, wrong_executor
 )
 
 BOOST_DEFINE_ENUM_CLASS(
