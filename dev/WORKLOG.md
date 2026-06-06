@@ -4,6 +4,54 @@
 
 ## 2026-06-06
 
+### Verify Android boundary hardening PR
+
+Goal:
+
+- Run the full extended verification set before opening and merging the Android
+  boundary hardening PR.
+
+Results:
+
+- Non-Docker quality suite passed:
+  - clang-20 warning build plus local CTest;
+  - ASan+UBSan local CTest;
+  - Valgrind unit pass: 228 test cases, 0 errors/leaks;
+  - llvm-cov thresholds passed: 74.81% line coverage, 81.93% function
+    coverage;
+  - bounded libFuzzer smoke for TLS records, covert codec, envelope,
+    Zero-RTT and TUN frames.
+- Docker smoke passed for both `fps:local` (`Dockerfile`) and `fps:alpine`
+  (`Dockerfile.alpine`): image build, CLI help, UUID/key config validation,
+  entrypoint `check-config` alias and compose config validation.
+- Root/TUN CTest passed: 6/6 (`open_smoke`, loopback, burst, fragmentation,
+  shaper and multi-carrier).
+- Local Docker/TUN resilience smoke passed on `fps:alpine`: mixed UDP/HTTP,
+  carrier loss/recovery, spoof-drop liveness and all services alive. The
+  optional backpressure stress did not observe `write_queue_full` in this run;
+  that counter is not required by the smoke gate unless explicitly requested.
+- Split-host `fpshop` soak passed:
+  - image `fps:alpine` built locally and transferred to `fpshop` with
+    `docker save`/`docker load`;
+  - duration 300s, two clients, two carriers per client, shaper enabled;
+  - planned carrier restarts: `a1`, `b2`, `a2`, `b1`;
+  - UDP client A: 2400/2400 received, 0% loss, bad payloads 0;
+  - UDP client B: 2400/2400 received, 0% loss, bad payloads 0;
+  - bad classified/envelope/shaper log counters: 0;
+  - spoofed-source drop observed: 1;
+  - final server carrier counters: current 4, registered 8, removed 4;
+  - artifacts: `captures/fps-two-host-soak-34165/summary.json`.
+
+Verification commands:
+
+- `tools/run_quality_checks.sh --all`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_IMAGE=fps:alpine FPS_DOCKER_SOAK_BUILD=0 tools/run_quality_checks.sh --soak-smoke`
+- `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:alpine --transfer-image --sudo --duration 300 --clients 2 --carriers-per-client 2 --bandwidth 500K --length 512 --keep-artifacts`
+
 ### Start Android boundary hardening
 
 Goal:
