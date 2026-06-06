@@ -43,6 +43,10 @@ Completed so far:
   duplicate-UUID sessions.
 - Rewrote `test_tun_tunnel_adapter` around fake `CovertCarrier` fixtures so the
   TUN adapter tests no longer require concrete TLS/TCP sessions.
+- Replaced the Linux-shaped `TunRuntime::run_ip_command(...)` callback with
+  semantic link/address operations. Linux `ip` argv construction now lives only
+  in `src/platform/linux/tun_runtime.cpp`, while core code calls platform-neutral
+  operations.
 
 Verification:
 

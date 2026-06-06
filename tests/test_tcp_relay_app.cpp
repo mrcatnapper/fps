@@ -14,7 +14,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
-#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -149,12 +148,30 @@ public:
         return fps::Result<fps::net::OpenTunDevice, std::string>::failure("not used");
     }
 
-    auto run_ip_command(std::span<const std::string> args) -> int override {
-        commands.emplace_back(args.begin(), args.end());
+    auto set_link_mtu(std::string_view name, std::size_t mtu) -> int override {
+        operations.push_back(Operation{.kind = "set_link_mtu", .name = std::string{name}, .mtu = mtu});
         return next_statuses.empty() ? 0 : pop_status();
     }
 
-    std::vector<std::vector<std::string>> commands;
+    auto set_link_up(std::string_view name) -> int override {
+        operations.push_back(Operation{.kind = "set_link_up", .name = std::string{name}});
+        return next_statuses.empty() ? 0 : pop_status();
+    }
+
+    auto replace_ipv4_address(std::string_view name, std::uint32_t ipv4, std::uint8_t prefix_length) -> int override {
+        operations.push_back(Operation{.kind = "replace_ipv4_address", .name = std::string{name}, .ipv4 = ipv4, .prefix_length = prefix_length});
+        return next_statuses.empty() ? 0 : pop_status();
+    }
+
+    struct Operation {
+        std::string kind;
+        std::string name;
+        std::size_t mtu = 0;
+        std::uint32_t ipv4 = 0;
+        std::uint8_t prefix_length = 0;
+    };
+
+    std::vector<Operation> operations;
     std::vector<int> next_statuses;
 
 private:
@@ -1397,13 +1414,14 @@ BOOST_AUTO_TEST_CASE(tun_runtime_helpers_are_injectable) {
     FakeTunRuntime runtime;
     auto preconfigured = fps::net::preconfigure_tun_link(runtime, "fpsc0", 1280);
     BOOST_CHECK(preconfigured.ok());
-    BOOST_REQUIRE_EQUAL(runtime.commands.size(), 2U);
-    const std::vector<std::string> expected_mtu{"link", "set", "dev", "fpsc0", "mtu", "1280"};
-    const std::vector<std::string> expected_up{"link", "set", "dev", "fpsc0", "up"};
-    BOOST_CHECK_EQUAL_COLLECTIONS(runtime.commands[0].begin(), runtime.commands[0].end(), expected_mtu.begin(), expected_mtu.end());
-    BOOST_CHECK_EQUAL_COLLECTIONS(runtime.commands[1].begin(), runtime.commands[1].end(), expected_up.begin(), expected_up.end());
+    BOOST_REQUIRE_EQUAL(runtime.operations.size(), 2U);
+    BOOST_TEST(runtime.operations[0].kind == "set_link_mtu");
+    BOOST_TEST(runtime.operations[0].name == "fpsc0");
+    BOOST_TEST(runtime.operations[0].mtu == 1280U);
+    BOOST_TEST(runtime.operations[1].kind == "set_link_up");
+    BOOST_TEST(runtime.operations[1].name == "fpsc0");
 
-    runtime.commands.clear();
+    runtime.operations.clear();
     runtime.next_statuses = {0, 7, 0};
     const fps::net::TunLease lease{
         .client_ipv4 = 0x0a420002U,
@@ -1415,9 +1433,14 @@ BOOST_AUTO_TEST_CASE(tun_runtime_helpers_are_injectable) {
     auto applied = fps::net::configure_tun_lease(runtime, "fpsc0", lease);
     BOOST_CHECK(!applied.ok());
     BOOST_TEST(applied.mtu_status == 7);
-    BOOST_REQUIRE_EQUAL(runtime.commands.size(), 3U);
-    const std::vector<std::string> expected_addr{"addr", "replace", "10.66.0.2/30", "dev", "fpsc0"};
-    BOOST_CHECK_EQUAL_COLLECTIONS(runtime.commands[0].begin(), runtime.commands[0].end(), expected_addr.begin(), expected_addr.end());
+    BOOST_REQUIRE_EQUAL(runtime.operations.size(), 3U);
+    BOOST_TEST(runtime.operations[0].kind == "replace_ipv4_address");
+    BOOST_TEST(runtime.operations[0].name == "fpsc0");
+    BOOST_TEST(runtime.operations[0].ipv4 == 0x0a420002U);
+    BOOST_TEST(runtime.operations[0].prefix_length == 30U);
+    BOOST_TEST(runtime.operations[1].kind == "set_link_mtu");
+    BOOST_TEST(runtime.operations[1].mtu == 1200U);
+    BOOST_TEST(runtime.operations[2].kind == "set_link_up");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

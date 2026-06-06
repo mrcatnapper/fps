@@ -22,6 +22,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Split build targets into protocol core, datagram core, TLS/TCP carrier, TUN
   adapter and Linux runtime so future platform work can link narrower
   components without relying on a broad convenience aggregate.
+- [x] Replace Linux-shaped TUN command callbacks with semantic `TunRuntime`
+  link/address operations so platform code owns OS-specific configuration.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -152,7 +154,6 @@ without claiming resistance to advanced timing/size traffic analysis.
   target before calling it supported.
 - Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
   enqueue executor affinity explicit, extract profile/config parsing for reuse,
-  replace Linux-shaped `TunRuntime` commands with semantic platform operations
   and design `VpnService.protect()`/DNS behavior before Android implementation
   work.
 

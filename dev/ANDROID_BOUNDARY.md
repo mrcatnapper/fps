@@ -14,9 +14,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - `fps_core` is the narrow Android-facing aggregate: protocol core plus generic
   datagram core. The current TLS/TCP carrier and TUN adapter are explicit
   opt-in targets above it.
-- `TunRuntime` is injectable, but its current command surface is Linux-shaped:
-  it exposes `run_ip_command(...)`. Android will need semantic link/address
-  operations backed by `VpnService`, not `ip` command arguments.
+- `TunRuntime` is injectable and exposes semantic operations: open TUN, set link
+  MTU, bring link up and replace IPv4 address. Linux `ip` argv generation is
+  contained in the Linux runtime.
 - Runtime enqueue calls are effectively same-executor operations. Android JNI or
   Kotlin callbacks must not call into session queues from arbitrary threads
   until the enqueue contract is made explicit.
@@ -34,11 +34,11 @@ starts. It is a developer handoff document, not user/operator documentation.
   pointer.
 - Split CMake targets so `fps_tun_adapter` links the generic datagram core, not
   the concrete TLS/TCP carrier target.
+- Replaced the Linux-shaped `run_ip_command(...)` boundary with semantic
+  `TunRuntime` link/address operations.
 
 ## Follow-Up Increments
 
-- Replace `TunRuntime::run_ip_command(...)` with semantic platform operations,
-  keeping Linux `ip` argv generation in the Linux runtime only.
 - Extract profile/config parsing that Android must share: `fps://v1`, UUID
   validation, server-public-key validation and normalized non-secret profile
   output.

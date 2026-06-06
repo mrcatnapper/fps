@@ -642,8 +642,9 @@ Linux-specific runtime is separate:
 - `fps_linux_runtime` contains relay CLI app, Linux TUN open and production
   `TunRuntime`;
 - `TunRuntime` is injected into the relay app and provides TUN opening plus
-  no-shell `ip` execution. This remains a Linux runtime concern and should be
-  replaced by semantic Android `VpnService` operations in a later increment;
+  semantic link/address operations. The Linux implementation translates those
+  operations to no-shell `ip` execution; Android should later back the same
+  operations with `VpnService`;
 - unit tests use fake runtime/configurator objects. Android should later provide
   a `VpnService` file descriptor, protected carrier sockets and Android network
   configurator.

@@ -164,8 +164,8 @@ Those remain release-hardening concerns.
   claim timing/size distribution resistance.
 - Android reuse still needs boundary work beyond the Linux beta runtime:
   enqueue executor affinity must be explicit, config/profile parsing should be
-  shareable, `TunRuntime` should expose semantic platform operations, and
-  Android must define `VpnService.protect()` plus DNS/route behavior.
+  shareable, and Android must define `VpnService.protect()` plus DNS/route
+  behavior.
 
 ## Public Beta Gate
 
