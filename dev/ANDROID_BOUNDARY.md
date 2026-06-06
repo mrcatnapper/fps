@@ -49,3 +49,43 @@ starts. It is a developer handoff document, not user/operator documentation.
   carrier sockets, DNS/route behavior, lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
+
+## Accepted Android Direction
+
+- First Android beta should use app-owned carrier sessions. The Android app
+  opens and maintains the cover connections itself instead of relying on a
+  browser/game/third-party app to create them.
+- Carrier behavior should be app-configurable at the Android layer: for example
+  periodic HTTPS GETs, TCP keepalive-friendly requests or WSS stream probes. This
+  does not require protocol-core changes yet.
+- Add a platform socket-protection hook before Android carrier `connect`. Linux
+  remains no-op; Android calls `VpnService.protect(fd)` before the socket can be
+  captured by the VPN.
+- Resolve FPS server/carrier hostnames through Android's underlying
+  `ConnectivityManager.Network`, then pass resolved endpoints into native code.
+  Do not rely on native resolver behavior after VPN activation.
+- Use two-phase TUN startup: authenticate and receive server lease first, then
+  create/configure the Android `VpnService` fd and start the native TUN pump.
+- Android default route mode is split tunnel. Full tunnel is an explicit
+  advanced option.
+- Keep the C++ core synchronous and same-executor. Android should expose a thin
+  async/JNI facade that posts all native operations onto the FPS `io_context`.
+
+## Alternatives Kept For Future Review
+
+- Third-party/browser carrier sessions remain useful for a later advanced mode,
+  but they reopen DNS mapping and VPN-loop risks. Android has no simple
+  `/etc/hosts` equivalent, so that mode likely needs a controlled DNS proxy or
+  per-app routing design.
+- A local DNS proxy that maps selected carrier origins to FPS may help external
+  carrier UX later, but it should not be part of the first Android beta. It must
+  avoid resolving FPS's own carrier sockets back into the VPN.
+- Passing already-protected Java/Kotlin sockets or fds into native code is a
+  possible alternative to a C++ protector hook, but it complicates Boost.Asio
+  ownership, resolver behavior and connect lifecycle.
+- Creating a dummy VPN before lease assignment is possible, but it risks
+  dropping user traffic during auth and complicates reconnect. The accepted
+  model is to start TUN only after a lease is available.
+- A fully async C++ carrier/datagram API can be reconsidered if JNI facade
+  posting becomes too limiting. Mutex-protecting session queues is not a good
+  alternative because it hides ordering and deadlock risks.

@@ -157,9 +157,9 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
 - Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
-  full config parsing reusable where useful, decide if Android needs an async
-  wrapper over the synchronous carrier executor contract, and design
-  `VpnService.protect()`/DNS behavior before Android implementation work.
+  full config parsing reusable where useful, add a socket-protection hook, and
+  prototype the accepted app-owned carrier plus two-phase lease/TUN Android
+  runtime model.
 
 ## Phase 7: Fuzzing And Soak
 

@@ -55,6 +55,10 @@ Completed so far:
   JSON validation into `fps_protocol_core`. Linux CLI profile import/export now
   uses the shared helper, and Android can reuse the same UUID/server-public-key
   validation without linking Linux runtime.
+- Recorded accepted Android runtime direction: app-owned carriers first,
+  platform socket protection before connect, DNS through Android underlying
+  network, lease-before-TUN startup, split tunnel by default and a thin async
+  facade that posts into the native `io_context`.
 
 Verification:
 
