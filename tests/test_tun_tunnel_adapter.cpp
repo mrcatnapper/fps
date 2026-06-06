@@ -98,8 +98,7 @@ struct FakeCarrier {
     [[nodiscard]] auto as_carrier() -> fps::net::CovertCarrier {
         return fps::net::CovertCarrier{
             .id = id,
-            .enqueue_frames =
-                [this](fps::Direction direction, std::span<const fps::net::CovertCarrierFrame> input) -> fps::net::CovertDatagramResult {
+            .enqueue_frames = [this](fps::Direction direction, std::span<const fps::net::CovertCarrierFrame> input) -> fps::net::CovertDatagramResult {
                 if(!alive) {
                     return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::session_closed);
                 }
@@ -687,7 +686,9 @@ BOOST_AUTO_TEST_CASE(interleaved_fragments_from_different_carriers_reassemble_in
 
     manager.handle_covert_frame(
         first_carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(100, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 10}))
+        fragment_frame(
+            fragment_payload(100, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 10})
+        )
     );
     manager.handle_covert_frame(
         second_carrier.id, fps::Direction::client_to_server,
@@ -697,7 +698,9 @@ BOOST_AUTO_TEST_CASE(interleaved_fragments_from_different_carriers_reassemble_in
     );
     manager.handle_covert_frame(
         first_carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(100, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 10, first_packet.end()}))
+        fragment_frame(
+            fragment_payload(100, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 10, first_packet.end()})
+        )
     );
     manager.handle_covert_frame(
         second_carrier.id, fps::Direction::client_to_server,
@@ -729,7 +732,9 @@ BOOST_AUTO_TEST_CASE(interleaved_fragments_from_same_carrier_reassemble_by_packe
 
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(300, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 12}))
+        fragment_frame(
+            fragment_payload(300, 0, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin(), first_packet.begin() + 12})
+        )
     );
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
@@ -739,7 +744,9 @@ BOOST_AUTO_TEST_CASE(interleaved_fragments_from_same_carrier_reassemble_by_packe
     );
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(300, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 12, first_packet.end()}))
+        fragment_frame(
+            fragment_payload(300, 1, 2, static_cast<std::uint32_t>(first_packet.size()), fps::ByteVector{first_packet.begin() + 12, first_packet.end()})
+        )
     );
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
@@ -770,13 +777,16 @@ BOOST_AUTO_TEST_CASE(mismatched_fragment_resets_only_matching_reassembly_state) 
 
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(500, 0, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin(), good_packet.begin() + 12}))
+        fragment_frame(
+            fragment_payload(500, 0, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin(), good_packet.begin() + 12})
+        )
     );
     manager.handle_covert_frame(carrier.id, fps::Direction::client_to_server, fragment_frame(fragment_payload(600, 0, 2, 4, bytes({0x01, 0x02}))));
     manager.handle_covert_frame(carrier.id, fps::Direction::client_to_server, fragment_frame(fragment_payload(600, 1, 2, 5, bytes({0x03, 0x04}))));
     manager.handle_covert_frame(
         carrier.id, fps::Direction::client_to_server,
-        fragment_frame(fragment_payload(500, 1, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin() + 12, good_packet.end()}))
+        fragment_frame(fragment_payload(500, 1, 2, static_cast<std::uint32_t>(good_packet.size()), fps::ByteVector{good_packet.begin() + 12, good_packet.end()})
+        )
     );
 
     BOOST_REQUIRE_EQUAL(packets.size(), 1U);
@@ -921,11 +931,10 @@ BOOST_AUTO_TEST_CASE(wrong_direction_and_non_datagram_frames_are_ignored) {
     std::vector<fps::ByteVector> packets;
     std::vector<fps::net::TunTunnelEvent> events;
     fps::net::TunTunnelAdapter manager{
-        fps::net::TunTunnelConfig{.role = fps::RelayRole::server},
-        fps::net::TunTunnelHandlers{
-            .on_tun_packet = [&](fps::ByteVector packet) { packets.push_back(std::move(packet)); },
-            .on_event = [&](fps::net::TunTunnelEvent event) { events.push_back(event); },
-        }
+        fps::net::TunTunnelConfig{.role = fps::RelayRole::server}, fps::net::TunTunnelHandlers{
+                                                                       .on_tun_packet = [&](fps::ByteVector packet) { packets.push_back(std::move(packet)); },
+                                                                       .on_event = [&](fps::net::TunTunnelEvent event) { events.push_back(event); },
+                                                                   }
     };
 
     manager.handle_covert_frame(fps::Direction::server_to_client, datagram_frame(bytes({0x01})));

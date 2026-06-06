@@ -64,9 +64,9 @@ public:
 
     [[nodiscard]] auto add_carrier(CovertCarrier carrier) -> bool;
     [[nodiscard]] auto add_carrier(CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4) -> bool;
-    [[nodiscard]] auto add_carrier_with_metadata(
-        CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id
-    ) -> TunTunnelCarrierRegistration;
+    [[nodiscard]] auto
+    add_carrier_with_metadata(CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id)
+        -> TunTunnelCarrierRegistration;
     [[nodiscard]] auto is_carrier(CarrierId carrier_id) const noexcept -> bool;
     [[nodiscard]] auto remove_carrier_if(CarrierId carrier_id) noexcept -> bool;
     void clear_carriers() noexcept;

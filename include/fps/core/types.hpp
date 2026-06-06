@@ -8,8 +8,8 @@
 #include <vector>
 
 #if !defined(FPS_DISABLE_BOOST_HEADERS) && __has_include("fps/core/enum.hpp")
-#include "fps/core/enum.hpp"
-#define FPS_CORE_TYPES_HAS_BOOST_DESCRIBE 1
+#    include "fps/core/enum.hpp"
+#    define FPS_CORE_TYPES_HAS_BOOST_DESCRIBE 1
 #endif
 
 namespace fps {

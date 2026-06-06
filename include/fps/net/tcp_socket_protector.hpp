@@ -46,8 +46,8 @@ using TcpProtectedConnectHandler = std::function<void(TcpProtectedConnectResult)
 [[nodiscard]] auto make_noop_tcp_socket_protector() -> std::shared_ptr<TcpSocketProtector>;
 
 void async_protected_connect(
-    std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::vector<boost::asio::ip::tcp::endpoint> endpoints,
-    std::shared_ptr<TcpSocketProtector> protector, TcpSocketProtectContext context, TcpProtectedConnectHandler handler
+    std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::vector<boost::asio::ip::tcp::endpoint> endpoints, std::shared_ptr<TcpSocketProtector> protector,
+    TcpSocketProtectContext context, TcpProtectedConnectHandler handler
 );
 
 } // namespace fps::net

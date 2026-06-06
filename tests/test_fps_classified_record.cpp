@@ -163,8 +163,9 @@ BOOST_AUTO_TEST_CASE(pipeline_encodes_exact_target_tls_record_size) {
 BOOST_AUTO_TEST_CASE(codec_rejects_too_small_target_without_advancing_sequence) {
     fps::FpsClassifiedRecordCodec sender{config(fps::Direction::client_to_server)};
 
-    auto encoded =
-        sender.encode(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 54U});
+    auto encoded = sender.encode(
+        fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 54U}
+    );
 
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error() == fps::FpsClassifiedRecordError::target_record_too_small);
@@ -174,8 +175,9 @@ BOOST_AUTO_TEST_CASE(codec_rejects_too_small_target_without_advancing_sequence) 
 BOOST_AUTO_TEST_CASE(codec_rejects_target_requiring_too_much_padding_without_advancing_sequence) {
     fps::FpsClassifiedRecordCodec sender{config(fps::Direction::client_to_server)};
 
-    auto encoded =
-        sender.encode(fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 80U});
+    auto encoded = sender.encode(
+        fps::FpsEnvelopeContent{}, binding(fps::Direction::client_to_server), fps::FpsClassifiedRecordEncodeOptions{.target_tls_record_size = 80U}
+    );
 
     BOOST_REQUIRE(!encoded);
     BOOST_CHECK(encoded.error() == fps::FpsClassifiedRecordError::oversized_padding);

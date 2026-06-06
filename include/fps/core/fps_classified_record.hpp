@@ -78,9 +78,8 @@ class FpsClassifiedRecordCodec {
 public:
     explicit FpsClassifiedRecordCodec(FpsClassifiedRecordConfig config);
 
-    [[nodiscard]] auto encode(
-        const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {}
-    ) -> FpsClassifiedRecordResult<ByteVector>;
+    [[nodiscard]] auto encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {})
+        -> FpsClassifiedRecordResult<ByteVector>;
     [[nodiscard]] auto decode(std::span<const std::byte> wire, const ZeroRttChannelBinding& binding) -> FpsClassifiedRecordDecodeResult;
 
     [[nodiscard]] auto next_send_sequence() const noexcept -> std::uint64_t;
@@ -106,9 +105,9 @@ public:
     explicit FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec);
     FpsClassifiedRecordPipeline(FpsClassifiedRecordCodec codec, TlsRecordParser parser, TlsRecordLayerOptions record_options = {});
 
-    [[nodiscard]] auto encode_tls_record(
-        const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {}
-    ) -> FpsClassifiedRecordPipelineEncodeResult;
+    [[nodiscard]] auto
+    encode_tls_record(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options = {})
+        -> FpsClassifiedRecordPipelineEncodeResult;
     [[nodiscard]] auto
     process_inbound_tls(Direction direction, std::span<const std::byte> bytes, const SnapshotProvider& snapshot_provider, const RecordObserver& record_observer)
         -> FpsClassifiedRecordPipelineProcessResult;

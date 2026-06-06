@@ -33,8 +33,9 @@ auto TunTunnelAdapter::add_carrier(CovertCarrier carrier, std::optional<std::uin
     return add_carrier_with_metadata(std::move(carrier), assigned_client_ipv4, std::nullopt).added;
 }
 
-auto TunTunnelAdapter::add_carrier_with_metadata(CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id)
-    -> TunTunnelCarrierRegistration {
+auto TunTunnelAdapter::add_carrier_with_metadata(
+    CovertCarrier carrier, std::optional<std::uint32_t> assigned_client_ipv4, std::optional<ClientInstanceId> client_instance_id
+) -> TunTunnelCarrierRegistration {
     TunTunnelCarrierRegistration result;
     if(carrier.id == kNoCarrierId) {
         return result;
@@ -83,7 +84,9 @@ auto TunTunnelAdapter::add_carrier_with_metadata(CovertCarrier carrier, std::opt
     return result;
 }
 
-auto TunTunnelAdapter::is_carrier(CarrierId carrier_id) const noexcept -> bool { return find_carrier_entry(carrier_id) != nullptr && transport_.is_carrier(carrier_id); }
+auto TunTunnelAdapter::is_carrier(CarrierId carrier_id) const noexcept -> bool {
+    return find_carrier_entry(carrier_id) != nullptr && transport_.is_carrier(carrier_id);
+}
 
 auto TunTunnelAdapter::remove_carrier_if(CarrierId carrier_id) noexcept -> bool {
     if(carrier_id == kNoCarrierId) {
@@ -207,7 +210,8 @@ auto TunTunnelAdapter::should_send_outbound_packet(std::span<const std::byte> pa
         emit_event(TunTunnelEvent::unparseable_tun_flow);
     }
 
-    const auto decision = handlers_.on_outbound_tun_packet(TunPacketPolicyContext{.role = config_.role, .packet = packet, .flow = flow, .flow_error = flow_error});
+    const auto decision =
+        handlers_.on_outbound_tun_packet(TunPacketPolicyContext{.role = config_.role, .packet = packet, .flow = flow, .flow_error = flow_error});
     if(decision == TunPacketPolicyDecision::drop) {
         emit_event(TunTunnelEvent::ignored_by_tun_policy);
         return false;

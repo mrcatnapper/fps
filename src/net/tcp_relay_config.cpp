@@ -156,14 +156,12 @@ struct AllowedClientConfig {
     if(!min_records) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(min_records.error());
     }
-    auto client_upgrade_delay =
-        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_ms", role == RelayRole::client ? 2000U : 0U);
+    auto client_upgrade_delay = parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_ms", role == RelayRole::client ? 2000U : 0U);
     if(!client_upgrade_delay) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay.error());
     }
     const auto default_upgrade_sigma = role == RelayRole::client ? client_upgrade_delay.value() / 3U : 0U;
-    auto client_upgrade_delay_sigma =
-        parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_sigma_ms", default_upgrade_sigma);
+    auto client_upgrade_delay_sigma = parse_non_negative_size_config(tree, "security.zero_rtt.client_upgrade_delay_sigma_ms", default_upgrade_sigma);
     if(!client_upgrade_delay_sigma) {
         return Result<std::optional<ZeroRttRelayConfig>, std::string>::failure(client_upgrade_delay_sigma.error());
     }

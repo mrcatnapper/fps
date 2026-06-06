@@ -23,9 +23,11 @@ auto valid_profile_json() -> std::string {
         "zero_rtt": {
           "enabled": true,
           "profile_id": "unit-profile",
-          "client_uuid": ")json" + std::string{kClientUuid} +
+          "client_uuid": ")json" +
+           std::string{kClientUuid} +
            R"json(",
-          "server_public_key_base64": ")json" + fps::base64_encode(server.public_key) +
+          "server_public_key_base64": ")json" +
+           fps::base64_encode(server.public_key) +
            R"json("
         }
       }
@@ -70,15 +72,14 @@ BOOST_AUTO_TEST_CASE(rejects_profiles_without_valid_client_identity) {
     BOOST_REQUIRE(!missing_uuid);
     BOOST_TEST(missing_uuid.error() == "missing security.zero_rtt.client_uuid");
 
-    auto malformed_uuid = fps::normalize_client_profile_json(R"json({"security":{"zero_rtt":{"client_uuid":"not-a-uuid","server_public_key_base64":"AAAA"}}})json");
+    auto malformed_uuid =
+        fps::normalize_client_profile_json(R"json({"security":{"zero_rtt":{"client_uuid":"not-a-uuid","server_public_key_base64":"AAAA"}}})json");
     BOOST_REQUIRE(!malformed_uuid);
     BOOST_TEST(malformed_uuid.error().find("invalid security.zero_rtt.client_uuid") != std::string::npos);
 }
 
 BOOST_AUTO_TEST_CASE(rejects_profiles_without_valid_server_public_key) {
-    auto missing_key = fps::normalize_client_profile_json(
-        R"json({"security":{"zero_rtt":{"client_uuid":"123e4567-e89b-42d3-a456-426614174000"}}})json"
-    );
+    auto missing_key = fps::normalize_client_profile_json(R"json({"security":{"zero_rtt":{"client_uuid":"123e4567-e89b-42d3-a456-426614174000"}}})json");
     BOOST_REQUIRE(!missing_key);
     BOOST_TEST(missing_key.error() == "missing security.zero_rtt.server_public_key_base64");
 

@@ -1,12 +1,12 @@
 #pragma once
 
 #if !defined(__ANDROID__) || defined(FPS_LOG_USE_BOOST)
-#include <boost/log/sources/record_ostream.hpp>
-#include <boost/log/sources/severity_logger.hpp>
+#    include <boost/log/sources/record_ostream.hpp>
+#    include <boost/log/sources/severity_logger.hpp>
 #else
-#include <android/log.h>
-#include <atomic>
-#include <sstream>
+#    include <android/log.h>
+#    include <atomic>
+#    include <sstream>
 #endif
 
 #include <array>
@@ -41,7 +41,7 @@ void init_console_logging(const LoggingConfig& config = {});
 
 auto operator<<(std::ostream& out, Severity severity) -> std::ostream&;
 
-#define FPS_LOG_WITH_SEVERITY(severity, component) BOOST_LOG_SEV(::fps::log::logger(), severity) << "component=" << component << ' '
+#    define FPS_LOG_WITH_SEVERITY(severity, component) BOOST_LOG_SEV(::fps::log::logger(), severity) << "component=" << component << ' '
 #else
 [[nodiscard]] inline auto severity_to_string(Severity severity) noexcept -> std::string_view {
     switch(severity) {
@@ -167,10 +167,10 @@ inline auto operator<<(std::ostream& out, Severity severity) -> std::ostream& {
     return out;
 }
 
-#define FPS_LOG_WITH_SEVERITY(severity, component)                                                                                                      \
-    if(!::fps::log::severity_enabled(severity)) {                                                                                                      \
-    } else                                                                                                                                             \
-        ::fps::log::AndroidLogLine((severity), (component)).stream()
+#    define FPS_LOG_WITH_SEVERITY(severity, component) \
+        if(!::fps::log::severity_enabled(severity)) {  \
+        } else                                         \
+            ::fps::log::AndroidLogLine((severity), (component)).stream()
 #endif
 
 } // namespace fps::log

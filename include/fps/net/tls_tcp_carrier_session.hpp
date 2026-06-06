@@ -226,9 +226,8 @@ private:
     [[nodiscard]] auto enqueue_zero_rtt_classified_frames(Direction direction, std::span<const TlsTcpCarrierCovertFrame> frames) -> TlsTcpCarrierEnqueueResult;
     [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames)
         -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
-    [[nodiscard]] auto encode_classified_write(
-        Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t target_tls_record_size
-    ) -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
+    [[nodiscard]] auto encode_classified_write(Direction direction, std::span<const TlsTcpCarrierOwnedCovertFrame> frames, std::size_t target_tls_record_size)
+        -> Result<WriteItem, TlsTcpCarrierEnqueueError>;
     [[nodiscard]] auto shaper_enabled() const noexcept -> bool;
     void observe_cover_record(Direction direction, std::size_t bytes);
     void enqueue_counted_write(Direction direction, WriteItem item);

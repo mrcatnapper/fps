@@ -49,9 +49,9 @@ struct ShapeSizeBounds {
     return static_cast<std::uint64_t>(std::max<std::int64_t>(0, delay.count()));
 }
 
-[[nodiscard]] auto classified_shape_size_bounds(
-    std::span<const TlsTcpCarrierOwnedCovertFrame> frames, const std::optional<TlsTcpCarrierZeroRttOptions>& options
-) -> std::optional<ShapeSizeBounds> {
+[[nodiscard]] auto
+classified_shape_size_bounds(std::span<const TlsTcpCarrierOwnedCovertFrame> frames, const std::optional<TlsTcpCarrierZeroRttOptions>& options)
+    -> std::optional<ShapeSizeBounds> {
     const auto min_size = classified_tls_record_size(frames, 0);
     if(!min_size) {
         return std::nullopt;
@@ -64,9 +64,9 @@ struct ShapeSizeBounds {
     return ShapeSizeBounds{.min_tls_record_size = *min_size, .max_tls_record_size = *max_size};
 }
 
-[[nodiscard]] auto classified_record_size_for_single_frame(
-    FrameType frame_type, std::size_t payload_size, std::size_t frame_padding_size = 0, std::size_t record_padding_size = 0
-) -> std::optional<std::size_t> {
+[[nodiscard]] auto
+classified_record_size_for_single_frame(FrameType frame_type, std::size_t payload_size, std::size_t frame_padding_size = 0, std::size_t record_padding_size = 0)
+    -> std::optional<std::size_t> {
     ByteVector payload(payload_size);
     const TlsTcpCarrierOwnedCovertFrame frame{
         .frame_type = frame_type,
@@ -77,9 +77,8 @@ struct ShapeSizeBounds {
     return classified_tls_record_size(std::span<const TlsTcpCarrierOwnedCovertFrame>{&frame, 1}, record_padding_size);
 }
 
-[[nodiscard]] auto classified_fragment_shape_size_bounds(
-    std::size_t max_fragment_payload_size, const std::optional<TlsTcpCarrierZeroRttOptions>& options
-) -> std::optional<ShapeSizeBounds> {
+[[nodiscard]] auto classified_fragment_shape_size_bounds(std::size_t max_fragment_payload_size, const std::optional<TlsTcpCarrierZeroRttOptions>& options)
+    -> std::optional<ShapeSizeBounds> {
     const auto min_payload_size = kDatagramFragmentHeaderSize + 1U;
     if(max_fragment_payload_size < min_payload_size) {
         return std::nullopt;
@@ -821,9 +820,8 @@ auto TlsTcpCarrierSession::split_shaped_datagram_front(Direction direction, cons
     }
 
     const auto max_frame_payload_size = config_.zero_rtt->max_frame_payload_size;
-    const auto max_chunk_size = std::min(
-        {datagram.size(), max_frame_payload_size - kDatagramFragmentHeaderSize, plan.covert_payload_budget - kDatagramFragmentHeaderSize}
-    );
+    const auto max_chunk_size =
+        std::min({datagram.size(), max_frame_payload_size - kDatagramFragmentHeaderSize, plan.covert_payload_budget - kDatagramFragmentHeaderSize});
     if(max_chunk_size == 0U) {
         return false;
     }
@@ -931,9 +929,8 @@ void TlsTcpCarrierSession::maybe_schedule_shaped_write(Direction direction) {
 
     auto& item = shaped_write_queue(direction).front();
     const auto can_split_datagram = [&]() -> bool {
-        return config_.zero_rtt.has_value() && item.classified_frames.size() == 1U &&
-               item.classified_frames.front().frame_type == FrameType::opaque_datagram && !item.classified_frames.front().payload.empty() &&
-               config_.zero_rtt->max_frame_payload_size > kDatagramFragmentHeaderSize;
+        return config_.zero_rtt.has_value() && item.classified_frames.size() == 1U && item.classified_frames.front().frame_type == FrameType::opaque_datagram &&
+               !item.classified_frames.front().payload.empty() && config_.zero_rtt->max_frame_payload_size > kDatagramFragmentHeaderSize;
     }();
     const auto bounds = [&]() -> std::optional<ShapeSizeBounds> {
         if(can_split_datagram) {

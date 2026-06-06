@@ -138,14 +138,14 @@ namespace fps::net::detail {
     if(!covert_ratio || !burst_records || !jitter_min || !jitter_max || !adaptive_enabled || !adaptive_min_records || !adaptive_min_observation ||
        !adaptive_decay || !snapshot_interval || !seed) {
         return Result<ShaperProfile, std::string>::failure(
-            !covert_ratio       ? covert_ratio.error()
-            : !burst_records    ? burst_records.error()
-            : !jitter_min       ? jitter_min.error()
-            : !jitter_max       ? jitter_max.error()
-            : !adaptive_enabled ? adaptive_enabled.error()
-            : !adaptive_min_records
-                ? adaptive_min_records.error()
-                : !adaptive_min_observation ? adaptive_min_observation.error() : (!adaptive_decay ? adaptive_decay.error() : (!snapshot_interval ? snapshot_interval.error() : seed.error()))
+            !covert_ratio               ? covert_ratio.error()
+            : !burst_records            ? burst_records.error()
+            : !jitter_min               ? jitter_min.error()
+            : !jitter_max               ? jitter_max.error()
+            : !adaptive_enabled         ? adaptive_enabled.error()
+            : !adaptive_min_records     ? adaptive_min_records.error()
+            : !adaptive_min_observation ? adaptive_min_observation.error()
+                                        : (!adaptive_decay ? adaptive_decay.error() : (!snapshot_interval ? snapshot_interval.error() : seed.error()))
         );
     }
 

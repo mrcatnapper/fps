@@ -1,8 +1,8 @@
 #pragma once
 
 #if !defined(FPS_DISABLE_BOOST_HEADERS) && __has_include(<boost/endian/conversion.hpp>)
-#include <boost/endian/conversion.hpp>
-#define FPS_CORE_WIRE_HAS_BOOST_ENDIAN 1
+#    include <boost/endian/conversion.hpp>
+#    define FPS_CORE_WIRE_HAS_BOOST_ENDIAN 1
 #endif
 
 #include <array>
