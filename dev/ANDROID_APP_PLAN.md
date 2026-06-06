@@ -19,6 +19,30 @@ handoff artifact, not operator documentation.
   manager yet. A connected instrumented smoke exists, but it is opt-in and runs
   only when an external Android device or emulator is attached.
 
+## Implemented Headless Core Slice
+
+Delivered:
+
+- Android parses the current `fps://v1/<base64url-json>` client profile format
+  and raw client JSON into a Kotlin `AndroidClientProfile`.
+- Parsing accepts only client-side fields needed by the Android runtime:
+  `network.server`, `security.zero_rtt.client_uuid`,
+  `security.zero_rtt.server_public_key_base64`, optional codec, TUN and ops
+  metadata.
+- Parsing rejects server-only secret/runtime fields such as
+  `server_private_key_base64`, `allowed_client_uuids`, `tun.lease_pool`,
+  `tun.server_address` and `tun.lease_file`.
+- Parsing uses Android's `org.json` API. Headless JVM tests provide the same API
+  through a test-only `org.json:json` dependency; do not maintain a project-local
+  JSON parser for this boundary.
+- Kotlin runtime state is modeled as a headless controller with platform hooks
+  for VPN permission, TUN establishment, socket protection, underlying-network
+  DNS and UID lookup.
+- Carrier probe settings are modeled but do not open network sockets yet.
+  Future carrier sockets must call the socket-protection hook before connect.
+- Required verification remains Docker/JVM-first. Connected Android runtime
+  checks stay opt-in.
+
 ## Environment
 
 - JDK: OpenJDK 21 is acceptable; AGP 9 requires JDK 17 or newer.

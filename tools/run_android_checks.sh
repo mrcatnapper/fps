@@ -71,6 +71,15 @@ run() {
   "$@"
 }
 
+remove_existing_docker_image() {
+  local image="$1"
+  shift
+  if "$@" image inspect "$image" >/dev/null 2>&1; then
+    log "Remove previous Docker image tag: $image"
+    run "$@" image rm --no-prune "$image"
+  fi
+}
+
 set_android_env() {
   export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
   export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -141,6 +150,7 @@ run_docker_checks() {
   fi
 
   log "Build Android Docker image"
+  remove_existing_docker_image "$image" "${docker_cmd[@]}"
   if "${docker_cmd[@]}" buildx version >/dev/null 2>&1 && [[ "${FPS_ANDROID_DOCKER_BUILDKIT:-1}" != "0" ]]; then
     run "${docker_cmd[@]}" buildx build --load -f "$dockerfile_path" -t "$image" "$repo_root"
   else

@@ -4,6 +4,62 @@
 
 ## 2026-06-06
 
+### Android headless core profile/runtime slice
+
+Goal:
+
+- Add the first testable Android-client layer without UI, live carrier sockets
+  or a real `VpnService` fd pump.
+- Keep Android checks Docker/JVM-first so host SDK/NDK/vcpkg paths remain
+  optional.
+
+Planned steps:
+
+- Add Kotlin parsing for current client JSON and `fps://v1` profiles into a
+  non-secret `AndroidClientProfile`.
+- Reject server-only secrets and lease-pool internals at the Android boundary.
+- Add a headless runtime controller/state machine with platform hooks for VPN
+  permission, TUN establishment, socket protection, underlying-network DNS and
+  UID lookup.
+- Add JVM tests for profile parsing, state transitions, fail-closed policy and
+  carrier planning.
+- Keep connected instrumented native tests opt-in.
+
+Completed:
+
+- Added Kotlin parsing for raw client JSON and `fps://v1` client profile URIs
+  into a non-secret `AndroidClientProfile` model.
+- Added an Android-owned client profile parsing boundary that does not pull
+  Linux Boost.JSON config code into the native target.
+- Added profile validation for required client fields, canonical UUIDv4,
+  32-byte padded base64 server public key and rejection of server-only
+  Zero-RTT/TUN fields.
+- Added a headless VPN runtime controller with platform hooks for VPN
+  permission, TUN establishment, socket protection, underlying-network DNS and
+  UID lookup.
+- Added JVM tests for profile parsing, redaction, fail-closed policy hooks,
+  two-phase lease-before-TUN startup, idempotent stop and socket protection.
+- Extended the opt-in connected native smoke with a JNI IPv4 TCP 5-tuple parse
+  fixture.
+- Updated specification/testing docs to describe the headless Android core
+  boundary.
+- Follow-up: replaced the project-local Kotlin JSON parser with Android's
+  `org.json` API and a test-only JVM `org.json:json` dependency. Also recorded
+  Docker image tag cleanup and "do not clone platform libraries" practices in
+  agent/developer notes.
+- Follow-up: documented direct `docker run --rm ...` checks against already
+  built images, including bind-mounted workspace runs. Added an Android
+  Dockerfile prewarm layer that resolves Gradle wrapper/Maven dependencies
+  before the full source `COPY`, so one-shot `docker run` checks reuse the
+  cached Gradle distribution/dependency graph from the image.
+
+Verification:
+
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+
 ### Android Docker build and connected native smoke
 
 Goal:

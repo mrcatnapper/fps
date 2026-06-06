@@ -60,6 +60,16 @@ RUN set -eux; \
 FROM android-deps AS ci
 
 WORKDIR /workspaces
+ENV GRADLE_USER_HOME=/opt/gradle-cache
+
+COPY gradlew gradlew.bat settings.gradle.kts build.gradle.kts gradle.properties ./
+COPY gradle ./gradle
+COPY android/app/build.gradle.kts android/app/build.gradle.kts
+COPY android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+COPY android/app/src/main/cpp/CMakeLists.txt android/app/src/main/cpp/CMakeLists.txt
+
+RUN ./gradlew --no-daemon :android:app:dependencies >/tmp/fps-android-gradle-dependencies.txt \
+    && rm -f /tmp/fps-android-gradle-dependencies.txt
 
 COPY . ./
 

@@ -101,6 +101,12 @@ Scope: the whole repository from the directory that contains this file.
   - Boost.Container/UUID/ProgramOptions where appropriate;
   - Boost.Asio SSL/OpenSSL integration for TLS-related tooling when useful.
 - Do not add heavy external dependencies for minor convenience.
+- Do not rewrite common infrastructure when a platform/runtime library already
+  provides it at acceptable cost. For Android/Kotlin code, prefer Android or
+  Kotlin/JVM standard libraries and small well-known dependencies over
+  project-local parsers or codecs. If using a platform library breaks headless
+  JVM testing, report the exact blocker and add the narrowest test dependency
+  instead of cloning the library behavior by hand.
 - RAII is required for file descriptors, sockets, TUN handles, timers,
   temporary files and crypto contexts.
 - Do not block the event loop with long synchronous operations.
@@ -146,6 +152,16 @@ Scope: the whole repository from the directory that contains this file.
   transfer it with `docker save | ssh ... docker load`. Do not build Docker
   images on weak remote soak hosts unless the user explicitly asks for a remote
   build experiment.
+- When rebuilding a Docker image under an existing tag, remove the old image
+  first if the new image will not be a descendant of the previous one, for
+  example after source `COPY` changes or image-stage reshaping. Otherwise Docker
+  leaves untagged images that are not referenced as cache parents and gradually
+  consume disk space.
+- If a check only needs an already built image, run that image directly with
+  `docker run --rm ...` instead of rebuilding it. When current workspace files
+  are needed inside the container, bind-mount the workspace explicitly and run
+  the target command there, for example by mounting `$PWD` at `/workspaces` and
+  setting the container workdir to `/workspaces`.
 
 ## Sudo And Environment
 

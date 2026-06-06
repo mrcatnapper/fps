@@ -15,6 +15,16 @@ When Android cross-builds fail, first identify the class of dependency:
 Do not disable a useful dependency just because the first Android build cannot
 find it. Prefer the narrowest fix that preserves the shared contract.
 
+## Do Not Clone Platform Libraries
+
+Cross-platform discipline does not mean every helper must live in this
+repository. When Android/Kotlin already provides a suitable API, use it. For
+example, Android client-profile parsing uses `org.json`; JVM unit tests add the
+same API as a test dependency so they remain headless. Reimplementing JSON,
+base64, URL, TLS, crypto or DNS parsing in project-local code is acceptable only
+when the platform/library option is demonstrably unavailable or violates an FPS
+security/testability contract.
+
 ## Header-Only Boost
 
 Boost.Describe, Boost.MP11 and Boost.Endian are header-only for current FPS use.
