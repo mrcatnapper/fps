@@ -2,6 +2,137 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-06
+
+### Verify Android boundary hardening PR
+
+Goal:
+
+- Run the full extended verification set before opening and merging the Android
+  boundary hardening PR.
+
+Results:
+
+- Non-Docker quality suite passed:
+  - clang-20 warning build plus local CTest;
+  - ASan+UBSan local CTest;
+  - Valgrind unit pass: 228 test cases, 0 errors/leaks;
+  - llvm-cov thresholds passed: 74.81% line coverage, 81.93% function
+    coverage;
+  - bounded libFuzzer smoke for TLS records, covert codec, envelope,
+    Zero-RTT and TUN frames.
+- Docker smoke passed for both `fps:local` (`Dockerfile`) and `fps:alpine`
+  (`Dockerfile.alpine`): image build, CLI help, UUID/key config validation,
+  entrypoint `check-config` alias and compose config validation.
+- Root/TUN CTest passed: 6/6 (`open_smoke`, loopback, burst, fragmentation,
+  shaper and multi-carrier).
+- Local Docker/TUN resilience smoke passed on `fps:alpine`: mixed UDP/HTTP,
+  carrier loss/recovery, spoof-drop liveness and all services alive. The
+  optional backpressure stress did not observe `write_queue_full` in this run;
+  that counter is not required by the smoke gate unless explicitly requested.
+- Split-host `fpshop` soak passed:
+  - image `fps:alpine` built locally and transferred to `fpshop` with
+    `docker save`/`docker load`;
+  - duration 300s, two clients, two carriers per client, shaper enabled;
+  - planned carrier restarts: `a1`, `b2`, `a2`, `b1`;
+  - UDP client A: 2400/2400 received, 0% loss, bad payloads 0;
+  - UDP client B: 2400/2400 received, 0% loss, bad payloads 0;
+  - bad classified/envelope/shaper log counters: 0;
+  - spoofed-source drop observed: 1;
+  - final server carrier counters: current 4, registered 8, removed 4;
+  - artifacts: `captures/fps-two-host-soak-34165/summary.json`.
+
+Verification commands:
+
+- `tools/run_quality_checks.sh --all`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_SUDO=1 FPS_DOCKER_IMAGE=fps:alpine FPS_DOCKER_SOAK_BUILD=0 tools/run_quality_checks.sh --soak-smoke`
+- `FPS_DOCKER_SUDO=1 tools/docker_two_host_soak.py --remote fpshop --image fps:alpine --transfer-image --sudo --duration 300 --clients 2 --carriers-per-client 2 --bandwidth 500K --length 512 --keep-artifacts`
+
+### Start Android boundary hardening
+
+Goal:
+
+- Prepare the C++ core for Android application work by tightening the
+  protocol/datagram/TUN/Linux boundaries before adding any Android-specific
+  implementation.
+
+Decisions:
+
+- First preserve the tactical plan in documentation so the refactor can survive
+  context resets.
+- Treat `fps_core` as the narrow protocol/datagram layer. TLS/TCP carrier and
+  TUN adapter are explicit opt-in layers above it.
+- Decouple `TunTunnelAdapter` from `TlsTcpCarrierSession` in this increment.
+  The TUN adapter should register generic `CovertCarrier` handles by
+  `CarrierId`; the Linux relay runtime remains responsible for mapping carrier
+  ids back to concrete sessions and stopping replaced sessions.
+- Leave `TunRuntime` semantic cleanup, reusable config/profile parsing and
+  Android `VpnService.protect()`/DNS design for follow-up increments.
+
+Completed so far:
+
+- Added `dev/ANDROID_BOUNDARY.md` with findings, current increment scope and
+  follow-up work.
+- Updated the specification, beta status and roadmap to describe the intended
+  platform boundary more precisely.
+- Split CMake targets into narrow `fps_datagram_core`, concrete
+  `fps_tls_tcp_carrier`, `fps_tun_adapter`, narrow `fps_core` and
+  `fps_linux_runtime`.
+- Decoupled `TunTunnelAdapter` from `TlsTcpCarrierSession`. It now registers
+  generic `CovertCarrier` handles by `CarrierId`, returns replaced carrier ids
+  for duplicate-client replacement, and receives inbound decoded frames by
+  carrier id.
+- Rewired the Linux relay runtime to use `session_id` as the carrier id and to
+  own the `CarrierId -> TlsTcpCarrierSession` mapping for stopping replaced
+  duplicate-UUID sessions.
+- Rewrote `test_tun_tunnel_adapter` around fake `CovertCarrier` fixtures so the
+  TUN adapter tests no longer require concrete TLS/TCP sessions.
+- Replaced the Linux-shaped `TunRuntime::run_ip_command(...)` callback with
+  semantic link/address operations. Linux `ip` argv construction now lives only
+  in `src/platform/linux/tun_runtime.cpp`, while core code calls platform-neutral
+  operations.
+- Made `CovertCarrier` enqueue affinity explicit. The generic transport checks
+  optional `can_enqueue_now`, the TLS/TCP carrier adapter ties that guard to the
+  session owner thread, and wrong-thread calls return `wrong_executor` without
+  touching session queues.
+- Extracted `fps://v1` client profile URI encode/decode and normalized profile
+  JSON validation into `fps_protocol_core`. Linux CLI profile import/export now
+  uses the shared helper, and Android can reuse the same UUID/server-public-key
+  validation without linking Linux runtime.
+- Recorded accepted Android runtime direction: app-owned carriers first,
+  platform socket protection before connect, DNS through Android underlying
+  network, lease-before-TUN startup, split tunnel by default and a thin async
+  facade that posts into the native `io_context`.
+- Added `TcpSocketProtector` as the platform socket-protection seam. The relay
+  outbound connect path now explicitly opens the target socket, invokes the
+  protector, then connects. Linux uses a no-op protector; Android can wire this
+  to `VpnService.protect(fd)` without copying the connect path.
+- Added `parse_ipv4_flow_tuple(...)` and an outbound TUN packet policy hook.
+  The hook receives raw packet bytes, optional parsed IPv4 TCP/UDP 5-tuple and
+  non-secret parse errors before covert enqueue, so Android can ask the platform
+  connection-owner API and fail closed for UIDs outside the split-tunnel
+  allowlist.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `cmake -S . -B build`
+- `cmake --build build -j 2`
+- `./build/fps_unit_tests --run_test=tcp_socket_protector --catch_system_errors=no`
+- `./build/fps_unit_tests --run_test=tun_packet,tun_tunnel_adapter,enum_helpers --catch_system_errors=no`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON`
+- `cmake --build cmake-build-tun -j 2`
+- `sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `git diff --check`
+
 ## 2026-06-03
 
 ### Full verification before UX-footgun PR

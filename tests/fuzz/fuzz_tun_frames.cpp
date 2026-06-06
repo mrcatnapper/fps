@@ -1,4 +1,5 @@
 #include "fps/net/tun_lease.hpp"
+#include "fps/net/tun_packet.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -23,6 +24,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   (void)fps::net::decode_tun_lease_control(input);
   (void)fps::net::ipv4_packet_source(input);
   (void)fps::net::ipv4_packet_destination(input);
+  (void)fps::net::parse_ipv4_flow_tuple(input);
 
   std::string text;
   text.reserve(limited_size);

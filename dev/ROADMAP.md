@@ -19,8 +19,19 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Split the covert datagram carrier core from the Linux TUN adapter so
   Android or future non-TUN adapters can reuse authenticated carriers and
   opaque datagram framing without inheriting IPv4 lease enforcement.
-- [x] Split build targets into protocol core, carrier/datagram core, TUN adapter
-  and Linux runtime so future platform work can link narrower components.
+- [x] Split build targets into protocol core, datagram core, TLS/TCP carrier, TUN
+  adapter and Linux runtime so future platform work can link narrower
+  components without relying on a broad convenience aggregate.
+- [x] Replace Linux-shaped TUN command callbacks with semantic `TunRuntime`
+  link/address operations so platform code owns OS-specific configuration.
+- [x] Make the generic carrier enqueue contract executor-explicit and reject
+  wrong-thread synchronous enqueue calls before session queues are touched.
+- [x] Move `fps://v1` client profile URI import and JSON validation into
+  platform-neutral core so Android does not duplicate the profile format.
+- [x] Add an injectable TCP socket-protection hook so Android can protect
+  carrier sockets before connect without forking the relay connect path.
+- [x] Add an outbound TUN packet policy hook with IPv4 TCP/UDP 5-tuple parsing
+  so Android can enforce split-tunnel UID allowlists before covert enqueue.
 - [x] Harden config UX: mode-specific validation, `--check-config`, non-secret
   summaries and example client/server configs.
 - [x] Add server-owned IPv4 lease allocator and client `tun.auto_configure` for
@@ -149,9 +160,9 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Document minimal kernel capabilities and deployment topology.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
-- Continue target isolation before Android implementation work by moving more
-  relay orchestration behind platform interfaces only when a second adapter
-  needs it.
+- Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
+  full config parsing reusable where useful, then prototype the accepted
+  app-owned carrier plus two-phase lease/TUN Android runtime model.
 
 ## Phase 7: Fuzzing And Soak
 

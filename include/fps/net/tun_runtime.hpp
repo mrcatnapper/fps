@@ -3,7 +3,6 @@
 #include <boost/describe/class.hpp>
 
 #include <cstddef>
-#include <span>
 #include <string>
 #include <string_view>
 
@@ -27,7 +26,9 @@ public:
     virtual ~TunRuntime() = default;
 
     [[nodiscard]] virtual auto open_tun(std::string_view name, bool non_blocking) -> Result<OpenTunDevice, std::string> = 0;
-    [[nodiscard]] virtual auto run_ip_command(std::span<const std::string> args) -> int = 0;
+    [[nodiscard]] virtual auto set_link_mtu(std::string_view name, std::size_t mtu) -> int = 0;
+    [[nodiscard]] virtual auto set_link_up(std::string_view name) -> int = 0;
+    [[nodiscard]] virtual auto replace_ipv4_address(std::string_view name, std::uint32_t ipv4, std::uint8_t prefix_length) -> int = 0;
 };
 
 struct TunLinkConfigureStatus {

@@ -26,15 +26,23 @@ public:
         } catch(const std::exception& error) { return Result<net::OpenTunDevice, std::string>::failure(error.what()); }
     }
 
-    [[nodiscard]] auto run_ip_command(std::span<const std::string> args) -> int override {
-        std::vector<std::string> full_args;
-        full_args.reserve(args.size() + 1U);
-        full_args.push_back("ip");
-        full_args.insert(full_args.end(), args.begin(), args.end());
-        return run_no_shell(full_args);
+    [[nodiscard]] auto set_link_mtu(std::string_view name, std::size_t mtu) -> int override {
+        return run_ip({"link", "set", "dev", std::string{name}, "mtu", std::to_string(mtu)});
+    }
+
+    [[nodiscard]] auto set_link_up(std::string_view name) -> int override { return run_ip({"link", "set", "dev", std::string{name}, "up"}); }
+
+    [[nodiscard]] auto replace_ipv4_address(std::string_view name, std::uint32_t ipv4, std::uint8_t prefix_length) -> int override {
+        const auto address = net::format_ipv4_address(ipv4) + "/" + std::to_string(static_cast<unsigned int>(prefix_length));
+        return run_ip({"addr", "replace", address, "dev", std::string{name}});
     }
 
 private:
+    [[nodiscard]] static auto run_ip(std::vector<std::string> args) -> int {
+        args.insert(args.begin(), "ip");
+        return run_no_shell(args);
+    }
+
     [[nodiscard]] static auto run_no_shell(const std::vector<std::string>& args) -> int {
         if(args.empty()) {
             return -1;

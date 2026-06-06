@@ -62,10 +62,11 @@ Implementation boundary:
 - `fps_protocol_core` owns protocol primitives: TLS record parsing/wrapping,
   transcript-bound Zero-RTT, classified FPS records, envelope/frame codecs and
   shaping decisions. It does not open sockets or TUN devices.
-- `fps_carrier_core` owns the generic unreliable datagram transport contract:
+- `fps_datagram_core` owns the generic unreliable datagram transport contract:
   `CovertDatagramTransport` schedules opaque datagram frames across abstract
   `CovertCarrier` handles identified by `CarrierId`. This layer does not assume
   that the carrier is TLS, TCP, SSH, WebRTC or any other concrete protocol.
+- `fps_tls_tcp_carrier` owns the current TLS-over-TCP carrier implementation.
 - `TlsTcpCarrierSession` is the current concrete carrier implementation. It is
   deliberately named TLS/TCP because it owns TCP socket reads/writes, TLS record
   slicing, carrier transcript tracking, Zero-RTT state transitions and
@@ -285,7 +286,11 @@ application-specific payload.
 
 `CovertDatagramTransport` maintains the generic carrier pool:
 
-- `add_carrier_session` is called only after Zero-RTT authentication;
+- generic `CovertCarrier` handles are registered only after Zero-RTT
+  authentication;
+- carrier enqueue is synchronous and same-executor: callers must submit
+  datagrams from the carrier owner executor; implementations may reject calls
+  from other threads with `wrong_executor`;
 - outbound opaque datagrams select carriers round-robin while respecting
   closed/full queues;
 - if one carrier write queue is full, the transport tries another carrier;
@@ -619,6 +624,9 @@ Client profile CLI:
   client JSON;
 - `fps_client --write-config-from-uri URI --output PATH [--force]` decodes and
   writes client JSON with the same secret-file overwrite rules;
+- `fps://v1` decoding is implemented in platform-neutral core. It normalizes the
+  JSON profile and validates the client UUID plus server public key before the
+  Linux CLI writes or prints it;
 - the generated profile contains `client_uuid`, `server_public_key_base64`,
   profile id, carrier endpoint, codec settings and client-side TUN
   auto-configuration defaults;
@@ -630,19 +638,37 @@ Client profile CLI:
 
 ## 8.1 Platform Boundary
 
-`fps_core` is the platform-neutral layer intended for future Android reuse:
-crypto, Zero-RTT, classified-record codec, session/carrier scheduling, TUN framing,
-lease/control payloads and TUN packet pump do not depend on Linux `ip` or
-`/dev/net/tun`.
+`fps_core` is the narrow platform-neutral layer intended for future Android
+reuse: crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
+normalization and generic datagram scheduling. TUN framing/adaptation and the
+TLS/TCP carrier are explicit opt-in targets above that core.
 
 Linux-specific runtime is separate:
 
 - `fps_linux_runtime` contains relay CLI app, Linux TUN open and production
   `TunRuntime`;
 - `TunRuntime` is injected into the relay app and provides TUN opening plus
-  no-shell `ip` execution;
+  semantic link/address operations. The Linux implementation translates those
+  operations to no-shell `ip` execution; Android should later back the same
+  operations with `VpnService`;
 - unit tests use fake runtime/configurator objects. Android should later provide
-  a `VpnService` file descriptor and Android network configurator.
+  a `VpnService` file descriptor, protected carrier sockets and Android network
+  configurator;
+- Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
+  threads. They must post work onto the FPS/carrier executor or use a future
+  async adapter API.
+- Outbound TCP carrier connects use an injectable `TcpSocketProtector`. The
+  current Linux runtime passes a no-op protector, while Android should call
+  `VpnService.protect(fd)` after socket open and before connect;
+- The first Android direction is app-owned carrier sessions, socket protection
+  through `TcpSocketProtector`, hostname resolution through Android's underlying
+  network, two-phase lease-before-TUN startup and split tunnel by default.
+- TUN adapters can install an outbound packet policy hook before covert
+  enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
+  TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android
+  should use this boundary to call the platform connection-owner API and
+  fail closed for UIDs outside the configured split-tunnel allowlist. The hook
+  must not log UUIDs, keys, raw packets or payload bytes.
 
 ## 9. Observability
 

@@ -13,6 +13,7 @@
 
 #include "fps/core/crypto.hpp"
 #include "fps/core/types.hpp"
+#include "fps/net/tun_packet.hpp"
 
 namespace fps::net {
 
@@ -70,9 +71,6 @@ struct TunLeasePruneResult {
 [[nodiscard]] auto encode_client_instance_control(const ClientInstanceId& client_instance_id) -> ByteVector;
 [[nodiscard]] auto decode_client_instance_control(std::span<const std::byte> payload) -> TunLeaseResult<ClientInstanceMetadata>;
 [[nodiscard]] auto is_client_instance_control(std::span<const std::byte> payload) noexcept -> bool;
-
-[[nodiscard]] auto ipv4_packet_source(std::span<const std::byte> packet) -> std::optional<std::uint32_t>;
-[[nodiscard]] auto ipv4_packet_destination(std::span<const std::byte> packet) -> std::optional<std::uint32_t>;
 
 class TunLeaseAllocator {
 public:

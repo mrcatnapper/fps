@@ -189,20 +189,6 @@ auto is_client_instance_control(std::span<const std::byte> payload) noexcept -> 
     return !payload.empty() && std::to_integer<unsigned int>(payload[0]) == kControlTypeClientInstance;
 }
 
-auto ipv4_packet_source(std::span<const std::byte> packet) -> std::optional<std::uint32_t> {
-    if(packet.size() < 20U || ((std::to_integer<unsigned int>(packet[0]) >> 4U) & 0x0fU) != 4U) {
-        return std::nullopt;
-    }
-    return read_be<std::uint32_t>(packet, 12);
-}
-
-auto ipv4_packet_destination(std::span<const std::byte> packet) -> std::optional<std::uint32_t> {
-    if(packet.size() < 20U || ((std::to_integer<unsigned int>(packet[0]) >> 4U) & 0x0fU) != 4U) {
-        return std::nullopt;
-    }
-    return read_be<std::uint32_t>(packet, 16);
-}
-
 TunLeaseAllocator::TunLeaseAllocator(TunLeaseAllocatorConfig config) : config_(std::move(config)) {
     config_.pool.network &= mask_for_prefix(config_.pool.prefix_length);
     const auto loaded = load();

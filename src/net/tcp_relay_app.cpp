@@ -35,6 +35,7 @@
 #include "fps/log/logging.hpp"
 #include "fps/log/rate_limiter.hpp"
 #include "fps/net/tcp_socket_options.hpp"
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_packet_pump.hpp"
 #include "fps/net/tun_tunnel_adapter.hpp"
@@ -196,7 +197,8 @@ template <typename Enum>
 }
 
 [[nodiscard]] auto should_rate_limit_tun_session_error(TunTunnelError error) noexcept -> bool {
-    return error == TunTunnelError::no_carrier_session || error == TunTunnelError::write_queue_full || error == TunTunnelError::non_ipv4_tun_destination;
+    return error == TunTunnelError::no_carrier_session || error == TunTunnelError::write_queue_full || error == TunTunnelError::non_ipv4_tun_destination ||
+           error == TunTunnelError::packet_rejected_by_policy;
 }
 
 [[nodiscard]] auto should_rate_limit_tls_parse_error(TlsParseError error) noexcept -> bool { return error == TlsParseError::invalid_header; }
@@ -234,8 +236,14 @@ struct RepeatedLogState {
 
 class TcpRelayServer : public std::enable_shared_from_this<TcpRelayServer> {
 public:
-    TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime)
-        : io_(io), acceptor_(io), status_acceptor_(io), shaper_snapshot_timer_(io), config_(std::move(config)), tun_runtime_(std::move(tun_runtime)) {}
+    TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector)
+        : io_(io)
+        , acceptor_(io)
+        , status_acceptor_(io)
+        , shaper_snapshot_timer_(io)
+        , config_(std::move(config))
+        , tun_runtime_(std::move(tun_runtime))
+        , socket_protector_(std::move(socket_protector)) {}
 
     ~TcpRelayServer() { cleanup_status_socket(); }
 
@@ -305,6 +313,7 @@ public:
 private:
     struct BridgeSessionRuntimeState {
         std::optional<X25519PublicKey> authenticated_client_public_key;
+        std::optional<CarrierId> carrier_id;
         bool carrier_registered = false;
     };
 
@@ -389,23 +398,29 @@ private:
             assigned_lease = lease.value();
         }
 
-        auto registration = tun_tunnel_->add_carrier_session_with_metadata(
-            session, assigned_lease.has_value() ? std::optional<std::uint32_t>{assigned_lease->client_ipv4} : std::nullopt, client_instance_id
+        const auto carrier_id = static_cast<CarrierId>(session_id);
+        auto registration = tun_tunnel_->add_carrier_with_metadata(
+            make_tls_tcp_carrier_adapter(carrier_id, session),
+            assigned_lease.has_value() ? std::optional<std::uint32_t>{assigned_lease->client_ipv4} : std::nullopt, client_instance_id
         );
         if(!registration.added) {
-            state.carrier_registered = tun_tunnel_->is_carrier_session(session);
+            state.carrier_registered = tun_tunnel_->is_carrier(carrier_id);
+            if(state.carrier_registered) {
+                state.carrier_id = carrier_id;
+            }
             FPS_LOG_DEBUG("relay") << "event=carrier_already_registered source=zero_rtt session_id=" << session_id
                                    << " carrier_count=" << tun_tunnel_->carrier_count();
             return {.registered = false, .assigned_lease = std::move(assigned_lease)};
         }
 
         state.carrier_registered = true;
+        state.carrier_id = carrier_id;
         ++stats_.carriers_registered;
-        if(!registration.replaced_sessions.empty()) {
-            stats_.carriers_removed += static_cast<std::uint64_t>(registration.replaced_sessions.size());
+        if(!registration.replaced_carrier_ids.empty()) {
+            stats_.carriers_removed += static_cast<std::uint64_t>(registration.replaced_carrier_ids.size());
             ++stats_.duplicate_client_replacements;
             FPS_LOG_WARNING("relay") << "event=duplicate_client_replaced session_id=" << session_id
-                                     << " replaced_carriers=" << registration.replaced_sessions.size() << " carrier_count=" << tun_tunnel_->carrier_count();
+                                     << " replaced_carriers=" << registration.replaced_carrier_ids.size() << " carrier_count=" << tun_tunnel_->carrier_count();
         }
         FPS_LOG_INFO("relay") << "event=carrier_registered source=zero_rtt session_id=" << session_id << " carrier_count=" << tun_tunnel_->carrier_count();
 
@@ -423,9 +438,18 @@ private:
             }
         }
 
-        for(const auto& replaced : registration.replaced_sessions) {
-            if(replaced && replaced != session) {
+        for(const auto replaced_id : registration.replaced_carrier_ids) {
+            if(replaced_id == carrier_id) {
+                continue;
+            }
+            auto iter = authenticated_sessions_.find(replaced_id);
+            if(iter == authenticated_sessions_.end()) {
+                continue;
+            }
+            if(auto replaced = iter->second.lock()) {
                 replaced->stop();
+            } else {
+                authenticated_sessions_.erase(iter);
             }
         }
         return {.registered = true, .assigned_lease = std::move(assigned_lease)};
@@ -942,17 +966,35 @@ private:
                                              << " target=" << endpoint_to_string(self->config_.target) << " error=" << error.message();
                     return;
                 }
-                boost::asio::async_connect(
-                    *origin_socket, results,
-                    [self, client_socket, origin_socket, resolver, session_id](const boost::system::error_code& connect_error, const tcp::endpoint&) {
-                        if(connect_error) {
+                std::vector<tcp::endpoint> endpoints;
+                for(const auto& result : results) {
+                    endpoints.push_back(result.endpoint());
+                }
+                async_protected_connect(
+                    origin_socket, std::move(endpoints), self->socket_protector_,
+                    TcpSocketProtectContext{.role = self->config_.role,
+                                            .session_id = session_id,
+                                            .target_host = self->config_.target.host,
+                                            .target_port = self->config_.target.port},
+                    [self, client_socket, origin_socket, resolver, session_id](TcpProtectedConnectResult result) {
+                        if(!result.protect_error.empty()) {
+                            ++self->stats_.sessions_closed;
+                            self->record_closed_session(
+                                session_id, false,
+                                relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_socket_protect_failed")
+                            );
+                            FPS_LOG_WARNING("relay") << "event=target_socket_protect_failed session_id=" << session_id
+                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << result.protect_error;
+                            return;
+                        }
+                        if(result.error) {
                             ++self->stats_.sessions_closed;
                             self->record_closed_session(
                                 session_id, false,
                                 relay_close_info(TlsTcpCarrierCloseReason::tcp_error, TlsTcpCarrierCloseComponent::tcp, "target_connect_failed")
                             );
                             FPS_LOG_WARNING("relay") << "event=target_connect_failed session_id=" << session_id
-                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << connect_error.message();
+                                                     << " target=" << endpoint_to_string(self->config_.target) << " error=" << result.error.message();
                             return;
                         }
                         if(!self->apply_session_tcp_options(*origin_socket, session_id, "target")) {
@@ -1003,7 +1045,7 @@ private:
                     return;
                 }
                 const auto session = session_slot->lock();
-                if(!self->tun_tunnel_->is_carrier_session(session)) {
+                if(!runtime_state->carrier_id.has_value() || !self->tun_tunnel_->is_carrier(*runtime_state->carrier_id)) {
                     if(self->try_handle_pre_registration_control(session_id, session, *runtime_state, direction, frame)) {
                         return;
                     }
@@ -1013,10 +1055,10 @@ private:
                 }
                 FPS_LOG_TRACE("bridge") << "event=covert_frame session_id=" << session_id << " direction=" << direction_name(direction)
                                         << " frame_type=" << static_cast<unsigned int>(frame.frame_type) << " payload_size=" << frame.payload.size();
-                self->tun_tunnel_->handle_covert_frame(session, direction, frame);
+                self->tun_tunnel_->handle_covert_frame(*runtime_state->carrier_id, direction, frame);
             }
         };
-        handlers.on_closed = [weak_self, session_slot, session_id](const TlsTcpCarrierSessionStats& stats) {
+        handlers.on_closed = [weak_self, runtime_state, session_id](const TlsTcpCarrierSessionStats& stats) {
             if(const auto self = weak_self.lock()) {
                 if(self->stats_.sessions_active > 0U) {
                     --self->stats_.sessions_active;
@@ -1025,8 +1067,8 @@ private:
                 self->authenticated_sessions_.erase(session_id);
                 self->record_closed_session(session_id, stats.zero_rtt_authenticated, stats.close);
                 if(self->tun_tunnel_) {
-                    const auto session = session_slot->lock();
-                    if(self->tun_tunnel_->remove_carrier_session_if(session)) {
+                    const auto removed = runtime_state->carrier_id.has_value() && self->tun_tunnel_->remove_carrier_if(*runtime_state->carrier_id);
+                    if(removed) {
                         ++self->stats_.carriers_removed;
                         FPS_LOG_INFO("relay") << "event=carrier_removed session_id=" << session_id << " carrier_count=" << self->tun_tunnel_->carrier_count();
                     }
@@ -1203,6 +1245,7 @@ private:
     boost::asio::steady_timer shaper_snapshot_timer_;
     TcpRelayConfig config_;
     std::shared_ptr<TunRuntime> tun_runtime_;
+    std::shared_ptr<TcpSocketProtector> socket_protector_;
     std::shared_ptr<Shaper> shaper_;
     std::shared_ptr<TunTunnelAdapter> tun_tunnel_;
     std::shared_ptr<TunPacketPump> tun_pump_;
@@ -1223,9 +1266,13 @@ private:
 
 } // namespace
 
-auto run_tcp_relay(const TcpRelayConfig& config) -> int { return run_tcp_relay(config, linux_platform::make_linux_tun_runtime()); }
+auto run_tcp_relay(const TcpRelayConfig& config) -> int { return run_tcp_relay(config, linux_platform::make_linux_tun_runtime(), make_noop_tcp_socket_protector()); }
 
 auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime) -> int {
+    return run_tcp_relay(config, std::move(tun_runtime), make_noop_tcp_socket_protector());
+}
+
+auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector) -> int {
     log::init_console_logging(config.logging);
     FPS_LOG_INFO("relay") << "event=start role=" << role_name(config.role) << " log_level=" << log::severity_to_string(config.logging.level);
 
@@ -1234,7 +1281,10 @@ auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun
         if(!tun_runtime) {
             tun_runtime = linux_platform::make_linux_tun_runtime();
         }
-        auto server = std::make_shared<TcpRelayServer>(io, config, std::move(tun_runtime));
+        if(!socket_protector) {
+            socket_protector = make_noop_tcp_socket_protector();
+        }
+        auto server = std::make_shared<TcpRelayServer>(io, config, std::move(tun_runtime), std::move(socket_protector));
         if(!server->start()) {
             return 1;
         }

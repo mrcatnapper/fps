@@ -164,6 +164,8 @@ fps://v1/<base64url-json-profile>
 A query-string layout would be more readable, but it becomes fragile once
 optional mobile and platform fields appear. Keeping JSON as the only profile
 schema makes URI/QR a transport wrapper rather than a second config format.
+URI import normalizes the decoded JSON and validates the client UUID plus server
+public key before writing a config file.
 
 ## Docker Notes
 

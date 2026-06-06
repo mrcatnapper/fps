@@ -49,7 +49,12 @@ auto make_tls_tcp_carrier_adapter(CarrierId carrier_id, std::weak_ptr<TlsTcpCarr
             }
             return CovertDatagramResult::success(queued.value());
         },
-        .is_alive = [session = std::move(session)] { return !session.expired(); },
+        .is_alive = [session] { return !session.expired(); },
+        .can_enqueue_now =
+            [session] {
+                const auto locked = session.lock();
+                return locked && locked->is_enqueue_thread();
+            },
     };
 }
 
