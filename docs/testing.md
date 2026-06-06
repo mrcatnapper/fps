@@ -91,14 +91,119 @@ Useful environment variables:
 Local non-Docker Python runtime dependencies are pinned in
 `requirements-runtime.txt`.
 
+## Android Bootstrap Checks
+
+The Android client scaffold is command-line only; Android Studio is not
+required. The preferred reproducible path is Docker:
+
+```sh
+tools/run_android_checks.sh
+tools/run_android_checks.sh --docker
+```
+
+Outside Docker, no arguments default to `--docker`. Inside `Dockerfile.android`,
+the container sets `FPS_ANDROID_DOCKER=1`, so no arguments default to the host
+Gradle checks against the SDK installed in the image. This keeps ordinary
+Android verification independent from host SDK/NDK/vcpkg paths.
+
+`Dockerfile.android` installs JDK 21, Android command-line tools, platform 36,
+build-tools 36.0.0, NDK 28.2, SDK CMake and Android OpenSSL through vcpkg. This
+image is a build/test image, not the FPS product runtime image. It deliberately
+does not include an emulator; connected tests run against an external device or
+emulator through the host `adb` server.
+
+Host SDK checks remain available for developers who already have a local SDK.
+Install the Android SDK under `/opt/android-sdk` and export:
+
+```sh
+export ANDROID_HOME=/opt/android-sdk
+export ANDROID_SDK_ROOT=/opt/android-sdk
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+```
+
+Required SDK packages for the current scaffold:
+
+```sh
+sdkmanager "platform-tools" "platforms;android-36" \
+  "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+```
+
+Install Android OpenSSL through the existing vcpkg checkout:
+
+```sh
+ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
+  /opt/vcpkg/vcpkg install openssl:arm64-android openssl:x64-android
+```
+
+This vcpkg usage is intentionally limited to Android OpenSSL. Linux, Docker,
+Alpine and Boost dependency paths are not managed by vcpkg.
+
+Run host Android checks through the repository helper or the Gradle wrapper, not
+the old system Gradle:
+
+```sh
+tools/run_android_checks.sh --host
+./gradlew :android:app:tasks --all
+./gradlew :android:app:testDebugUnitTest
+./gradlew :android:app:assembleDebug
+./gradlew :android:app:assembleDebugAndroidTest
+```
+
+`tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
+and assembles the instrumented test APK. It does not require an emulator.
+
+To execute the native runtime smoke on an attached device or emulator:
+
+```sh
+adb devices
+tools/run_android_checks.sh --connected
+```
+
+The connected check runs `:android:app:connectedDebugAndroidTest`, loads
+`libfps_android_native.so` on the target, and calls the JNI `nativeVersion()` and
+`nativeCoreSmoke()` paths. It is opt-in because it requires a real Android
+runtime.
+
+The current native Android smoke builds `fps_android_native` for `arm64-v8a` and
+`x86_64`. It reuses the FPS IPv4 TCP/UDP 5-tuple parser and links a reusable
+native core smoke library built from protocol codec/crypto, generic covert
+datagram transport and TLS/TCP carrier sources. The smoke intentionally excludes
+Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
+operator paths.
+
+Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
+root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to
+Android CMake targets; that leaks host libc headers into the NDK sysroot. To
+use another Boost header installation, pass:
+
+```sh
+./gradlew :android:app:assembleDebug \
+  -Pandroid.injected.cmake.configure.arguments=-DFPS_ANDROID_BOOST_DIR=/path/to/boost
+```
+
+Boost.Asio/Boost.System are used header-only in this Android target through
+`BOOST_ERROR_CODE_HEADER_ONLY` and `BOOST_SYSTEM_NO_DEPRECATED`. OpenSSL is
+linked from the Android vcpkg triplet as `libcrypto.a`.
+
+Optional native dependency sanity check:
+
+```sh
+readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libfps_android_native.so \
+  | grep -E 'NEEDED|RUNPATH|RPATH'
+```
+
+The output should reference Android runtime libraries such as `liblog.so`,
+`libm.so`, `libdl.so` and `libc.so`, not host paths under `/usr/lib`.
+
 ## GitHub Actions CI
 
 The repository defines three GitHub Actions workflow files:
 
 - `CI`: runs on pull requests, pushes to `main` and manual dispatch. It covers
   `ubuntu-24.04 x gcc/clang` local builds/tests through the repository
-  `Dockerfile` `ci` stage, plus Docker build/runtime smoke for Ubuntu
-  GCC/clang and Alpine GCC images.
+  `Dockerfile` `ci` stage, Docker build/runtime smoke for Ubuntu GCC/clang and
+  Alpine GCC images, and the Android Docker build/unit/APK assembly smoke.
 - `Quality`: runs on schedule and manual dispatch. It executes
   `tools/run_quality_checks.sh --all` inside the same `Dockerfile` `ci` stage,
   including clang-20, ASan/UBSan, Valgrind, llvm-cov and bounded libFuzzer

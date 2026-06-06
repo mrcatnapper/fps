@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+
+ARG UBUNTU_VERSION=24.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS android-deps
+
+ARG ANDROID_CMDLINE_TOOLS_ZIP=commandlinetools-linux-13114758_latest.zip
+ARG ANDROID_PLATFORM=android-36
+ARG ANDROID_BUILD_TOOLS=36.0.0
+ARG ANDROID_NDK_VERSION=28.2.13676358
+ARG ANDROID_CMAKE_VERSION=3.22.1
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV ANDROID_NDK_HOME=/opt/android-sdk/ndk/${ANDROID_NDK_VERSION}
+ENV VCPKG_ROOT=/opt/vcpkg
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      curl \
+      git \
+      libboost-dev \
+      ninja-build \
+      openjdk-21-jdk-headless \
+      perl \
+      pkg-config \
+      python3 \
+      unzip \
+      zip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    mkdir -p "${ANDROID_HOME}/cmdline-tools"; \
+    curl -fsSL "https://dl.google.com/android/repository/${ANDROID_CMDLINE_TOOLS_ZIP}" -o /tmp/android-commandline-tools.zip; \
+    unzip -q /tmp/android-commandline-tools.zip -d "${ANDROID_HOME}/cmdline-tools"; \
+    mv "${ANDROID_HOME}/cmdline-tools/cmdline-tools" "${ANDROID_HOME}/cmdline-tools/latest"; \
+    rm -f /tmp/android-commandline-tools.zip; \
+    yes | sdkmanager --licenses >/dev/null; \
+    sdkmanager \
+      "platform-tools" \
+      "platforms;${ANDROID_PLATFORM}" \
+      "build-tools;${ANDROID_BUILD_TOOLS}" \
+      "ndk;${ANDROID_NDK_VERSION}" \
+      "cmake;${ANDROID_CMAKE_VERSION}"
+
+ARG VCPKG_COMMIT=10ceb139a610ebf3c6aa49cdc4a4b7f3db5d3f2b
+
+RUN set -eux; \
+    git clone https://github.com/microsoft/vcpkg.git "${VCPKG_ROOT}"; \
+    git -C "${VCPKG_ROOT}" checkout "${VCPKG_COMMIT}"; \
+    "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics; \
+    ANDROID_NDK_HOME="${ANDROID_NDK_HOME}" "${VCPKG_ROOT}/vcpkg" install \
+      openssl:arm64-android \
+      openssl:x64-android
+
+FROM android-deps AS ci
+
+WORKDIR /workspaces
+
+COPY . ./
+
+ENV FPS_ANDROID_DOCKER=1
+
+CMD ["tools/run_android_checks.sh", "--host"]

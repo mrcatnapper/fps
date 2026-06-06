@@ -4,6 +4,207 @@
 
 ## 2026-06-06
 
+### Android Docker build and connected native smoke
+
+Goal:
+
+- Add a real Android runtime smoke path that loads `libfps_android_native.so`
+  and calls `FpsNative.nativeCoreSmoke()` on a device or emulator.
+- Add a reproducible Android Docker build/test image so host SDK/NDK/vcpkg
+  paths are no longer required for ordinary Android assemble/unit checks.
+
+Planned steps:
+
+- Add an `androidTest` instrumented smoke test for `nativeVersion()` and
+  `nativeCoreSmoke() == "ok"`.
+- Add `Dockerfile.android` for Ubuntu 24.04, JDK, Android command-line tools,
+  SDK platform/build tools, NDK 28.2, SDK CMake, vcpkg and Android OpenSSL
+  triplets.
+- Add `tools/run_android_checks.sh` with host, Docker and opt-in connected
+  modes.
+- Add a GitHub Actions Android build job that uses `Dockerfile.android` for
+  Gradle unit tests and APK assembly, but does not require an emulator.
+- Update Android testing/developer docs and verify host/Docker Android checks
+  plus the regular Linux regression baseline.
+
+Completed:
+
+- Added `NativeCoreSmokeInstrumentedTest`, an `androidTest` that loads
+  `libfps_android_native.so` and verifies both `nativeVersion()` and the
+  OpenSSL/Asio-backed `nativeCoreSmoke()` path on a real Android runtime.
+- Added AndroidX test runner dependencies and configured the app
+  instrumentation runner.
+- Added `Dockerfile.android`, a Ubuntu 24.04 Android build/test image with JDK
+  21, Android command-line tools, platform/build-tools 36, NDK 28.2, SDK CMake,
+  isolated Boost headers from Ubuntu packages and Android OpenSSL from vcpkg.
+- Added `tools/run_android_checks.sh` with host, Docker and opt-in connected
+  modes. The default host/Docker check runs JVM unit tests, debug APK assembly
+  and debug androidTest APK assembly; connected mode requires an attached
+  device/emulator.
+- Added a GitHub Actions `android-build` job that builds `Dockerfile.android`
+  and runs the same non-emulator Android checks in the container.
+- Updated public testing/specification docs and Android developer notes. The
+  docs now treat Docker as the reproducible Android build environment, while
+  emulator/device execution remains an explicit runtime check.
+- Self-review found that the Android helper still defaulted to host SDK paths
+  outside Docker. Changed `tools/run_android_checks.sh` so the default outside
+  Docker is the reproducible Docker path, while the image sets
+  `FPS_ANDROID_DOCKER=1` to run host checks inside the container.
+
+Verification:
+
+- `tools/run_android_checks.sh --host`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh`
+- `tools/run_android_checks.sh --connected` exited with code 2 because no
+  attached Android device/emulator was in the `device` state; this is expected
+  for the opt-in runtime check in the current workspace.
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `tools/run_quality_checks.sh --all`
+- `cmake -S . -B build && cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `cmake -S . -B cmake-build-tun -DFPS_ENABLE_TUN_TESTS=ON && cmake --build cmake-build-tun -j 2 && sudo -n ctest --test-dir cmake-build-tun -L tun --output-on-failure`
+- `FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:local-gcc tools/run_quality_checks.sh --docker`
+- `FPS_DOCKER_COMPILER=clang FPS_DOCKER_IMAGE=fps:local-clang tools/run_quality_checks.sh --docker`
+- `FPS_DOCKERFILE=Dockerfile.alpine FPS_DOCKER_COMPILER=gcc FPS_DOCKER_IMAGE=fps:alpine tools/run_quality_checks.sh --docker`
+- `git diff --check`
+
+### Android core OpenSSL smoke
+
+Goal:
+
+- Extend the Android native smoke from the 5-tuple parser to reusable FPS core
+  components that depend on OpenSSL and Boost.Asio.
+- Keep vcpkg usage limited to Android OpenSSL only; Linux, Docker, Alpine and
+  Boost dependency paths must remain unchanged.
+
+Planned steps:
+
+- Install `openssl:arm64-android` and `openssl:x64-android` through the existing
+  `/opt/vcpkg` tree with `ANDROID_NDK_HOME` pointing at NDK 28.2.
+- Extend Android CMake with `FPS_ANDROID_VCPKG_ROOT`, ABI-to-vcpkg-triplet
+  mapping and explicit OpenSSL include/library paths.
+- Add an Android static smoke library built from protocol core,
+  `CovertDatagramTransport`, socket-protection/options and TLS/TCP carrier
+  session sources, while still excluding Linux runtime/config/CLI/TUN device
+  code.
+- Extend the JNI smoke with an OpenSSL-backed `nativeCoreSmoke()` entry point
+  that performs random bytes, X25519, HKDF, AEAD and Boost.Asio object
+  construction without network access.
+- Update Android/C++ testing documentation and verify Gradle Android builds,
+  Linux build/tests and diff hygiene.
+
+Completed:
+
+- Installed Android OpenSSL through the existing vcpkg tree:
+  `openssl:arm64-android` and `openssl:x64-android`.
+- Added Android CMake `FPS_ANDROID_VCPKG_ROOT`, ABI-to-triplet mapping and
+  explicit static `libcrypto.a` linkage. This path is Android-only; Linux,
+  Docker, Alpine and Boost remain outside vcpkg.
+- Added `fps_android_core_smoke`, a static Android NDK smoke library built from
+  protocol codec/crypto, Zero-RTT, classified records, shaper, generic covert
+  datagram transport, socket protection/options, TLS/TCP carrier session
+  sources and TUN packet parsing.
+- Added `FpsNative.nativeCoreSmoke()`, which runs OpenSSL-backed random bytes,
+  X25519 public/private checks, HKDF-SHA256, ChaCha20-Poly1305 roundtrip and
+  constructs Boost.Asio `io_context`/TCP socket objects without connecting.
+- Updated Android developer notes, cross-platform C++ policy, public testing
+  instructions, roadmap and specification to describe the new Android core
+  smoke boundary.
+
+Verification:
+
+- `ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 /opt/vcpkg/vcpkg install openssl:arm64-android openssl:x64-android`
+- `./gradlew :android:app:testDebugUnitTest :android:app:assembleDebug`
+- `readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libfps_android_native.so | rg 'NEEDED|RUNPATH|RPATH'`
+- `readelf -d android/app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/x86_64/libfps_android_native.so | rg 'NEEDED|RUNPATH|RPATH'`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+### Android client bootstrap
+
+Goal:
+
+- Prepare a command-line Android/Kotlin/NDK development baseline without
+  installing Android Studio.
+- Add the first Android application scaffold and a small JNI/native smoke that
+  proves existing platform-neutral C++ code can be built for Android.
+
+Decisions:
+
+- Use Kotlin for the Android application layer: `VpnService`, lifecycle,
+  profile import, carrier configuration, split-tunnel policy and status UI will
+  live there.
+- Keep FPS protocol/datagram/TUN parsing logic in C++ and expose it through a
+  narrow JNI/C ABI. Kotlin/Native is not used.
+- Do not try to cross-link the full Linux daemon or broad `fps_core` target in
+  this first increment. `fps_core` still depends on Boost/OpenSSL components
+  that need a deliberate Android dependency strategy.
+- The first native Android smoke should reuse an already dependency-light core
+  boundary, `parse_ipv4_flow_tuple(...)`, because Android split-tunnel policy
+  needs this 5-tuple and it builds without Linux runtime, TUN device code,
+  Boost.JSON, Boost.Log or OpenSSL.
+- Target API 29+ because `ConnectivityManager.getConnectionOwnerUid(...)` is
+  the intended Android UID-policy API.
+
+Planned steps:
+
+- Install command-line Android SDK tooling under `/opt/android-sdk`: platform
+  tools, API 36 platform/build tools, NDK 28.2 and CMake.
+- Add a Gradle wrapper and a minimal Kotlin Android app module.
+- Add a JNI bridge plus Kotlin wrapper that exposes native IPv4 TCP/UDP
+  5-tuple parsing to headless JVM tests.
+- Add developer documentation for SDK setup and the next native-dependency
+  work required before full FPS core linkage.
+- Verify Android assemble/unit tests and the existing local Linux regression
+  suite.
+
+Completed:
+
+- Installed command-line Android SDK tooling under `/opt/android-sdk`:
+  command-line tools 20.0, platform-tools 37.0.0, Android platform/build-tools
+  36, NDK 28.2.13676358 and SDK CMake 3.22.1.
+- Added Gradle wrapper 9.1.0 and a minimal Kotlin Android app module.
+- Added a `VpnService` shell, Kotlin split-tunnel policy model with headless
+  JUnit tests, and a JNI native library target for `arm64-v8a`/`x86_64`.
+- Reused `parse_ipv4_flow_tuple(...)` in the Android native target. To make that
+  possible without leaking host system headers, Android CMake now creates an
+  isolated generated include root containing only `boost/` from
+  `FPS_ANDROID_BOOST_DIR` (default `/usr/include/boost`). Boost.Describe,
+  Boost.MP11 and Boost.Endian remain active in Android native code.
+- Diagnosed the original Android Boost.Describe failure: adding `/usr/include`
+  to an NDK target lets host glibc headers override or participate in NDK
+  `#include_next` lookup. The fix is an isolated Boost header root, not
+  disabling Describe.
+- Added an Android `FPS_LOG_*` stream backend over `__android_log_print`, while
+  Linux continues to use Boost.Log behind the same facade. The Android macro
+  now checks the runtime severity threshold before constructing the stream, so
+  disabled log statements do not evaluate or format `<<` arguments.
+- Added `dev/ANDROID_APP_PLAN.md` plus public testing/specification notes for
+  the current Android scaffold and the remaining Boost/OpenSSL dependency work.
+
+Verification:
+
+- `java -version`
+- `sdkmanager --version`
+- `adb version`
+- `/opt/android-sdk/ndk/28.2.13676358/ndk-build --version`
+- `./gradlew :android:app:tasks --all`
+- `./gradlew :android:app:testDebugUnitTest :android:app:assembleDebug`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Verify Android boundary hardening PR
 
 Goal:

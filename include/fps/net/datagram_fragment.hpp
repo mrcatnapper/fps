@@ -11,8 +11,7 @@
 
 namespace fps::net {
 
-inline constexpr std::size_t kDatagramFragmentHeaderSize =
-    sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
+inline constexpr std::size_t kDatagramFragmentHeaderSize = sizeof(std::uint32_t) + sizeof(std::uint16_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 
 [[nodiscard]] inline auto make_datagram_fragment_payload(
     std::uint32_t packet_id, std::uint16_t fragment_index, std::uint16_t fragment_count, std::uint32_t total_size, std::span<const std::byte> chunk

@@ -3,8 +3,8 @@
 #include <boost/asio.hpp>
 #include <boost/test/unit_test.hpp>
 
-#include <chrono>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -87,8 +87,7 @@ inline auto aead_material(std::uint8_t key_seed, std::uint8_t salt_seed) -> Aead
 }
 
 inline auto session_keys(
-    std::uint8_t client_key_seed = 0x61U, std::uint8_t server_key_seed = 0xb1U, std::uint8_t client_salt_seed = 0x71U,
-    std::uint8_t server_salt_seed = 0xc1U
+    std::uint8_t client_key_seed = 0x61U, std::uint8_t server_key_seed = 0xb1U, std::uint8_t client_salt_seed = 0x71U, std::uint8_t server_salt_seed = 0xc1U
 ) -> SessionKeys {
     return SessionKeys{
         .client_to_server = aead_material(client_key_seed, client_salt_seed),

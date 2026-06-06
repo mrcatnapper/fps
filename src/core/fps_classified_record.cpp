@@ -155,9 +155,8 @@ auto FpsClassifiedRecordPipelineEncodeError::tls_record(TlsRecordLayerError erro
 FpsClassifiedRecordCodec::FpsClassifiedRecordCodec(FpsClassifiedRecordConfig config)
     : config_(std::move(config)), next_send_sequence_(config_.initial_send_sequence), next_receive_sequence_(config_.initial_receive_sequence) {}
 
-auto FpsClassifiedRecordCodec::encode(
-    const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options
-) -> FpsClassifiedRecordResult<ByteVector> {
+auto FpsClassifiedRecordCodec::encode(const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options)
+    -> FpsClassifiedRecordResult<ByteVector> {
     if(!validate_config() || binding.profile_id != config_.profile_id || binding.direction != config_.send_direction) {
         return FpsClassifiedRecordResult<ByteVector>::failure(FpsClassifiedRecordError::invalid_config);
     }
@@ -392,8 +391,7 @@ FpsClassifiedRecordPipeline::FpsClassifiedRecordPipeline(FpsClassifiedRecordCode
 
 auto FpsClassifiedRecordPipeline::encode_tls_record(
     const FpsEnvelopeContent& content, const ZeroRttChannelBinding& binding, const FpsClassifiedRecordEncodeOptions& options
-)
-    -> FpsClassifiedRecordPipelineEncodeResult {
+) -> FpsClassifiedRecordPipelineEncodeResult {
     if(options.target_tls_record_size.has_value() && *options.target_tls_record_size >= kTlsHeaderSize &&
        *options.target_tls_record_size - kTlsHeaderSize > record_options_.max_payload_size) {
         return FpsClassifiedRecordPipelineEncodeResult::failure(FpsClassifiedRecordPipelineEncodeError::tls_record(TlsRecordLayerError::payload_too_large));

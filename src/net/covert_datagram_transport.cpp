@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "fps/net/datagram_fragment.hpp"
 #include "fps/core/wire.hpp"
+#include "fps/net/datagram_fragment.hpp"
 
 namespace fps::net {
 namespace {
@@ -261,12 +261,9 @@ auto CovertDatagramTransport::enqueue_fragmented_datagram(CovertCarrier& carrier
     for(std::size_t index = 0, offset = 0; offset < datagram.size(); ++index) {
         const auto bytes_remaining = datagram.size() - offset;
         const auto chunk_bytes = std::min(chunk_size, bytes_remaining);
-        payloads.push_back(
-            make_datagram_fragment_payload(
-                packet_id, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), total_size,
-                datagram.subspan(offset, chunk_bytes)
-            )
-        );
+        payloads.push_back(make_datagram_fragment_payload(
+            packet_id, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), total_size, datagram.subspan(offset, chunk_bytes)
+        ));
         offset += chunk_bytes;
     }
 

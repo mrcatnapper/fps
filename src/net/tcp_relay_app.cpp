@@ -236,7 +236,9 @@ struct RepeatedLogState {
 
 class TcpRelayServer : public std::enable_shared_from_this<TcpRelayServer> {
 public:
-    TcpRelayServer(boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector)
+    TcpRelayServer(
+        boost::asio::io_context& io, TcpRelayConfig config, std::shared_ptr<TunRuntime> tun_runtime, std::shared_ptr<TcpSocketProtector> socket_protector
+    )
         : io_(io)
         , acceptor_(io)
         , status_acceptor_(io)
@@ -972,10 +974,9 @@ private:
                 }
                 async_protected_connect(
                     origin_socket, std::move(endpoints), self->socket_protector_,
-                    TcpSocketProtectContext{.role = self->config_.role,
-                                            .session_id = session_id,
-                                            .target_host = self->config_.target.host,
-                                            .target_port = self->config_.target.port},
+                    TcpSocketProtectContext{
+                        .role = self->config_.role, .session_id = session_id, .target_host = self->config_.target.host, .target_port = self->config_.target.port
+                    },
                     [self, client_socket, origin_socket, resolver, session_id](TcpProtectedConnectResult result) {
                         if(!result.protect_error.empty()) {
                             ++self->stats_.sessions_closed;
@@ -1266,7 +1267,9 @@ private:
 
 } // namespace
 
-auto run_tcp_relay(const TcpRelayConfig& config) -> int { return run_tcp_relay(config, linux_platform::make_linux_tun_runtime(), make_noop_tcp_socket_protector()); }
+auto run_tcp_relay(const TcpRelayConfig& config) -> int {
+    return run_tcp_relay(config, linux_platform::make_linux_tun_runtime(), make_noop_tcp_socket_protector());
+}
 
 auto run_tcp_relay(const TcpRelayConfig& config, std::shared_ptr<TunRuntime> tun_runtime) -> int {
     return run_tcp_relay(config, std::move(tun_runtime), make_noop_tcp_socket_protector());

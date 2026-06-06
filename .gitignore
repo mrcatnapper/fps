@@ -37,3 +37,10 @@ __pycache__/
 *.swp
 *~
 .clang-format
+
+# Android/Gradle local outputs
+.gradle/
+local.properties
+android/**/.cxx/
+android/**/build/
+android/.gradle/

@@ -140,8 +140,7 @@ void print_usage(std::ostream& out, std::string_view program, std::string_view t
 void print_config_summary(std::ostream& out, const TcpRelayConfig& config, std::string_view target_name) {
     out << "config=valid"
         << " role=" << role_name(config.role) << " listen=" << endpoint_to_string(config.listen) << " " << target_name << "="
-        << endpoint_to_string(config.target) << " read_buffer_size=" << config.read_buffer_size
-        << " tcp_no_delay=" << config.tcp_no_delay
+        << endpoint_to_string(config.target) << " read_buffer_size=" << config.read_buffer_size << " tcp_no_delay=" << config.tcp_no_delay
         << " max_session_write_queue_bytes=" << config.max_session_write_queue_bytes << " log_level=" << log::severity_to_string(config.logging.level)
         << " zero_rtt_enabled=" << config.zero_rtt.has_value() << " tun_enabled=" << config.tun.has_value()
         << " shaper_enabled=" << config.shaper_profile.has_value() << " status_socket_enabled=" << config.status_socket.has_value()
@@ -191,8 +190,7 @@ auto run_generate_server_keypair(std::string_view format, std::ostream& out, std
         out << json::serialize(root) << '\n';
         return 0;
     }
-    out << "server_private_key_base64=" << private_key << '\n'
-        << "server_public_key_base64=" << public_key << '\n';
+    out << "server_private_key_base64=" << private_key << '\n' << "server_public_key_base64=" << public_key << '\n';
     return 0;
 }
 

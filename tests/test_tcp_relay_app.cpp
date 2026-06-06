@@ -1,5 +1,5 @@
-#include "fps/net/tcp_relay_app.hpp"
 #include "fps/net/client_upgrade_delay.hpp"
+#include "fps/net/tcp_relay_app.hpp"
 #include "fps/net/tcp_socket_options.hpp"
 
 #include <boost/asio.hpp>
@@ -1153,7 +1153,8 @@ BOOST_AUTO_TEST_CASE(cli_parses_check_config_and_key_tool_commands) {
     BOOST_REQUIRE(status.status_socket_override.has_value());
     BOOST_TEST(status.status_socket_override->string() == (temp.path / "override.status").string());
 
-    auto write_shape = parse_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", (temp.path / "shape.json").string()});
+    auto write_shape =
+        parse_server_cli({"fps_server", "--write-shaper-profile", "--config", config_path.string(), "--output", (temp.path / "shape.json").string()});
     BOOST_TEST(write_shape.error.empty());
     BOOST_CHECK(write_shape.command == fps::net::TcpRelayCliCommand::write_shaper_profile);
     BOOST_REQUIRE(write_shape.config.has_value());

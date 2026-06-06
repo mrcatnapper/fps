@@ -53,13 +53,29 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Added `parse_ipv4_flow_tuple(...)` and an outbound TUN packet policy hook so
   Android can fail closed for packets whose initiating UID is not in the
   configured split-tunnel allowlist.
+- Added the first Android/Kotlin/NDK scaffold. It builds a minimal Android app
+  module with a `VpnService` shell, headless split-tunnel policy tests and a
+  JNI library that reuses `parse_ipv4_flow_tuple(...)` for `arm64-v8a` and
+  `x86_64`.
+- Extended the Android native smoke to compile reusable protocol codec/crypto,
+  generic covert datagram transport and TLS/TCP carrier session sources with
+  Android OpenSSL and Boost.Asio.
+- Confirmed that header-only Boost.Describe/MP11/Endian can stay available for
+  Android when exposed through an isolated Boost header root. The failure mode
+  was host `/usr/include` leakage into the NDK sysroot, not Boost.Describe
+  itself.
+- Added an Android `FPS_LOG_*` macro backend over `__android_log_print`; Linux
+  keeps Boost.Log behind the same project facade.
 
 ## Follow-Up Increments
 
 - Decide how much full relay config parsing Android should reuse directly,
   beyond the shared `fps://v1` profile import layer.
-- Define the Android `VpnService` design: TUN fd ownership, DNS/route behavior,
-  lifecycle/reconnect and status reporting.
+- Decide whether Android should reuse C++ profile/config helpers directly or
+  keep profile parsing in Kotlin to avoid dragging Linux daemon/Boost.JSON paths
+  into the app.
+- Implement the Android `VpnService` design: TUN fd ownership, DNS/route
+  behavior, lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 

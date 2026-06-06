@@ -76,8 +76,8 @@ struct ProtectedConnectState : public std::enable_shared_from_this<ProtectedConn
 auto make_noop_tcp_socket_protector() -> std::shared_ptr<TcpSocketProtector> { return std::make_shared<NoopTcpSocketProtector>(); }
 
 void async_protected_connect(
-    std::shared_ptr<tcp::socket> socket, std::vector<tcp::endpoint> endpoints, std::shared_ptr<TcpSocketProtector> protector,
-    TcpSocketProtectContext context, TcpProtectedConnectHandler handler
+    std::shared_ptr<tcp::socket> socket, std::vector<tcp::endpoint> endpoints, std::shared_ptr<TcpSocketProtector> protector, TcpSocketProtectContext context,
+    TcpProtectedConnectHandler handler
 ) {
     if(!protector) {
         protector = make_noop_tcp_socket_protector();

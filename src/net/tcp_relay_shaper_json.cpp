@@ -54,7 +54,8 @@ namespace json = boost::json;
 
 auto shaper_profile_to_json(const ShaperProfile& profile) -> boost::json::object { return shaper_profile_to_json_base(profile); }
 
-auto shaper_profile_to_json(const ShaperProfile& profile, const ShaperSnapshot& snapshot, bool adaptive_ready_c2s, bool adaptive_ready_s2c) -> boost::json::object {
+auto shaper_profile_to_json(const ShaperProfile& profile, const ShaperSnapshot& snapshot, bool adaptive_ready_c2s, bool adaptive_ready_s2c)
+    -> boost::json::object {
     auto root = shaper_profile_to_json_base(profile);
     const auto& c2s = snapshot.directions[direction_index(Direction::client_to_server)];
     const auto& s2c = snapshot.directions[direction_index(Direction::server_to_client)];

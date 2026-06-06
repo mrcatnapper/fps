@@ -24,8 +24,7 @@ struct CovertDatagramTransportConfig {
 };
 
 BOOST_DEFINE_ENUM_CLASS(
-    CovertDatagramError, no_carrier_session, session_closed, empty_datagram, datagram_too_large, codec_error, tls_record_error, write_queue_full,
-    wrong_executor
+    CovertDatagramError, no_carrier_session, session_closed, empty_datagram, datagram_too_large, codec_error, tls_record_error, write_queue_full, wrong_executor
 )
 
 BOOST_DEFINE_ENUM_CLASS(

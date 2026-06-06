@@ -59,8 +59,7 @@ public:
     [[nodiscard]] auto build_client_upgrade_record(std::span<const std::byte> padding = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
         -> FpsUpgradeBuildResult;
 
-    [[nodiscard]] auto
-    build_server_accept_record(std::span<const std::byte> payload = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
+    [[nodiscard]] auto build_server_accept_record(std::span<const std::byte> payload = {}, std::optional<X25519KeyPair> ephemeral_key_pair = std::nullopt)
         -> FpsUpgradeBuildResult;
 
     [[nodiscard]] auto process_inbound_record(Direction direction, const TlsRecord& record) -> FpsUpgradeProcessResult;

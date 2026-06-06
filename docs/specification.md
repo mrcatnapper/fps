@@ -23,11 +23,11 @@ is not descriptive branding; it is meant to make casual discovery and search by
 unprepared users or classifiers less useful. The protocol and implementation
 documents should still use the short name, FPS, for technical clarity.
 
-Linux is the active target platform for both client and server. Android remains
-future work through `VpnService`; the current build separates protocol core,
-carrier/datagram core, TUN adapter and Linux runtime targets so future adapters
-can reuse authenticated carriers without inheriting Linux TUN or `ip`
-orchestration.
+Linux is the active target platform for both client and server. Android client
+work has started through a command-line Kotlin/NDK scaffold; the current build
+separates protocol core, carrier/datagram core, TUN adapter and Linux runtime
+targets so future adapters can reuse authenticated carriers without inheriting
+Linux TUN or `ip` orchestration.
 
 ## 2. Architecture Baseline
 
@@ -638,10 +638,13 @@ Client profile CLI:
 
 ## 8.1 Platform Boundary
 
-`fps_core` is the narrow platform-neutral layer intended for future Android
-reuse: crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
+`fps_core` is the narrow platform-neutral layer intended for Android reuse:
+crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
 normalization and generic datagram scheduling. TUN framing/adaptation and the
-TLS/TCP carrier are explicit opt-in targets above that core.
+TLS/TCP carrier are explicit opt-in targets above that core. The initial Android
+scaffold currently proves a smaller native boundary: Kotlin code can build an
+NDK library that reuses the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel
+policy without linking Linux runtime code.
 
 Linux-specific runtime is separate:
 
@@ -669,10 +672,24 @@ Linux-specific runtime is separate:
   should use this boundary to call the platform connection-owner API and
   fail closed for UIDs outside the configured split-tunnel allowlist. The hook
   must not log UUIDs, keys, raw packets or payload bytes.
+- The current Android scaffold links a native smoke boundary made of protocol
+  codec/crypto, generic covert datagram transport, TLS/TCP carrier sources and
+  the TUN 5-tuple parser. Android OpenSSL is cross-built through vcpkg only for
+  Android triplets; Boost.Asio/Boost.System are used header-only in that smoke.
+  Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
+  operator paths remain outside Android targets. Header-only
+  Boost.Describe/MP11/Endian remain usable on Android through an isolated Boost
+  header root.
+- Android build/unit checks are reproducible through `Dockerfile.android`.
+  Runtime validation is intentionally separate: the connected instrumented smoke
+  loads the native library and calls the core smoke on an attached device or
+  emulator, but emulator execution is not required for ordinary Linux CI.
 
 ## 9. Observability
 
-Runtime logs use the project `FPS_LOG_*` facade over Boost.Log.
+Runtime logs use the project `FPS_LOG_*` facade. Linux uses Boost.Log behind
+that facade; Android native code uses an `__android_log_print` backend at the
+same macro boundary.
 Service structs that carry operational counters or state should be annotated
 with Boost.Describe and logged through the project describe-to-JSON helper
 instead of repeating every field by hand. The current log sink still emits text

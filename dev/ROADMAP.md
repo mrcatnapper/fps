@@ -160,9 +160,17 @@ without claiming resistance to advanced timing/size traffic analysis.
 - Document minimal kernel capabilities and deployment topology.
 - Validate OpenWrt/router-hosted `fps_client` on real hardware or a close lab
   target before calling it supported.
-- Continue Android boundary hardening from `dev/ANDROID_BOUNDARY.md`: make
-  full config parsing reusable where useful, then prototype the accepted
-  app-owned carrier plus two-phase lease/TUN Android runtime model.
+- [x] Add a command-line Android/Kotlin/NDK bootstrap with a minimal
+  `VpnService` shell, headless policy tests and native `arm64-v8a`/`x86_64`
+  build smoke for reusable C++ TUN 5-tuple parsing.
+- [x] Extend Android native smoke to reusable protocol/datagram/TLS-TCP carrier
+  sources with Android OpenSSL and Boost.Asio, without importing Linux
+  daemon/config/runtime code.
+- [x] Add a reproducible Android Docker build/test image plus an opt-in
+  connected instrumented native smoke for device/emulator runtime validation.
+- Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
+  `dev/ANDROID_APP_PLAN.md`: prototype the accepted app-owned carrier plus
+  two-phase lease/TUN runtime model.
 
 ## Phase 7: Fuzzing And Soak
 
