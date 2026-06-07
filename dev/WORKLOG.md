@@ -4,6 +4,48 @@
 
 ## 2026-06-07
 
+### Android native runtime orchestration
+
+Goal:
+
+- Connect the headless Android VPN controller and the JNI native runtime handle
+  without starting real native auth, carrier I/O or the TUN pump yet.
+- Make the lease -> Android TUN fd -> borrowed native attach order explicit and
+  testable.
+
+Planned steps:
+
+- Add a headless Kotlin coordinator that owns `HeadlessVpnController` and
+  `FpsNativeRuntime`.
+- Update `FpsVpnService` to use the coordinator while keeping current service
+  behavior.
+- Add JVM tests for successful lease/fd attach, native attach failure,
+  idempotent stop and snapshot secrecy.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Added `HeadlessNativeVpnRuntime` as the Kotlin lifecycle bridge between the
+  headless VPN controller and `FpsNativeRuntime`.
+- Updated `FpsVpnService` to own the coordinator instead of only the controller.
+- Kept the current boundary intentionally non-I/O: the coordinator establishes
+  Android TUN after lease delivery and attaches the fd to native as borrowed
+  metadata, but does not start native auth, raw TLS carrier I/O or the TUN pump.
+- Added JVM coverage for native runtime creation, lease-triggered TUN attach,
+  native attach failure, fd close behavior, idempotent stop and snapshot
+  secrecy.
+- Updated Android boundary/spec/testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android JNI boundary hardening
 
 Goal:

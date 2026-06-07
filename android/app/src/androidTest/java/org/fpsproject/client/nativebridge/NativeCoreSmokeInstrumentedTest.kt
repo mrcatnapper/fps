@@ -69,7 +69,7 @@ class NativeCoreSmokeInstrumentedTest {
         assertTrue(attached.tunAttached)
         assertEquals(123, attached.tunFd)
         assertEquals(1280, attached.tunMtu)
-        assertEquals("borrowed", attached.tunFdOwnership)
+        assertEquals(TUN_FD_OWNERSHIP_BORROWED, attached.tunFdOwnership)
 
         val badFd = FpsNative.attachTunFd(handle, -1, 1280)
         assertTrue(badFd.alive)

@@ -200,7 +200,11 @@ class HeadlessVpnController(
         return state
     }
 
-    private fun fail(error: String) {
+    internal fun fail(error: String, closeTun: Boolean = false) {
+        if (closeTun) {
+            tun?.close()
+            tun = null
+        }
         lastError = error
         state = VpnRuntimeState.FAILED
     }

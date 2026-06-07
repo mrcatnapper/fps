@@ -1,0 +1,215 @@
+package org.fpsproject.client.nativebridge
+
+import org.fpsproject.client.config.AndroidClientProfile
+import org.fpsproject.client.runtime.AndroidPlatformHooks
+import org.fpsproject.client.runtime.EstablishedTun
+import org.fpsproject.client.runtime.ResolvedEndpoint
+import org.fpsproject.client.runtime.TunHandle
+import org.fpsproject.client.runtime.TunLease
+import org.fpsproject.client.runtime.VpnRuntimeState
+import org.fpsproject.client.policy.TunFlowTuple
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.net.Socket
+import java.util.Base64
+
+class HeadlessNativeVpnRuntimeTest {
+    private val uuid = "123e4567-e89b-42d3-a456-426614174000"
+    private val key = Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })
+    private val profileJson = """
+        {
+          "network": {"server": "fps.example.test:443"},
+          "security": {
+            "zero_rtt": {
+              "enabled": true,
+              "profile_id": "android-test-v5",
+              "client_uuid": "$uuid",
+              "server_public_key_base64": "$key"
+            }
+          },
+          "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true},
+          "split_tunnel": {"allowed_uids": [10042]}
+        }
+    """.trimIndent()
+    private val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
+
+    @Test
+    fun startCreatesNativeRuntimeAndWaitsForLease() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        assertEquals(VpnRuntimeState.WAITING_FOR_LEASE, runtime.start())
+        assertEquals(1, backend.createdProfiles.size)
+        assertEquals(profileJson, backend.createdProfiles.single().second)
+        assertTrue(runtime.snapshot().native.alive)
+        assertFalse(runtime.snapshot().vpn.tun.fdPresent)
+    }
+
+    @Test
+    fun leaseEstablishesTunAndAttachesBorrowedFdToNativeRuntime() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val state = runtime.onLeaseReceived(lease)
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.RUNNING, state)
+        assertEquals(1, hooks.establishTunCalls)
+        assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
+        assertTrue(snapshot.vpn.tun.fdPresent)
+        assertTrue(snapshot.native.tunAttached)
+        assertEquals(TUN_FD_OWNERSHIP_BORROWED, snapshot.native.tunFdOwnership)
+    }
+
+    @Test
+    fun nativeTunAttachFailureFailsClosedAndClosesEstablishedTun() {
+        val backend = FakeCoordinatorNativeBackend(attachResult = AttachResult.FAIL_INVALID_FD)
+        val tunHandle = CountingTunHandle(fd = 77)
+        val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.owned(fd = tunHandle.fd, mtu = 1280, handle = tunHandle))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val state = runtime.onLeaseReceived(lease)
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.FAILED, state)
+        assertEquals("native_tun_attach_failed", snapshot.vpn.lastError)
+        assertFalse(snapshot.vpn.tun.fdPresent)
+        assertFalse(snapshot.native.tunAttached)
+        assertEquals("invalid_tun_fd", snapshot.native.lastError)
+        assertEquals(1, tunHandle.closeCount)
+    }
+
+    @Test
+    fun stopClosesNativeRuntimeAndOwnedTunExactlyOnce() {
+        val backend = FakeCoordinatorNativeBackend()
+        val tunHandle = CountingTunHandle(fd = 77)
+        val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.owned(fd = tunHandle.fd, mtu = 1280, handle = tunHandle))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        runtime.onLeaseReceived(lease)
+        runtime.stop()
+        runtime.stop()
+
+        assertEquals(listOf(1L), backend.closedHandles)
+        assertEquals(1, tunHandle.closeCount)
+        assertEquals(VpnRuntimeState.STOPPED, runtime.snapshot().vpn.state)
+        assertEquals("runtime_closed", runtime.snapshot().native.lastError)
+    }
+
+    @Test
+    fun snapshotsDoNotExposeProfileOrIdentityMaterial() {
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), FakeCoordinatorNativeBackend())
+
+        runtime.start()
+        val text = runtime.snapshot().toString()
+
+        assertFalse(text.contains(profileJson))
+        assertFalse(text.contains(uuid))
+        assertFalse(text.contains(key))
+    }
+}
+
+private enum class AttachResult {
+    SUCCESS,
+    FAIL_INVALID_FD,
+}
+
+private class FakeCoordinatorNativeBackend(
+    private val attachResult: AttachResult = AttachResult.SUCCESS,
+) : FpsNativeBackend {
+    private var nextHandle = 1L
+    val createdProfiles = mutableListOf<Pair<Long, String>>()
+    val closedHandles = mutableListOf<Long>()
+    val attachedTun = mutableListOf<Triple<Long, Int, Int>>()
+    private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
+
+    override fun createRuntime(profileText: String): Long {
+        val handle = nextHandle++
+        createdProfiles += handle to profileText
+        snapshots[handle] = NativeRuntimeSnapshot(
+            alive = true,
+            tunAttached = false,
+            tunFd = -1,
+            tunMtu = 0,
+            tunFdOwnership = null,
+            lastError = null,
+        )
+        return handle
+    }
+
+    override fun closeRuntime(handle: Long) {
+        closedHandles += handle
+        snapshots.remove(handle)
+    }
+
+    override fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot {
+        return snapshots[handle] ?: NativeRuntimeSnapshot(
+            alive = false,
+            tunAttached = false,
+            tunFd = -1,
+            tunMtu = 0,
+            tunFdOwnership = null,
+            lastError = "runtime_closed",
+        )
+    }
+
+    override fun attachTunFd(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
+        attachedTun += Triple(handle, fd, mtu)
+        val snapshot = when (attachResult) {
+            AttachResult.SUCCESS -> NativeRuntimeSnapshot(
+                alive = true,
+                tunAttached = true,
+                tunFd = fd,
+                tunMtu = mtu,
+                tunFdOwnership = TUN_FD_OWNERSHIP_BORROWED,
+                lastError = null,
+            )
+            AttachResult.FAIL_INVALID_FD -> NativeRuntimeSnapshot(
+                alive = true,
+                tunAttached = false,
+                tunFd = -1,
+                tunMtu = 0,
+                tunFdOwnership = null,
+                lastError = "invalid_tun_fd",
+            )
+        }
+        snapshots[handle] = snapshot
+        return snapshot
+    }
+}
+
+private class FakeAndroidHooks(
+    private val vpnPermissionGranted: Boolean = true,
+    private val establishedTun: EstablishedTun? = EstablishedTun.borrowed(fd = 7, mtu = 1280),
+) : AndroidPlatformHooks {
+    var establishTunCalls = 0
+
+    override fun hasVpnPermission() = vpnPermissionGranted
+
+    override fun establishTun(profile: AndroidClientProfile, lease: TunLease): EstablishedTun? {
+        establishTunCalls += 1
+        return establishedTun
+    }
+
+    override fun protectSocket(fd: Int) = true
+
+    override fun protectSocket(socket: Socket) = true
+
+    override fun resolveOnUnderlyingNetwork(host: String, port: Int) = listOf(ResolvedEndpoint("203.0.113.10", port))
+
+    override fun uidForFlow(flow: TunFlowTuple) = -1
+}
+
+private class CountingTunHandle(override val fd: Int) : TunHandle {
+    var closeCount = 0
+
+    override fun close() {
+        closeCount += 1
+    }
+}

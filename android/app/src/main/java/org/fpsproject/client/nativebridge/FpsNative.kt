@@ -1,8 +1,11 @@
 package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.config.AndroidClientProfileParser
+import org.fpsproject.client.config.AndroidClientProfile
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.policy.TunFlowTuple
+
+const val TUN_FD_OWNERSHIP_BORROWED = "borrowed"
 
 data class NativeRuntimeSnapshot(
     val alive: Boolean,
@@ -29,7 +32,15 @@ class FpsNativeRuntime private constructor(
 ) : AutoCloseable {
     companion object {
         fun create(profileText: String, backend: FpsNativeBackend = FpsNative): FpsNativeRuntime {
-            AndroidClientProfileParser.parse(profileText)
+            val profile = AndroidClientProfileParser.parse(profileText)
+            return createForValidatedProfile(profileText, profile, backend)
+        }
+
+        internal fun createForValidatedProfile(
+            profileText: String,
+            @Suppress("UNUSED_PARAMETER") profile: AndroidClientProfile,
+            backend: FpsNativeBackend = FpsNative,
+        ): FpsNativeRuntime {
             val handle = backend.createRuntime(profileText)
             require(handle != 0L) { "native runtime creation failed" }
             return FpsNativeRuntime(handle, backend)

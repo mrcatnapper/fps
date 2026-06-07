@@ -86,7 +86,7 @@ class FpsNativeRuntimeTest {
         assertTrue(snapshot.tunAttached)
         assertEquals(77, snapshot.tunFd)
         assertEquals(1280, snapshot.tunMtu)
-        assertEquals("borrowed", snapshot.tunFdOwnership)
+        assertEquals(TUN_FD_OWNERSHIP_BORROWED, snapshot.tunFdOwnership)
         assertEquals(0, handle.closeCount)
         assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
     }
@@ -194,7 +194,7 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
             tunAttached = true,
             tunFd = fd,
             tunMtu = mtu,
-            tunFdOwnership = "borrowed",
+            tunFdOwnership = TUN_FD_OWNERSHIP_BORROWED,
             lastError = null,
         )
         snapshots[handle] = snapshot

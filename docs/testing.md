@@ -193,12 +193,12 @@ reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
 HTTPS/WSS carrier probe transport factory through MockWebServer. They also
 cover Android TUN plan generation, `VpnService.Builder` call sequencing,
 idempotent TUN fd close ownership through fake builders and the Kotlin
-`FpsNativeRuntime` wrapper with a fake native backend. They also assert that
-lease-triggered TUN startup requires `tun.enabled=true` and that snapshots
-report only non-secret state/TUN/carrier-probe metadata, including explicit
-borrowed TUN fd ownership when a descriptor is attached to the native runtime.
-These checks still do not require an emulator or a real Android `VpnService`
-instance.
+`FpsNativeRuntime` wrapper with a fake native backend. They also cover the
+headless Kotlin/native lifecycle bridge that establishes TUN after lease
+delivery and attaches the descriptor to native as borrowed metadata. They assert
+that lease-triggered TUN startup requires `tun.enabled=true` and that snapshots
+report only non-secret state/TUN/carrier-probe/native metadata. These checks
+still do not require an emulator or a real Android `VpnService` instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 

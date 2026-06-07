@@ -9,18 +9,16 @@ import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import org.fpsproject.client.config.AndroidClientProfile
-import org.fpsproject.client.config.AndroidClientProfileParser
+import org.fpsproject.client.nativebridge.HeadlessNativeVpnRuntime
+import org.fpsproject.client.nativebridge.NativeVpnRuntimeSnapshot
 import org.fpsproject.client.policy.TunFlowTuple
 import org.fpsproject.client.policy.TunProtocol
 import org.fpsproject.client.runtime.AndroidPlatformHooks
 import org.fpsproject.client.runtime.EstablishedTun
-import org.fpsproject.client.runtime.HeadlessVpnController
 import org.fpsproject.client.runtime.ResolvedEndpoint
 import org.fpsproject.client.runtime.TunHandle
 import org.fpsproject.client.runtime.TunLease
-import org.fpsproject.client.runtime.TunRuntimeSnapshot
 import org.fpsproject.client.runtime.VpnRuntimeState
-import org.fpsproject.client.runtime.VpnRuntimeSnapshot
 import org.fpsproject.client.runtime.VpnTunEstablisher
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -33,7 +31,7 @@ class FpsVpnService : VpnService() {
         const val EXTRA_PROFILE = "org.fpsproject.client.extra.PROFILE"
     }
 
-    private var controller: HeadlessVpnController? = null
+    private var runtime: HeadlessNativeVpnRuntime? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -59,30 +57,24 @@ class FpsVpnService : VpnService() {
     }
 
     internal fun startProfile(profileText: String): VpnRuntimeState {
-        val profile = AndroidClientProfileParser.parse(profileText)
-        val next = HeadlessVpnController(profile, ServicePlatformHooks(this))
-        controller?.stop()
-        controller = next
+        val next = HeadlessNativeVpnRuntime.create(profileText, ServicePlatformHooks(this))
+        runtime?.stop()
+        runtime = next
         return next.start()
     }
 
     internal fun onLeaseReceived(lease: TunLease): VpnRuntimeState {
-        return controller?.onLeaseReceived(lease) ?: VpnRuntimeState.FAILED
+        return runtime?.onLeaseReceived(lease) ?: VpnRuntimeState.FAILED
     }
 
     internal fun stopRuntime(): VpnRuntimeState {
-        val stopped = controller?.stop() ?: VpnRuntimeState.STOPPED
-        controller = null
+        val stopped = runtime?.stop() ?: VpnRuntimeState.STOPPED
+        runtime = null
         return stopped
     }
 
-    internal fun snapshot(): VpnRuntimeSnapshot {
-        return controller?.snapshot() ?: VpnRuntimeSnapshot(
-            state = VpnRuntimeState.STOPPED,
-            lastError = null,
-            tun = TunRuntimeSnapshot(fdPresent = false, mtu = null),
-            carrierProbes = emptyList(),
-        )
+    internal fun snapshot(): NativeVpnRuntimeSnapshot {
+        return runtime?.snapshot() ?: NativeVpnRuntimeSnapshot.stopped()
     }
 }
 
