@@ -39,9 +39,11 @@ Delivered:
   for VPN permission, TUN establishment, socket protection, underlying-network
   DNS and UID lookup.
 - Carrier probe settings are modeled but do not open network sockets yet.
-  The headless controller exposes carrier runtime plans, resolves carrier
-  endpoints through the underlying-network hook and requires future carrier
-  sockets to call the socket-protection hook before connect.
+  The headless controller exposes carrier runtime plans and can own a
+  deterministic carrier manager that resolves carrier endpoints through the
+  underlying-network hook, calls socket protection before connect, drives fake
+  HTTPS/WSS probe transports, tracks reconnect/backoff counters and never opens
+  real sockets.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -98,7 +100,9 @@ SDK use must be requested explicitly with `--host`.
 - The first Android beta uses app-owned carrier sessions. The app opens and
   maintains HTTPS/WSS carrier traffic itself.
 - Carrier requests are configured at the Android layer: for example a periodic
-  HTTPS GET or a WSS stream probe. This does not require FPS protocol changes.
+  HTTPS GET or a WSS stream probe. The current headless runner tests the
+  lifecycle with fake transports; live OkHttp transports are the next step and
+  do not require FPS protocol changes.
 - Carrier sockets must be protected with `VpnService.protect(fd)` before
   `connect`.
 - Hostname resolution for FPS/carrier endpoints must use Android's underlying

@@ -671,8 +671,10 @@ Linux-specific runtime is separate:
   Android's underlying network, two-phase lease-before-TUN startup and split
   tunnel by default.
 - The current Kotlin headless layer can derive carrier runtime plans from
-  profile metadata and resolve those endpoints through the underlying-network
-  hook. It does not yet open real carrier sockets.
+  profile metadata, resolve those endpoints through the underlying-network hook
+  and drive a deterministic fake-transport carrier manager with
+  protect-before-connect ordering and reconnect/backoff status. It does not yet
+  open real carrier sockets.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

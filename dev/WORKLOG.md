@@ -4,6 +4,56 @@
 
 ## 2026-06-07
 
+### Android headless carrier runner
+
+Goal:
+
+- Add a deterministic headless Android carrier runner without UI, real
+  `VpnService` fd ownership or live network sockets.
+- Keep the next Android step testable through JVM unit tests and fake carrier
+  transports.
+
+Planned steps:
+
+- Add focused JVM tests for carrier runner lifecycle, endpoint resolution,
+  socket-protection ordering, probe ticks, reconnect/backoff, idempotent stop
+  and secret-free status.
+- Add Kotlin runtime abstractions for fake-friendly carrier transports and a
+  manager that drives `https_get` and `wss` carrier probe plans.
+- Integrate the manager with `HeadlessVpnController` through explicit
+  `startCarrierRunners`/`stopCarrierRunners` helpers, while keeping real
+  OkHttp HTTPS/WSS transports deferred.
+- Update Android developer docs and verification notes.
+
+Completed:
+
+- Added `HeadlessCarrierManager`, `CarrierTransport` and
+  `CarrierTransportFactory` as deterministic Kotlin runtime seams for future
+  live HTTPS/WSS transports.
+- Added per-carrier state/status for resolving, protecting, connecting,
+  running, backoff, attempts, successful probes, reconnects, last error and next
+  retry delay.
+- Added controller ownership helpers:
+  `startCarrierRunners(...)`, `tickCarrierRunners(...)` and
+  `stopCarrierRunners()`.
+- Added JVM tests for resolve/protect/connect ordering, periodic HTTPS probe
+  ticks, WSS-style persistent reconnect, resolve/connect/probe failures,
+  socket-protection failure, idempotent stop, controller lifecycle integration
+  and secret-free status.
+- Updated Android developer notes, roadmap and public testing/specification
+  status. Live OkHttp transports remain the next Android runtime increment.
+
+Verification:
+
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
 ### Documentation consistency pass after Android headless runtime work
 
 Goal:

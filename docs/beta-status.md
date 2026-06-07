@@ -75,7 +75,8 @@ and signed artifacts remain deferred.
 - Android has a reproducible Docker build/test image and a headless Kotlin/NDK
   scaffold. Current JVM tests cover client profile parsing, carrier probe
   planning, split-tunnel UID allowlists, underlying-network endpoint resolution,
-  socket-protection failure handling and two-phase lease-before-TUN state
+  socket-protection failure handling, deterministic fake-transport carrier
+  runner lifecycle/reconnect behavior and two-phase lease-before-TUN state
   transitions without requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
@@ -169,7 +170,7 @@ Those remain release-hardening concerns.
   claim timing/size distribution resistance.
 - Android remains pre-application: the headless profile/runtime boundary exists,
   but live app-owned HTTPS/WSS carrier sockets, real `VpnService` fd ownership,
-  lifecycle/reconnect and UI are not implemented yet.
+  Android lifecycle integration and UI are not implemented yet.
 
 ## Public Beta Gate
 

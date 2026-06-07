@@ -184,11 +184,12 @@ tools/run_android_checks.sh --host
 
 `tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
 and assembles the instrumented test APK. It does not require an emulator. The
-JVM tests cover Android client-profile parsing, fail-closed split-tunnel policy
-and the headless VPN runtime state machine with fake platform hooks. They also
-cover profile-driven carrier planning, underlying-network endpoint resolution,
-socket-protection failure handling and UID allowlist decisions without opening
-real Android sockets or a real `VpnService` fd.
+JVM tests cover Android client-profile parsing, fail-closed split-tunnel policy,
+the headless VPN runtime state machine and the headless carrier runner with fake
+platform hooks/transports. They also cover profile-driven carrier planning,
+underlying-network endpoint resolution, socket-protection ordering,
+reconnect/backoff behavior and UID allowlist decisions without opening real
+Android sockets or a real `VpnService` fd.
 
 To execute the native runtime smoke on an attached device or emulator:
 

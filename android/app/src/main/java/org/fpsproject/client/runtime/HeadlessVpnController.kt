@@ -66,6 +66,7 @@ class HeadlessVpnController(
         CarrierRuntimePlan(id = index, probe = probe)
     }
     private val splitTunnelPolicy = SplitTunnelPolicy(profile.splitTunnel.allowedUids, PlatformUidResolver(hooks))
+    private var carrierManager: HeadlessCarrierManager? = null
 
     var state: VpnRuntimeState = VpnRuntimeState.STOPPED
         private set
@@ -120,11 +121,29 @@ class HeadlessVpnController(
         return hooks.resolveOnUnderlyingNetwork(plan.probe.endpoint.host, plan.probe.endpoint.port)
     }
 
+    fun startCarrierRunners(transportFactory: CarrierTransportFactory, nowMs: Long = 0): List<CarrierRuntimeStatus> {
+        if (carrierManager == null) {
+            carrierManager = HeadlessCarrierManager(profile, hooks, transportFactory)
+        }
+        return carrierManager!!.start(nowMs)
+    }
+
+    fun tickCarrierRunners(nowMs: Long): List<CarrierRuntimeStatus> {
+        return carrierManager?.tick(nowMs) ?: emptyList()
+    }
+
+    fun stopCarrierRunners(): List<CarrierRuntimeStatus> {
+        val stopped = carrierManager?.stop() ?: emptyList()
+        carrierManager = null
+        return stopped
+    }
+
     fun policyDecision(flow: TunFlowTuple?): SplitTunnelDecision {
         return splitTunnelPolicy.decide(flow)
     }
 
     fun stop(): VpnRuntimeState {
+        stopCarrierRunners()
         tun = null
         lastError = null
         state = VpnRuntimeState.STOPPED

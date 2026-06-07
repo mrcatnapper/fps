@@ -61,6 +61,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   metadata and split-tunnel UID allowlists, exposes carrier runtime plans,
   resolves carrier endpoints through platform hooks and evaluates fail-closed
   UID policy decisions without opening real sockets.
+- Added a deterministic headless carrier manager that drives those carrier
+  plans with fake-friendly transports, enforces resolve/protect/connect order,
+  handles probe failures through bounded reconnect/backoff and exposes
+  non-secret carrier status counters.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -76,9 +80,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
-- Implement live app-owned carrier sockets from the existing carrier runtime
-  plans: HTTPS GET and WSS first, socket protection before connect, underlying
-  network DNS and deterministic headless tests with fake transports.
+- Implement live app-owned carrier sockets by adding an OkHttp-backed transport
+  factory for the existing headless carrier manager: HTTPS GET and WSS first,
+  socket protection before connect and underlying-network DNS remain mandatory.
 - Implement the real Android `VpnService` runtime: TUN fd ownership, DNS/route
   behavior, lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
@@ -90,9 +94,9 @@ starts. It is a developer handoff document, not user/operator documentation.
   opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
 - Carrier behavior is app-configurable at the Android profile/runtime layer.
-  The current headless model supports HTTPS GET and WSS probe metadata; live
-  socket loops are the next implementation step and do not require
-  protocol-core changes.
+  The current headless model supports HTTPS GET and WSS probe metadata plus a
+  fake-transport runner; live socket loops are the next implementation step and
+  do not require protocol-core changes.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android calls `VpnService.protect(fd)` before the socket
   can be captured by the VPN.
