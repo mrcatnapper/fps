@@ -1,6 +1,8 @@
 package org.fpsproject.client.runtime
 
 import org.fpsproject.client.config.AndroidClientProfileParser
+import org.fpsproject.client.config.CarrierProbeMode
+import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunFlowTuple
 import org.fpsproject.client.policy.TunProtocol
 import org.junit.Assert.assertEquals
@@ -22,7 +24,12 @@ class HeadlessVpnControllerTest {
               "server_public_key_base64": "${Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })}"
             }
           },
-          "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true}
+          "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true},
+          "carriers": [
+            {"mode": "https_get", "endpoint": "origin.example.test:443", "path": "/ping", "interval_ms": 5000},
+            {"mode": "wss", "endpoint": "[2001:db8::1]:9443", "path": "/stream", "interval_ms": 10000}
+          ],
+          "split_tunnel": {"allowed_uids": [10042]}
         }
         """.trimIndent(),
     )
@@ -80,6 +87,29 @@ class HeadlessVpnControllerTest {
     }
 
     @Test
+    fun exposesCarrierRuntimePlansFromProfile() {
+        val controller = HeadlessVpnController(profile, FakeAndroidPlatformHooks())
+
+        val plans = controller.carrierPlans()
+
+        assertEquals(2, plans.size)
+        assertEquals(0, plans[0].id)
+        assertEquals(CarrierProbeMode.HTTPS_GET, plans[0].probe.mode)
+        assertEquals("/ping", plans[0].probe.path)
+        assertEquals(1, plans[1].id)
+        assertEquals(CarrierProbeMode.WSS, plans[1].probe.mode)
+    }
+
+    @Test
+    fun carrierEndpointResolutionUsesPlatformHook() {
+        val hooks = FakeAndroidPlatformHooks()
+        val controller = HeadlessVpnController(profile, hooks)
+
+        assertEquals(listOf(ResolvedEndpoint("203.0.113.20", 443)), controller.resolveCarrierEndpoint(controller.carrierPlans()[0]))
+        assertEquals(listOf("origin.example.test:443"), hooks.resolvedEndpoints)
+    }
+
+    @Test
     fun serverEndpointResolutionUsesPlatformHook() {
         val hooks = FakeAndroidPlatformHooks()
         val controller = HeadlessVpnController(profile, hooks)
@@ -104,6 +134,23 @@ class HeadlessVpnControllerTest {
         val hooks = FakeAndroidPlatformHooks(uidForFlowResult = 10042)
 
         assertEquals(10042, PlatformUidResolver(hooks).ownerUidFor(flow))
+    }
+
+    @Test
+    fun splitTunnelPolicyAllowsConfiguredUid() {
+        val flow = TunFlowTuple(TunProtocol.TCP, 0x0a420002, 53000, 0x5db8d822, 443)
+        val controller = HeadlessVpnController(profile, FakeAndroidPlatformHooks(uidForFlowResult = 10042))
+
+        assertEquals(SplitTunnelDecision.ALLOW, controller.policyDecision(flow))
+    }
+
+    @Test
+    fun splitTunnelPolicyDropsUnknownAndNonAllowlistedFlows() {
+        val flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x08080808, 53)
+        val controller = HeadlessVpnController(profile, FakeAndroidPlatformHooks(uidForFlowResult = 10043))
+
+        assertEquals(SplitTunnelDecision.DROP, controller.policyDecision(null))
+        assertEquals(SplitTunnelDecision.DROP, controller.policyDecision(flow))
     }
 }
 
@@ -131,7 +178,8 @@ private class FakeAndroidPlatformHooks(
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
         resolvedEndpoints += "$host:$port"
-        return listOf(ResolvedEndpoint("203.0.113.10", port))
+        val address = if (host == "fps.example.test") "203.0.113.10" else "203.0.113.20"
+        return listOf(ResolvedEndpoint(address, port))
     }
 
     override fun uidForFlow(flow: TunFlowTuple) = uidForFlowResult

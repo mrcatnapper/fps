@@ -12,7 +12,21 @@ class AndroidClientProfileParserTest {
     private val key = Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })
     private val uuid = "123e4567-e89b-42d3-a456-426614174000"
 
-    private fun profileJson(extraZeroRtt: String = "", extraTun: String = "") = """
+    private fun profileJson(
+        extraZeroRtt: String = "",
+        extraTun: String = "",
+        carriers: String = """
+          "carriers": [
+            {"mode": "https_get", "endpoint": "origin.example.test:443", "path": "/ping", "interval_ms": 5000},
+            {"mode": "wss", "endpoint": "[2001:db8::1]:9443", "path": "/stream", "interval_ms": 10000}
+          ],
+        """.trimIndent(),
+        splitTunnel: String = """
+          "split_tunnel": {
+            "allowed_uids": [10042, 10043]
+          },
+        """.trimIndent(),
+    ) = """
         {
           "network": {
             "server": "fps.example.test:443",
@@ -42,7 +56,10 @@ class AndroidClientProfileParserTest {
           },
           "ops": {
             "status_socket": "/run/fps/client.status"
-          }
+          },
+          $carriers
+          $splitTunnel
+          "unused_tail": true
         }
     """.trimIndent()
 
@@ -56,6 +73,11 @@ class AndroidClientProfileParserTest {
         assertEquals(1280, profile.codec.maxFramePayload)
         assertEquals(1280, profile.tun?.mtu)
         assertEquals("/run/fps/client.status", profile.ops.statusSocket)
+        assertEquals(2, profile.carriers.size)
+        assertEquals(CarrierProbeMode.HTTPS_GET, profile.carriers[0].mode)
+        assertEquals("origin.example.test", profile.carriers[0].endpoint.host)
+        assertEquals("/stream", profile.carriers[1].path)
+        assertEquals(setOf(10042, 10043), profile.splitTunnel.allowedUids)
     }
 
     @Test
@@ -115,7 +137,9 @@ class AndroidClientProfileParserTest {
 
         assertFalse(text.contains(uuid))
         assertFalse(text.contains(key))
+        assertFalse(text.contains("10042"))
         assertTrue(text.contains("<redacted>"))
+        assertTrue(text.contains("allowedUidCount=2"))
     }
 
     @Test
@@ -133,6 +157,40 @@ class AndroidClientProfileParserTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             CarrierProbeProfile(CarrierProbeMode.WSS, Endpoint("origin.example.test", 443), "/", 0)
+        }
+    }
+
+    @Test
+    fun rejectsInvalidCarrierConfig() {
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "tcp", "endpoint": "origin.example.test:443"}],"""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "wss", "endpoint": "origin.example.test", "path": "/"}],"""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "https_get", "endpoint": "origin.example.test:443", "path": "relative"}],"""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "https_get", "endpoint": "origin.example.test:443", "interval_ms": 0}],"""))
+        }
+    }
+
+    @Test
+    fun parsesMissingCarrierAndSplitTunnelAsEmpty() {
+        val profile = AndroidClientProfileParser.parse(profileJson(carriers = "", splitTunnel = ""))
+
+        assertEquals(emptyList<CarrierProbeProfile>(), profile.carriers)
+        assertEquals(emptySet<Int>(), profile.splitTunnel.allowedUids)
+    }
+
+    @Test
+    fun rejectsInvalidSplitTunnelAllowlist() {
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(splitTunnel = """"split_tunnel": {"allowed_uids": [-1]},"""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(splitTunnel = """"split_tunnel": {"allowed_uids": ["10042"]},"""))
         }
     }
 }

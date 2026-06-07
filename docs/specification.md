@@ -643,9 +643,10 @@ crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
 normalization and generic datagram scheduling. TUN framing/adaptation and the
 TLS/TCP carrier are explicit opt-in targets above that core. The current Android
 scaffold adds a headless Kotlin runtime boundary: it parses client JSON and
-`fps://v1` profiles, models the VPN startup state machine, keeps platform
-operations behind hooks, and builds an NDK library that reuses FPS native core
-pieces without linking Linux runtime code.
+`fps://v1` profiles, models carrier probes and split-tunnel allowlists, models
+the VPN startup state machine, keeps platform operations behind hooks, and
+builds an NDK library that reuses FPS native core pieces without linking Linux
+runtime code.
 
 Linux-specific runtime is separate:
 
@@ -668,6 +669,9 @@ Linux-specific runtime is separate:
   through `TcpSocketProtector`/platform hooks, hostname resolution through
   Android's underlying network, two-phase lease-before-TUN startup and split
   tunnel by default.
+- The current Kotlin headless layer can derive carrier runtime plans from
+  profile metadata and resolve those endpoints through the underlying-network
+  hook. It does not yet open real carrier sockets.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

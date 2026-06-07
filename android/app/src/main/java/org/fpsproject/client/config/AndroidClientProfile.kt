@@ -1,6 +1,7 @@
 package org.fpsproject.client.config
 
 import org.json.JSONException
+import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.util.Base64
@@ -35,6 +36,14 @@ data class OpsProfile(
     val statusSocket: String? = null,
 )
 
+class SplitTunnelProfile(
+    val allowedUids: Set<Int> = emptySet(),
+) {
+    override fun toString(): String {
+        return "SplitTunnelProfile(allowedUidCount=${allowedUids.size})"
+    }
+}
+
 class ZeroRttProfile(
     val profileId: String,
     val clientUuid: String,
@@ -55,9 +64,12 @@ class AndroidClientProfile(
     val codec: CodecProfile = CodecProfile(),
     val tun: TunProfile? = null,
     val ops: OpsProfile = OpsProfile(),
+    val carriers: List<CarrierProbeProfile> = emptyList(),
+    val splitTunnel: SplitTunnelProfile = SplitTunnelProfile(),
 ) {
     override fun toString(): String {
-        return "AndroidClientProfile(server=$server, zeroRtt=$zeroRtt, codec=$codec, tun=$tun, ops=$ops)"
+        return "AndroidClientProfile(server=$server, zeroRtt=$zeroRtt, codec=$codec, tun=$tun, " +
+            "ops=$ops, carriers=$carriers, splitTunnel=$splitTunnel)"
     }
 }
 
@@ -101,6 +113,8 @@ object AndroidClientProfileParser {
             codec = parseCodec(rootObject.optionalObject("codec")),
             tun = parseTun(rootObject.optionalObject("tun")),
             ops = parseOps(rootObject.optionalObject("ops")),
+            carriers = parseCarriers(rootObject.optionalArray("carriers")),
+            splitTunnel = parseSplitTunnel(rootObject.optionalObject("split_tunnel")),
         )
     }
 
@@ -162,6 +176,52 @@ object AndroidClientProfileParser {
         return OpsProfile(statusSocket = ops?.optionalString("status_socket", "ops.status_socket"))
     }
 
+    private fun parseCarriers(carriers: JSONArray?): List<CarrierProbeProfile> {
+        if (carriers == null) {
+            return emptyList()
+        }
+        return List(carriers.length()) { index ->
+            val path = "carriers[$index]"
+            val carrier = carriers.get(index) as? JSONObject
+                ?: throw AndroidClientProfileParseException("$path must be a JSON object")
+            CarrierProbeProfile(
+                mode = parseCarrierProbeMode(carrier.requiredString("mode", "$path.mode"), "$path.mode"),
+                endpoint = parseEndpoint(carrier.requiredString("endpoint", "$path.endpoint"), "$path.endpoint"),
+                path = parseCarrierPath(carrier.optionalString("path", "$path.path") ?: "/", "$path.path"),
+                intervalMs = carrier.optionalPositiveLong("interval_ms", 10_000, "$path.interval_ms"),
+            )
+        }
+    }
+
+    private fun parseCarrierPath(value: String, path: String): String {
+        if (!value.startsWith('/')) {
+            throw AndroidClientProfileParseException("$path must start with '/'")
+        }
+        return value
+    }
+
+    private fun parseSplitTunnel(splitTunnel: JSONObject?): SplitTunnelProfile {
+        if (splitTunnel == null) {
+            return SplitTunnelProfile()
+        }
+        val allowedUids = splitTunnel.optionalArray("allowed_uids") ?: return SplitTunnelProfile()
+        return SplitTunnelProfile(
+            allowedUids = List(allowedUids.length()) { index ->
+                val value = allowedUids.get(index)
+                val path = "split_tunnel.allowed_uids[$index]"
+                when (value) {
+                    is Int -> value
+                    is Long -> value.toIntIfExact(path)
+                    else -> throw AndroidClientProfileParseException("$path must be an integer")
+                }.also {
+                    if (it < 0) {
+                        throw AndroidClientProfileParseException("$path must be non-negative")
+                    }
+                }
+            }.toSet(),
+        )
+    }
+
     private fun canonicalClientUuid(value: String): String {
         val parsed = try {
             UUID.fromString(value)
@@ -200,6 +260,12 @@ private fun JSONObject.optionalObject(path: String): JSONObject? {
     val value = find(path) ?: return null
     return value as? JSONObject
         ?: throw AndroidClientProfileParseException("$path must be a JSON object")
+}
+
+private fun JSONObject.optionalArray(path: String): JSONArray? {
+    val value = find(path) ?: return null
+    return value as? JSONArray
+        ?: throw AndroidClientProfileParseException("$path must be a JSON array")
 }
 
 private fun JSONObject.requiredString(path: String): String {
@@ -244,6 +310,14 @@ private fun JSONObject.optionalLong(field: String, default: Long, path: String):
     }
     if (parsed < 0) {
         throw AndroidClientProfileParseException("$path must be non-negative")
+    }
+    return parsed
+}
+
+private fun JSONObject.optionalPositiveLong(field: String, default: Long, path: String): Long {
+    val parsed = optionalLong(field, default, path)
+    if (parsed <= 0) {
+        throw AndroidClientProfileParseException("$path must be positive")
     }
     return parsed
 }

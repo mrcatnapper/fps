@@ -27,8 +27,8 @@ Delivered:
   and raw client JSON into a Kotlin `AndroidClientProfile`.
 - Parsing accepts only client-side fields needed by the Android runtime:
   `network.server`, `security.zero_rtt.client_uuid`,
-  `security.zero_rtt.server_public_key_base64`, optional codec, TUN and ops
-  metadata.
+  `security.zero_rtt.server_public_key_base64`, optional codec, TUN, ops,
+  carrier probe and split-tunnel metadata.
 - Parsing rejects server-only secret/runtime fields such as
   `server_private_key_base64`, `allowed_client_uuids`, `tun.lease_pool`,
   `tun.server_address` and `tun.lease_file`.
@@ -39,7 +39,11 @@ Delivered:
   for VPN permission, TUN establishment, socket protection, underlying-network
   DNS and UID lookup.
 - Carrier probe settings are modeled but do not open network sockets yet.
-  Future carrier sockets must call the socket-protection hook before connect.
+  The headless controller exposes carrier runtime plans, resolves carrier
+  endpoints through the underlying-network hook and requires future carrier
+  sockets to call the socket-protection hook before connect.
+- Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
+  a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
   checks stay opt-in.
 

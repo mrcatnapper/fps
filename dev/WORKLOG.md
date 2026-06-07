@@ -52,10 +52,16 @@ Completed:
   Dockerfile prewarm layer that resolves Gradle wrapper/Maven dependencies
   before the full source `COPY`, so one-shot `docker run` checks reuse the
   cached Gradle distribution/dependency graph from the image.
+- Follow-up: extended the headless Android runtime model with profile-driven
+  carrier probes and split-tunnel allowlists. The controller now exposes
+  carrier runtime plans, resolves carrier endpoints through platform hooks and
+  evaluates fail-closed UID policy decisions without opening real sockets or a
+  real `VpnService` fd.
 
 Verification:
 
 - `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
 - `python3 -m py_compile tests/integration/*.py tools/*.py`
 - `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
 - `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`

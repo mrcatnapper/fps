@@ -1,6 +1,9 @@
 package org.fpsproject.client.runtime
 
 import org.fpsproject.client.config.AndroidClientProfile
+import org.fpsproject.client.config.CarrierProbeProfile
+import org.fpsproject.client.policy.SplitTunnelDecision
+import org.fpsproject.client.policy.SplitTunnelPolicy
 import org.fpsproject.client.policy.TunFlowTuple
 import org.fpsproject.client.policy.UidResolver
 
@@ -34,6 +37,11 @@ data class ResolvedEndpoint(
     val port: Int,
 )
 
+data class CarrierRuntimePlan(
+    val id: Int,
+    val probe: CarrierProbeProfile,
+)
+
 interface AndroidPlatformHooks {
     fun hasVpnPermission(): Boolean
 
@@ -54,6 +62,11 @@ class HeadlessVpnController(
     private val profile: AndroidClientProfile,
     private val hooks: AndroidPlatformHooks,
 ) {
+    private val carrierPlans = profile.carriers.mapIndexed { index, probe ->
+        CarrierRuntimePlan(id = index, probe = probe)
+    }
+    private val splitTunnelPolicy = SplitTunnelPolicy(profile.splitTunnel.allowedUids, PlatformUidResolver(hooks))
+
     var state: VpnRuntimeState = VpnRuntimeState.STOPPED
         private set
 
@@ -97,8 +110,18 @@ class HeadlessVpnController(
         return true
     }
 
+    fun carrierPlans(): List<CarrierRuntimePlan> = carrierPlans.toList()
+
     fun resolveServerEndpoint(): List<ResolvedEndpoint> {
         return hooks.resolveOnUnderlyingNetwork(profile.server.host, profile.server.port)
+    }
+
+    fun resolveCarrierEndpoint(plan: CarrierRuntimePlan): List<ResolvedEndpoint> {
+        return hooks.resolveOnUnderlyingNetwork(plan.probe.endpoint.host, plan.probe.endpoint.port)
+    }
+
+    fun policyDecision(flow: TunFlowTuple?): SplitTunnelDecision {
+        return splitTunnelPolicy.decide(flow)
     }
 
     fun stop(): VpnRuntimeState {
