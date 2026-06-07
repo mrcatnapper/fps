@@ -39,7 +39,16 @@ android {
 }
 
 dependencies {
+    implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
+    implementation("com.squareup.okhttp3:okhttp")
+
+    testImplementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    testImplementation("com.squareup.okhttp3:mockwebserver3")
+    testImplementation("com.squareup.okhttp3:okhttp-tls")
+
+    androidTestImplementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
 }

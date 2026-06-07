@@ -118,6 +118,15 @@ run() {
   "$@"
 }
 
+remove_existing_docker_image() {
+  local image="$1"
+  shift
+  if "$@" image inspect "$image" >/dev/null 2>&1; then
+    log "Remove previous Docker image tag: $image"
+    run "$@" image rm --no-prune "$image"
+  fi
+}
+
 run_to_file() {
   local output="$1"
   shift
@@ -233,6 +242,7 @@ if [[ "$run_docker" == true ]]; then
     fi
   fi
   log "Docker build/smoke: $image ($dockerfile, $docker_compiler)"
+  remove_existing_docker_image "$image" "${docker_cmd[@]}"
   run "${docker_build_cmd[@]}" \
     -f "$dockerfile_path" \
     --build-arg "FPS_COMPILER=$docker_compiler" \

@@ -91,6 +91,27 @@ Useful environment variables:
 Local non-Docker Python runtime dependencies are pinned in
 `requirements-runtime.txt`.
 
+The Docker helpers remove an existing image with the selected output tag before
+rebuilding it, using `docker image rm --no-prune`. This prevents stale untagged
+final images from accumulating when the new build does not descend from the
+previous tagged image, while keeping parent layers available for classic Docker
+builder cache.
+
+If you only need to inspect or smoke-test an already built image, run it
+directly instead of rebuilding:
+
+```sh
+docker run --rm fps:local fps_client --help
+docker run --rm fps:android-ci-local tools/run_android_checks.sh --host
+docker run --rm -v "$PWD:/workspaces" -w /workspaces \
+  fps:android-ci-local tools/run_android_checks.sh --host
+```
+
+The bind-mounted form uses the current working tree while reusing the toolchain
+from the image. This is useful for quick checks, but remember that generated
+build outputs will be written to the mounted workspace unless the command
+redirects them elsewhere.
+
 ## Android Bootstrap Checks
 
 The Android client scaffold is command-line only; Android Studio is not
@@ -139,6 +160,17 @@ ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
 This vcpkg usage is intentionally limited to Android OpenSSL. Linux, Docker,
 Alpine and Boost dependency paths are not managed by vcpkg.
 
+Android Kotlin code should use Android/Kotlin/JVM libraries for common parsing
+and encoding tasks. Client profile parsing uses Android's `org.json`; JVM unit
+tests get the same API through a test-only dependency so they stay headless.
+
+`Dockerfile.android` prewarms Gradle before the full source `COPY`: it copies
+only the Gradle wrapper, build files and minimal Android project metadata, sets
+a stable `GRADLE_USER_HOME`, runs a dependency-resolution task, and only then
+copies the full source tree. This keeps Android SDK/NDK/vcpkg layers separate
+from source changes and caches the Gradle distribution/dependency graph in an
+image layer used by later one-shot `docker run` checks.
+
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
 
@@ -151,7 +183,18 @@ tools/run_android_checks.sh --host
 ```
 
 `tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
-and assembles the instrumented test APK. It does not require an emulator.
+and assembles the instrumented test APK. It does not require an emulator. The
+JVM tests cover Android client-profile parsing, fail-closed split-tunnel policy,
+the headless VPN runtime state machine and the headless carrier runner with fake
+platform hooks/transports. They also cover profile-driven carrier planning,
+underlying-network endpoint resolution, socket-protection ordering,
+reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
+HTTPS/WSS carrier transport factory through MockWebServer. They also cover
+Android TUN plan generation, `VpnService.Builder` call sequencing and idempotent
+TUN fd close ownership through fake builders. They also assert that
+lease-triggered TUN startup requires `tun.enabled=true` and that the headless
+runtime snapshot reports only non-secret state/TUN/carrier metadata. These
+checks still do not require an emulator or a real Android `VpnService` instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 
@@ -161,16 +204,21 @@ tools/run_android_checks.sh --connected
 ```
 
 The connected check runs `:android:app:connectedDebugAndroidTest`, loads
-`libfps_android_native.so` on the target, and calls the JNI `nativeVersion()` and
-`nativeCoreSmoke()` paths. It is opt-in because it requires a real Android
-runtime.
+`libfps_android_native.so` on the target, calls the JNI `nativeVersion()` and
+`nativeCoreSmoke()` paths, and verifies a native IPv4 TCP tuple parse fixture.
+It is opt-in because it requires a real Android runtime.
 
-The current native Android smoke builds `fps_android_native` for `arm64-v8a` and
-`x86_64`. It reuses the FPS IPv4 TCP/UDP 5-tuple parser and links a reusable
-native core smoke library built from protocol codec/crypto, generic covert
-datagram transport and TLS/TCP carrier sources. The smoke intentionally excludes
-Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
-operator paths.
+The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
+`x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models
+the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
+transport factory for app-owned carrier sockets. It also has a first
+lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with fake
+builders and guarded by explicit `tun.enabled=true` profile intent. The native
+smoke reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
+a reusable native core smoke library built from protocol codec/crypto, generic
+covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
+excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and
+Boost.JSON-heavy operator paths.
 
 Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
 root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to

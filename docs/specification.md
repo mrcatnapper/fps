@@ -423,7 +423,8 @@ Adaptive behavior:
 Deferred work:
 
 - statistical assertions for record size/delay distributions;
-- profile capture tooling and classifier regression lab.
+- classifier regression lab and repeated pcap-level comparison against
+  representative carrier profiles.
 
 ## 8. Configuration
 
@@ -641,10 +642,14 @@ Client profile CLI:
 `fps_core` is the narrow platform-neutral layer intended for Android reuse:
 crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
 normalization and generic datagram scheduling. TUN framing/adaptation and the
-TLS/TCP carrier are explicit opt-in targets above that core. The initial Android
-scaffold currently proves a smaller native boundary: Kotlin code can build an
-NDK library that reuses the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel
-policy without linking Linux runtime code.
+TLS/TCP carrier are explicit opt-in targets above that core. The current Android
+scaffold adds a headless Kotlin runtime boundary: it parses client JSON and
+`fps://v1` profiles, models carrier probes and split-tunnel allowlists, models
+the VPN startup state machine, provides a live OkHttp HTTPS/WSS carrier
+transport factory behind the same headless manager contract, owns the first
+lease-triggered Android `VpnService` TUN file descriptor, keeps platform
+operations behind hooks, and builds an NDK library that reuses FPS native core
+pieces without linking Linux runtime code.
 
 Linux-specific runtime is separate:
 
@@ -654,18 +659,30 @@ Linux-specific runtime is separate:
   semantic link/address operations. The Linux implementation translates those
   operations to no-shell `ip` execution; Android should later back the same
   operations with `VpnService`;
-- unit tests use fake runtime/configurator objects. Android should later provide
-  a `VpnService` file descriptor, protected carrier sockets and Android network
-  configurator;
+- unit tests use fake runtime/configurator objects and MockWebServer for live
+  OkHttp carrier transport checks. Android now has a first `VpnService.Builder`
+  fd ownership adapter; native pump wiring and richer Android network
+  configuration remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
-- Outbound TCP carrier connects use an injectable `TcpSocketProtector`. The
-  current Linux runtime passes a no-op protector, while Android should call
-  `VpnService.protect(fd)` after socket open and before connect;
+- Outbound TCP carrier connects use an injectable protector boundary. The
+  current Linux runtime passes a no-op protector; Android native sockets use
+  the fd hook, while OkHttp-owned carrier sockets use the Java `Socket` hook
+  before connect;
 - The first Android direction is app-owned carrier sessions, socket protection
-  through `TcpSocketProtector`, hostname resolution through Android's underlying
-  network, two-phase lease-before-TUN startup and split tunnel by default.
+  through `TcpSocketProtector`/platform hooks, hostname resolution through
+  Android's underlying network, two-phase lease-before-TUN startup and split
+  tunnel by default.
+- The current Kotlin headless layer can derive carrier runtime plans from
+  profile metadata, resolve those endpoints through the underlying-network hook,
+  drive a deterministic fake-transport carrier manager and open live OkHttp
+  HTTPS/WSS carrier transports with protect-before-connect ordering and
+  reconnect/backoff status. It can establish and own a `VpnService` fd after a
+  server lease, installing the leased IPv4 address and leased-subnet route. It
+  requires `tun.enabled=true` before lease-triggered TUN establishment, exposes
+  non-secret runtime snapshots for future UI/status surfaces, and does not yet
+  start the native TUN pump.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android
@@ -674,12 +691,13 @@ Linux-specific runtime is separate:
   must not log UUIDs, keys, raw packets or payload bytes.
 - The current Android scaffold links a native smoke boundary made of protocol
   codec/crypto, generic covert datagram transport, TLS/TCP carrier sources and
-  the TUN 5-tuple parser. Android OpenSSL is cross-built through vcpkg only for
-  Android triplets; Boost.Asio/Boost.System are used header-only in that smoke.
-  Linux relay/config/CLI, Linux TUN device code, Boost.Log and Boost.JSON-heavy
-  operator paths remain outside Android targets. Header-only
-  Boost.Describe/MP11/Endian remain usable on Android through an isolated Boost
-  header root.
+  the TUN 5-tuple parser. Kotlin owns the first Android profile parser instead
+  of pulling Linux Boost.JSON config code into the app. Android OpenSSL is
+  cross-built through vcpkg only for Android triplets; Boost.Asio/Boost.System
+  are used header-only in that smoke. Linux relay/config/CLI, Linux TUN device
+  code, Boost.Log and Boost.JSON-heavy operator paths remain outside Android
+  targets. Header-only Boost.Describe/MP11/Endian remain usable on Android
+  through an isolated Boost header root.
 - Android build/unit checks are reproducible through `Dockerfile.android`.
   Runtime validation is intentionally separate: the connected instrumented smoke
   loads the native library and calls the core smoke on an attached device or

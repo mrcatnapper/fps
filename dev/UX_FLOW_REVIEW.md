@@ -7,6 +7,10 @@ Scope: Docker-first personal deployment flow using `fpshop` as the remote
 carrier origin, and Dante SOCKS5 overlay for application traffic. Temporary
 keys, UUIDs, configs and containers were removed after the run.
 
+This is a historical UX-flow snapshot. It is kept as an operator-test record;
+current user-facing instructions live in `docs/public-beta-quickstart.md`,
+`docs/docker.md`, `docs/client-profiles.md` and related docs.
+
 ## Verdict
 
 The beta user flow is functionally viable for a personal SOCKS-over-FPS setup:
@@ -27,13 +31,13 @@ The current UX is still too easy to misconfigure manually. The biggest issues
 are not protocol failures; they are operator-footguns around Docker output
 paths, shell parsing, public port checks and endpoint topology.
 
-Follow-up status:
+Current follow-up status:
 
-- P0/P1 documentation and CLI fixes are addressed by the follow-up increment in
-  this branch: JSON server keypair output, host-visible Docker profile
-  generation examples, public `:443` preflight and loopback/troubleshooting
-  guidance.
-- Debug-carrier healthchecks remain optional future work.
+- P0/P1 documentation and CLI fixes are addressed in current docs and CLI:
+  JSON server keypair output, host-visible Docker profile generation examples,
+  public `:443` preflight and host-vs-container loopback troubleshooting.
+- Debug-carrier healthchecks remain optional future work; reconnect behavior is
+  already covered by smoke and soak tooling.
 
 ## Flow Tested
 
@@ -212,19 +216,19 @@ Recommended fix:
 - Decide whether to document BuildKit/buildx as the preferred local build path,
   or leave this as environment-specific noise.
 
-## Suggested Next Increment
+## Current Status Of Suggested Fixes
 
-Focus on docs and small CLI output improvements before changing protocol code:
+The original P0/P1 follow-ups from this run are complete in current docs and
+tooling:
 
-1. Fix quickstart/profile generation examples so generated client configs are
-   written to the host filesystem intentionally.
-2. Add JSON output for `--generate-server-keypair`, then update docs to use it.
-3. Add a deployment preflight section for provider firewall/public `:443`,
-   `nc`, `ss`, Docker publish and host-vs-container loopback.
-4. Add a concise troubleshooting table for:
-   - `target_connect_failed`;
-   - `no_carrier_session`;
-   - `non_ipv4_tun_destination`;
-   - missing SOCKS listener;
-   - `leased_client_address` present but `carriers_current=0`.
-5. Optional: add Compose healthchecks for the deterministic debug-carrier stack.
+- profile generation examples now write to the host filesystem intentionally or
+  document bind-mounted output paths;
+- server keypair generation supports JSON output and docs prefer it for scripts;
+- deployment docs include public `:443` and host-vs-container loopback
+  preflights;
+- Docker troubleshooting covers `target_connect_failed`, `no_carrier_session`,
+  benign non-IPv4 TUN noise, missing SOCKS listener and lease-without-carrier
+  states.
+
+The remaining low-priority item is optional healthchecks for deterministic
+debug-carrier compose examples.

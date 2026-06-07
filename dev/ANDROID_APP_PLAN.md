@@ -15,9 +15,50 @@ handoff artifact, not operator documentation.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no real VPN lifecycle, GUI or carrier
-  manager yet. A connected instrumented smoke exists, but it is opt-in and runs
-  only when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI, native auth path or native TUN pump
+  yet. A connected instrumented smoke exists, but it is opt-in and runs only
+  when an external Android device or emulator is attached.
+
+## Implemented Headless Core Slice
+
+Delivered:
+
+- Android parses the current `fps://v1/<base64url-json>` client profile format
+  and raw client JSON into a Kotlin `AndroidClientProfile`.
+- Parsing accepts only client-side fields needed by the Android runtime:
+  `network.server`, `security.zero_rtt.client_uuid`,
+  `security.zero_rtt.server_public_key_base64`, optional codec, TUN, ops,
+  carrier probe and split-tunnel metadata.
+- Parsing rejects server-only secret/runtime fields such as
+  `server_private_key_base64`, `allowed_client_uuids`, `tun.lease_pool`,
+  `tun.server_address` and `tun.lease_file`.
+- Parsing uses Android's `org.json` API. Headless JVM tests provide the same API
+  through a test-only `org.json:json` dependency; do not maintain a project-local
+  JSON parser for this boundary.
+- Kotlin runtime state is modeled as a headless controller with platform hooks
+  for VPN permission, TUN establishment, socket protection, underlying-network
+  DNS and UID lookup.
+- Carrier probe settings are modeled in Kotlin. The headless controller exposes
+  carrier runtime plans and can own a deterministic carrier manager that
+  resolves carrier endpoints through the underlying-network hook, calls socket
+  protection before connect, drives fake HTTPS/WSS probe transports, tracks
+  reconnect/backoff counters and exposes non-secret status.
+- A live OkHttp transport factory exists for app-owned carrier sockets. It
+  supports HTTPS GET and WSS carrier profiles, uses the already-resolved
+  underlying-network endpoint through a per-transport DNS adapter and protects
+  each Java `Socket` before connect through a platform hook.
+- The first `VpnService` lifecycle and TUN fd ownership layer exists. Service
+  start parses a profile and waits for a server lease; after a lease arrives,
+  `VpnService.Builder` installs the leased address and leased-subnet route when
+  `tun.enabled=true` and owns the resulting `ParcelFileDescriptor` until
+  controller stop.
+- The headless controller exposes a non-secret runtime snapshot with state,
+  last error, TUN presence/MTU and carrier status metadata for later UI/status
+  integration.
+- Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
+  a fail-closed policy decision API backed by the platform UID lookup hook.
+- Required verification remains Docker/JVM-first. Connected Android runtime
+  checks stay opt-in.
 
 ## Environment
 
@@ -70,14 +111,18 @@ SDK use must be requested explicitly with `--host`.
 - The first Android beta uses app-owned carrier sessions. The app opens and
   maintains HTTPS/WSS carrier traffic itself.
 - Carrier requests are configured at the Android layer: for example a periodic
-  HTTPS GET or a WSS stream probe. This does not require FPS protocol changes.
-- Carrier sockets must be protected with `VpnService.protect(fd)` before
-  `connect`.
+  HTTPS GET or a WSS stream probe. The current headless runner tests lifecycle
+  with fake transports, and the OkHttp transport factory provides the first live
+  HTTPS/WSS socket implementation without changing the FPS protocol.
+- Carrier sockets must be protected before `connect`. Native/future sockets use
+  the fd hook; OkHttp-owned sockets use the Java `Socket` hook.
 - Hostname resolution for FPS/carrier endpoints must use Android's underlying
   `ConnectivityManager.Network`; native resolver behavior after VPN activation
   is not trusted.
 - Startup is two-phase: authenticate and receive the server lease first, then
-  create/configure the `VpnService` fd and start the native TUN pump.
+  create/configure the `VpnService` fd only for an Android profile with
+  `tun.enabled=true`. Starting the native TUN pump remains the next native/JNI
+  step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

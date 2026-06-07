@@ -2,7 +2,306 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-07
+
+### Android PR hardening: TUN contract and runtime snapshot
+
+Goal:
+
+- Keep PR #17 focused, but close small Android runtime ambiguity before merge:
+  lease-triggered TUN setup must require explicit Android TUN intent and fd
+  ownership must be obvious in code.
+
+Decisions:
+
+- Treat `tun.enabled=true` as the required profile contract before creating an
+  Android `VpnService` fd after lease delivery. Missing or disabled TUN now
+  fails closed with `tun_disabled`.
+- Replace ad hoc close-action construction with explicit `EstablishedTun.owned`
+  and `EstablishedTun.borrowed` factories.
+- Add a non-secret headless runtime snapshot for future UI/status integration
+  without adding a public Android management API in this PR.
+
+Completed:
+
+- Added explicit TUN-enabled checks before lease-triggered TUN establishment.
+- Added owned/borrowed TUN handle construction and kept close idempotent.
+- Added `VpnRuntimeSnapshot`/`TunRuntimeSnapshot` reporting state, last error,
+  TUN presence/MTU and carrier statuses without UUIDs or keys.
+- Extended JVM tests for lease ordering, disabled/missing TUN, runtime
+  snapshots, TUN plan prefix edges and owned/borrowed close behavior.
+- Updated Android plan, boundary, specification and testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
+### Android VpnService lifecycle and TUN fd ownership
+
+Goal:
+
+- Add the first real Android `VpnService` lifecycle and TUN file-descriptor
+  ownership layer.
+- Keep the increment testable without an emulator: no native FPS auth/pump
+  wiring, no UI and no full tunnel route UX yet.
+
+Decisions:
+
+- Keep startup two-phase: profile start moves to `WAITING_FOR_LEASE`; TUN is
+  established only after an encrypted server lease is delivered by future
+  native/JNI auth wiring.
+- Add a testable TUN plan/establisher boundary around `VpnService.Builder`
+  instead of putting route/address logic directly in `FpsVpnService`.
+- First Android route plan installs the leased IPv4 address and the leased
+  subnet route only. Public split/full-tunnel route configuration remains a
+  later UX/runtime feature.
+- `EstablishedTun` owns a close action so `HeadlessVpnController.stop()` closes
+  the platform fd exactly once.
+
+Planned steps:
+
+- Add JVM tests for Android TUN plan calculation, builder invocation, establish
+  failure and idempotent fd close on controller stop.
+- Add platform-neutral Kotlin helpers for IPv4 formatting, TUN plan generation
+  and generic builder-based TUN establishment.
+- Wire `FpsVpnService` to parse profile intents, expose stop/start lifecycle,
+  implement Android platform hooks and own `ParcelFileDescriptor` closure.
+- Update Android boundary/testing/spec docs and run Android Docker checks plus
+  the usual local regression suite.
+
+Completed:
+
+- Added `AndroidTunPlan`, `VpnTunnelBuilder`, `TunHandle` and
+  `VpnTunEstablisher` as a JVM-testable boundary around Android
+  `VpnService.Builder`.
+- Added lease-only Android TUN planning: session name, lease MTU, client IPv4
+  address and leased-subnet route. Full/split public route UX stays future
+  work.
+- Extended `EstablishedTun` with an idempotent close action and changed
+  `HeadlessVpnController.stop()` to close owned TUN handles exactly once.
+- Wired `FpsVpnService` with start/stop actions, profile parsing,
+  lease-triggered TUN establishment, Android socket protection, non-VPN
+  underlying-network DNS and UID lookup hooks.
+- Added JVM tests for TUN plan generation, builder call ordering, establish
+  failure and fd ownership close behavior.
+- Updated Android developer notes, roadmap, beta status, testing docs and the
+  platform-boundary section of the specification.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+
+### Android live OkHttp carrier transports
+
+Goal:
+
+- Add the first real Android carrier transport layer behind the existing
+  `HeadlessCarrierManager`.
+- Keep the increment headless and JVM-testable: no real `VpnService` fd
+  ownership, UI, JNI pump wiring or emulator requirement.
+
+Decisions:
+
+- Use OkHttp for Android HTTPS/WSS carrier sockets instead of project-local HTTP
+  or WebSocket code.
+- Pin the Android dependency through OkHttp BOM `5.3.2`, verified against Maven
+  Central.
+- Use MockWebServer3 for JVM tests.
+- Keep the existing `CarrierTransportFactory`/manager contract and add the
+  narrowest platform hooks required by OkHttp: Java `Socket` protection and
+  underlying-network DNS resolution.
+
+Planned steps:
+
+- Add JVM tests first for HTTPS GET success/failure, WSS open/probe/failure,
+  socket protection before connect and underlying-network DNS use.
+- Add OkHttp dependencies and implement an OkHttp transport factory for
+  `https_get` and `wss` carrier profiles.
+- Extend Android platform hooks without weakening the existing fd-based native
+  socket protection seam.
+- Update Android developer/testing docs and run Android Docker checks plus the
+  usual local regression suite.
+
+Completed:
+
+- Added OkHttp BOM `5.3.2`, OkHttp runtime dependency and MockWebServer3 plus
+  okhttp-tls test dependencies.
+- Extended Android platform hooks with Java `Socket` protection while keeping
+  the existing fd protection path for native/future sockets.
+- Added `OkHttpCarrierTransportFactory` for HTTPS GET and WSS carrier profiles.
+  Each transport uses the already-resolved underlying endpoint through a custom
+  DNS adapter and protects sockets before connect through a custom
+  `SocketFactory`.
+- Kept `HeadlessCarrierManager` compatible with native/fake transports by
+  adding an internal-protection flag instead of removing fd protection.
+- Added JVM tests for HTTPS success/failure, Java socket-protection failure,
+  WSS open/probe and WSS failure metadata.
+- Updated Android developer notes, roadmap, testing docs, beta status and the
+  platform-boundary section of the specification.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+
+### Android headless carrier runner
+
+Goal:
+
+- Add a deterministic headless Android carrier runner without UI, real
+  `VpnService` fd ownership or live network sockets.
+- Keep the next Android step testable through JVM unit tests and fake carrier
+  transports.
+
+Planned steps:
+
+- Add focused JVM tests for carrier runner lifecycle, endpoint resolution,
+  socket-protection ordering, probe ticks, reconnect/backoff, idempotent stop
+  and secret-free status.
+- Add Kotlin runtime abstractions for fake-friendly carrier transports and a
+  manager that drives `https_get` and `wss` carrier probe plans.
+- Integrate the manager with `HeadlessVpnController` through explicit
+  `startCarrierRunners`/`stopCarrierRunners` helpers, while keeping real
+  OkHttp HTTPS/WSS transports deferred.
+- Update Android developer docs and verification notes.
+
+Completed:
+
+- Added `HeadlessCarrierManager`, `CarrierTransport` and
+  `CarrierTransportFactory` as deterministic Kotlin runtime seams for future
+  live HTTPS/WSS transports.
+- Added per-carrier state/status for resolving, protecting, connecting,
+  running, backoff, attempts, successful probes, reconnects, last error and next
+  retry delay.
+- Added controller ownership helpers:
+  `startCarrierRunners(...)`, `tickCarrierRunners(...)` and
+  `stopCarrierRunners()`.
+- Added JVM tests for resolve/protect/connect ordering, periodic HTTPS probe
+  ticks, WSS-style persistent reconnect, resolve/connect/probe failures,
+  socket-protection failure, idempotent stop, controller lifecycle integration
+  and secret-free status.
+- Updated Android developer notes, roadmap and public testing/specification
+  status. Live OkHttp transports remain the next Android runtime increment.
+
+Verification:
+
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+### Documentation consistency pass after Android headless runtime work
+
+Goal:
+
+- Review active `docs/` and `dev/` Markdown, excluding this work log and
+  articles, after the latest Android headless profile/runtime increments.
+- Remove or correct stale statements without changing product behavior.
+
+Completed:
+
+- Updated `docs/beta-status.md` to describe Android as a reproducible
+  Docker-built headless Kotlin/NDK scaffold with profile parsing, carrier probe
+  planning, split-tunnel policy, socket-protection and lease-before-TUN state
+  tests, while still clearly marking live Android carrier sockets, real
+  `VpnService` ownership and UI as future work.
+- Updated `dev/ANDROID_BOUNDARY.md` and `dev/ROADMAP.md` to record the
+  implemented Android profile/runtime slice and the next Android work:
+  live app-owned HTTPS/WSS carrier loops, real `VpnService` fd ownership and a
+  native/Kotlin async facade.
+- Marked `dev/UX_FLOW_REVIEW.md` as a historical operator-flow snapshot and
+  replaced stale suggested-next-increment text with current completion status.
+- Removed stale shaper/profile wording that still treated pcap profile capture
+  tooling as entirely future work.
+
+Verification:
+
+- `rg` checks for removed key-file/IFF/hold-wss/public-test-service terms across
+  `docs/` and `dev/` excluding `dev/WORKLOG.md`.
+- `git diff --check`
+
 ## 2026-06-06
+
+### Android headless core profile/runtime slice
+
+Goal:
+
+- Add the first testable Android-client layer without UI, live carrier sockets
+  or a real `VpnService` fd pump.
+- Keep Android checks Docker/JVM-first so host SDK/NDK/vcpkg paths remain
+  optional.
+
+Planned steps:
+
+- Add Kotlin parsing for current client JSON and `fps://v1` profiles into a
+  non-secret `AndroidClientProfile`.
+- Reject server-only secrets and lease-pool internals at the Android boundary.
+- Add a headless runtime controller/state machine with platform hooks for VPN
+  permission, TUN establishment, socket protection, underlying-network DNS and
+  UID lookup.
+- Add JVM tests for profile parsing, state transitions, fail-closed policy and
+  carrier planning.
+- Keep connected instrumented native tests opt-in.
+
+Completed:
+
+- Added Kotlin parsing for raw client JSON and `fps://v1` client profile URIs
+  into a non-secret `AndroidClientProfile` model.
+- Added an Android-owned client profile parsing boundary that does not pull
+  Linux Boost.JSON config code into the native target.
+- Added profile validation for required client fields, canonical UUIDv4,
+  32-byte padded base64 server public key and rejection of server-only
+  Zero-RTT/TUN fields.
+- Added a headless VPN runtime controller with platform hooks for VPN
+  permission, TUN establishment, socket protection, underlying-network DNS and
+  UID lookup.
+- Added JVM tests for profile parsing, redaction, fail-closed policy hooks,
+  two-phase lease-before-TUN startup, idempotent stop and socket protection.
+- Extended the opt-in connected native smoke with a JNI IPv4 TCP 5-tuple parse
+  fixture.
+- Updated specification/testing docs to describe the headless Android core
+  boundary.
+- Follow-up: replaced the project-local Kotlin JSON parser with Android's
+  `org.json` API and a test-only JVM `org.json:json` dependency. Also recorded
+  Docker image tag cleanup and "do not clone platform libraries" practices in
+  agent/developer notes.
+- Follow-up: documented direct `docker run --rm ...` checks against already
+  built images, including bind-mounted workspace runs. Added an Android
+  Dockerfile prewarm layer that resolves Gradle wrapper/Maven dependencies
+  before the full source `COPY`, so one-shot `docker run` checks reuse the
+  cached Gradle distribution/dependency graph from the image.
+- Follow-up: extended the headless Android runtime model with profile-driven
+  carrier probes and split-tunnel allowlists. The controller now exposes
+  carrier runtime plans, resolves carrier endpoints through platform hooks and
+  evaluates fail-closed UID policy decisions without opening real sockets or a
+  real `VpnService` fd.
+
+Verification:
+
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
 
 ### Android Docker build and connected native smoke
 
