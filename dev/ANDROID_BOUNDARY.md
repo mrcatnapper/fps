@@ -112,8 +112,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   `ConnectivityManager.Network`, then pass resolved endpoints into native code.
   Do not rely on native resolver behavior after VPN activation.
 - Use two-phase TUN startup: authenticate and receive server lease first, then
-  create/configure the Android `VpnService` fd and start the native TUN pump.
-  Current code implements fd creation/ownership; native pump startup is next.
+  create/configure the Android `VpnService` fd for profiles with
+  `tun.enabled=true` and start the native TUN pump. Current code implements fd
+  creation/ownership and non-secret runtime snapshots; native pump startup is
+  next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

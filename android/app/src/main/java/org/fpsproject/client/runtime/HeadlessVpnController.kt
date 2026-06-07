@@ -32,11 +32,19 @@ data class EstablishedTun(
     val fd: Int,
     val mtu: Int,
 ) {
-    internal var closeAction: (() -> Unit)? = null
+    companion object {
+        fun owned(fd: Int, mtu: Int, handle: TunHandle): EstablishedTun {
+            return EstablishedTun(fd = fd, mtu = mtu).also {
+                it.closeAction = handle::close
+            }
+        }
 
-    constructor(fd: Int, mtu: Int, closeAction: (() -> Unit)?) : this(fd, mtu) {
-        this.closeAction = closeAction
+        fun borrowed(fd: Int, mtu: Int): EstablishedTun {
+            return EstablishedTun(fd = fd, mtu = mtu)
+        }
     }
+
+    private var closeAction: (() -> Unit)? = null
 
     fun close() {
         val action = closeAction ?: return
@@ -53,6 +61,18 @@ data class ResolvedEndpoint(
 data class CarrierRuntimePlan(
     val id: Int,
     val probe: CarrierProbeProfile,
+)
+
+data class TunRuntimeSnapshot(
+    val fdPresent: Boolean,
+    val mtu: Int?,
+)
+
+data class VpnRuntimeSnapshot(
+    val state: VpnRuntimeState,
+    val lastError: String?,
+    val tun: TunRuntimeSnapshot,
+    val carriers: List<CarrierRuntimeStatus>,
 )
 
 interface AndroidPlatformHooks {
@@ -107,6 +127,10 @@ class HeadlessVpnController(
             fail("lease_unexpected")
             return state
         }
+        if (profile.tun?.enabled != true) {
+            fail("tun_disabled")
+            return state
+        }
         val established = hooks.establishTun(profile, lease)
         if (established == null) {
             fail("tun_establish_failed")
@@ -155,6 +179,16 @@ class HeadlessVpnController(
 
     fun policyDecision(flow: TunFlowTuple?): SplitTunnelDecision {
         return splitTunnelPolicy.decide(flow)
+    }
+
+    fun snapshot(): VpnRuntimeSnapshot {
+        val activeTun = tun
+        return VpnRuntimeSnapshot(
+            state = state,
+            lastError = lastError,
+            tun = TunRuntimeSnapshot(fdPresent = activeTun != null, mtu = activeTun?.mtu),
+            carriers = carrierManager?.statuses() ?: emptyList(),
+        )
     }
 
     fun stop(): VpnRuntimeState {

@@ -35,6 +35,27 @@ class HeadlessVpnControllerTest {
         """.trimIndent(),
     )
 
+    private fun profileWithTunBlock(tunBlock: String) = AndroidClientProfileParser.parse(
+        """
+        {
+          "network": {"server": "fps.example.test:443"},
+          "security": {
+            "zero_rtt": {
+              "enabled": true,
+              "profile_id": "android-test-v5",
+              "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
+              "server_public_key_base64": "${Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })}"
+            }
+          },
+          $tunBlock
+          "carriers": [
+            {"mode": "https_get", "endpoint": "origin.example.test:443", "path": "/ping", "interval_ms": 5000}
+          ],
+          "split_tunnel": {"allowed_uids": [10042]}
+        }
+        """.trimIndent(),
+    )
+
     @Test
     fun startRequiresVpnPermission() {
         val hooks = FakeAndroidPlatformHooks(vpnPermissionGranted = false)
@@ -56,6 +77,37 @@ class HeadlessVpnControllerTest {
         val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
         assertEquals(VpnRuntimeState.RUNNING, controller.onLeaseReceived(lease))
         assertEquals(1, hooks.establishTunCalls)
+    }
+
+    @Test
+    fun leaseBeforeStartFailsClosed() {
+        val hooks = FakeAndroidPlatformHooks(vpnPermissionGranted = true)
+        val controller = HeadlessVpnController(profile, hooks)
+        val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
+
+        assertEquals(VpnRuntimeState.FAILED, controller.onLeaseReceived(lease))
+        assertEquals("lease_unexpected", controller.lastError)
+        assertEquals(0, hooks.establishTunCalls)
+    }
+
+    @Test
+    fun leaseRequiresEnabledTunProfile() {
+        val disabledTunProfile = profileWithTunBlock(
+            """"tun": {"enabled": false, "name": "fpsc0", "mtu": 1280, "auto_configure": false},""",
+        )
+        val missingTunProfile = profileWithTunBlock("")
+        val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
+
+        listOf(disabledTunProfile, missingTunProfile).forEach { candidate ->
+            val hooks = FakeAndroidPlatformHooks(vpnPermissionGranted = true)
+            val controller = HeadlessVpnController(candidate, hooks)
+
+            controller.start()
+
+            assertEquals(VpnRuntimeState.FAILED, controller.onLeaseReceived(lease))
+            assertEquals("tun_disabled", controller.lastError)
+            assertEquals(0, hooks.establishTunCalls)
+        }
     }
 
     @Test
@@ -99,6 +151,31 @@ class HeadlessVpnControllerTest {
         assertEquals("/ping", plans[0].probe.path)
         assertEquals(1, plans[1].id)
         assertEquals(CarrierProbeMode.WSS, plans[1].probe.mode)
+    }
+
+    @Test
+    fun snapshotReportsNonSecretRuntimeState() {
+        val hooks = FakeAndroidPlatformHooks()
+        val factory = CarrierTransportFactory {
+            FakeSnapshotTransport(socketFd = 200 + it.id)
+        }
+        val controller = HeadlessVpnController(profile, hooks)
+        val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
+
+        controller.start()
+        controller.startCarrierRunners(factory, nowMs = 0)
+        controller.onLeaseReceived(lease)
+
+        val snapshot = controller.snapshot()
+        val text = snapshot.toString()
+
+        assertEquals(VpnRuntimeState.RUNNING, snapshot.state)
+        assertEquals(null, snapshot.lastError)
+        assertTrue(snapshot.tun.fdPresent)
+        assertEquals(1280, snapshot.tun.mtu)
+        assertEquals(2, snapshot.carriers.size)
+        assertFalse(text.contains(profile.zeroRtt.clientUuid))
+        assertFalse(text.contains(profile.zeroRtt.serverPublicKeyBase64))
     }
 
     @Test
@@ -157,7 +234,7 @@ class HeadlessVpnControllerTest {
 
 private class FakeAndroidPlatformHooks(
     private val vpnPermissionGranted: Boolean = true,
-    private val establishTunResult: EstablishedTun? = EstablishedTun(fd = 7, mtu = 1280),
+    private val establishTunResult: EstablishedTun? = EstablishedTun.borrowed(fd = 7, mtu = 1280),
     private val protectSocketResult: Boolean = true,
     private val uidForFlowResult: Int = -1,
 ) : AndroidPlatformHooks {
@@ -186,4 +263,14 @@ private class FakeAndroidPlatformHooks(
     }
 
     override fun uidForFlow(flow: TunFlowTuple) = uidForFlowResult
+}
+
+private class FakeSnapshotTransport(
+    override val socketFd: Int,
+) : CarrierTransport {
+    override fun connect(endpoint: ResolvedEndpoint) = CarrierTransportResult.success()
+
+    override fun probe(nowMs: Long) = CarrierTransportResult.success()
+
+    override fun close() = Unit
 }

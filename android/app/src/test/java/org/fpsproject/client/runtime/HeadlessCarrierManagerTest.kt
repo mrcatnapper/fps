@@ -179,7 +179,7 @@ private class FakeCarrierHooks(
     override fun hasVpnPermission() = true
 
     override fun establishTun(profile: AndroidClientProfile, lease: TunLease): EstablishedTun {
-        return EstablishedTun(fd = 7, mtu = lease.mtu)
+        return EstablishedTun.borrowed(fd = 7, mtu = lease.mtu)
     }
 
     override fun protectSocket(fd: Int): Boolean {

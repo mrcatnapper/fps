@@ -198,7 +198,7 @@ private class FakeOkHttpHooks(
     override fun establishTun(
         profile: org.fpsproject.client.config.AndroidClientProfile,
         lease: TunLease,
-    ) = EstablishedTun(fd = 7, mtu = lease.mtu)
+    ) = EstablishedTun.borrowed(fd = 7, mtu = lease.mtu)
 
     override fun protectSocket(fd: Int) = true
 

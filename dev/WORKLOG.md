@@ -4,6 +4,44 @@
 
 ## 2026-06-07
 
+### Android PR hardening: TUN contract and runtime snapshot
+
+Goal:
+
+- Keep PR #17 focused, but close small Android runtime ambiguity before merge:
+  lease-triggered TUN setup must require explicit Android TUN intent and fd
+  ownership must be obvious in code.
+
+Decisions:
+
+- Treat `tun.enabled=true` as the required profile contract before creating an
+  Android `VpnService` fd after lease delivery. Missing or disabled TUN now
+  fails closed with `tun_disabled`.
+- Replace ad hoc close-action construction with explicit `EstablishedTun.owned`
+  and `EstablishedTun.borrowed` factories.
+- Add a non-secret headless runtime snapshot for future UI/status integration
+  without adding a public Android management API in this PR.
+
+Completed:
+
+- Added explicit TUN-enabled checks before lease-triggered TUN establishment.
+- Added owned/borrowed TUN handle construction and kept close idempotent.
+- Added `VpnRuntimeSnapshot`/`TunRuntimeSnapshot` reporting state, last error,
+  TUN presence/MTU and carrier statuses without UUIDs or keys.
+- Extended JVM tests for lease ordering, disabled/missing TUN, runtime
+  snapshots, TUN plan prefix edges and owned/borrowed close behavior.
+- Updated Android plan, boundary, specification and testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android VpnService lifecycle and TUN fd ownership
 
 Goal:

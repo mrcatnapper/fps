@@ -18,7 +18,9 @@ import org.fpsproject.client.runtime.HeadlessVpnController
 import org.fpsproject.client.runtime.ResolvedEndpoint
 import org.fpsproject.client.runtime.TunHandle
 import org.fpsproject.client.runtime.TunLease
+import org.fpsproject.client.runtime.TunRuntimeSnapshot
 import org.fpsproject.client.runtime.VpnRuntimeState
+import org.fpsproject.client.runtime.VpnRuntimeSnapshot
 import org.fpsproject.client.runtime.VpnTunEstablisher
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -72,6 +74,15 @@ class FpsVpnService : VpnService() {
         val stopped = controller?.stop() ?: VpnRuntimeState.STOPPED
         controller = null
         return stopped
+    }
+
+    internal fun snapshot(): VpnRuntimeSnapshot {
+        return controller?.snapshot() ?: VpnRuntimeSnapshot(
+            state = VpnRuntimeState.STOPPED,
+            lastError = null,
+            tun = TunRuntimeSnapshot(fdPresent = false, mtu = null),
+            carriers = emptyList(),
+        )
     }
 }
 

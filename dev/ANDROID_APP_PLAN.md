@@ -49,8 +49,12 @@ Delivered:
   each Java `Socket` before connect through a platform hook.
 - The first `VpnService` lifecycle and TUN fd ownership layer exists. Service
   start parses a profile and waits for a server lease; after a lease arrives,
-  `VpnService.Builder` installs the leased address and leased-subnet route and
-  owns the resulting `ParcelFileDescriptor` until controller stop.
+  `VpnService.Builder` installs the leased address and leased-subnet route when
+  `tun.enabled=true` and owns the resulting `ParcelFileDescriptor` until
+  controller stop.
+- The headless controller exposes a non-secret runtime snapshot with state,
+  last error, TUN presence/MTU and carrier status metadata for later UI/status
+  integration.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -116,8 +120,9 @@ SDK use must be requested explicitly with `--host`.
   `ConnectivityManager.Network`; native resolver behavior after VPN activation
   is not trusted.
 - Startup is two-phase: authenticate and receive the server lease first, then
-  create/configure the `VpnService` fd. Starting the native TUN pump remains the
-  next native/JNI step.
+  create/configure the `VpnService` fd only for an Android profile with
+  `tun.enabled=true`. Starting the native TUN pump remains the next native/JNI
+  step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

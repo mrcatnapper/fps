@@ -680,7 +680,9 @@ Linux-specific runtime is separate:
   HTTPS/WSS carrier transports with protect-before-connect ordering and
   reconnect/backoff status. It can establish and own a `VpnService` fd after a
   server lease, installing the leased IPv4 address and leased-subnet route. It
-  does not yet start the native TUN pump.
+  requires `tun.enabled=true` before lease-triggered TUN establishment, exposes
+  non-secret runtime snapshots for future UI/status surfaces, and does not yet
+  start the native TUN pump.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

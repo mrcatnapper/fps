@@ -42,11 +42,46 @@ class AndroidTunRuntimeTest {
     }
 
     @Test
+    fun tunPlanUsesDefaultsAndPrefixEdges() {
+        val blankNameProfile = AndroidClientProfileParser.parse(
+            """
+            {
+              "network": {"server": "fps.example.test:443"},
+              "security": {
+                "zero_rtt": {
+                  "enabled": true,
+                  "profile_id": "android-test-v5",
+                  "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
+                  "server_public_key_base64": "${Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })}"
+                }
+              },
+              "tun": {"enabled": true, "name": "", "mtu": 1200, "auto_configure": true}
+            }
+            """.trimIndent(),
+        )
+
+        val hostRoutePlan = buildAndroidTunPlan(
+            blankNameProfile,
+            TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 32, mtu = 1400),
+        )
+        val defaultRoutePlan = buildAndroidTunPlan(
+            blankNameProfile,
+            TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 0, mtu = 1400),
+        )
+
+        assertEquals("FPS", hostRoutePlan.sessionName)
+        assertEquals(1200, hostRoutePlan.mtu)
+        assertEquals(listOf(Ipv4Cidr("10.66.0.2", 32)), hostRoutePlan.routes)
+        assertEquals(listOf(Ipv4Cidr("0.0.0.0", 0)), defaultRoutePlan.routes)
+        assertEquals(emptyList<String>(), defaultRoutePlan.dnsServers)
+    }
+
+    @Test
     fun establishesTunThroughBuilder() {
         val builder = FakeVpnTunnelBuilder(FakeTunHandle(fd = 77))
         val established = VpnTunEstablisher { builder }.establish(profile, lease)
 
-        assertEquals(EstablishedTun(fd = 77, mtu = 1280), established)
+        assertEquals(EstablishedTun.borrowed(fd = 77, mtu = 1280), established)
         assertEquals(
             listOf(
                 "session:fpsc0",
@@ -70,7 +105,7 @@ class AndroidTunRuntimeTest {
     @Test
     fun controllerStopClosesEstablishedTunOnce() {
         val handle = FakeTunHandle(fd = 42)
-        val hooks = FakeTunHooks(establishedTun = EstablishedTun(fd = handle.fd, mtu = 1280, closeAction = handle::close))
+        val hooks = FakeTunHooks(establishedTun = EstablishedTun.owned(fd = handle.fd, mtu = 1280, handle = handle))
         val controller = HeadlessVpnController(profile, hooks)
 
         controller.start()
@@ -79,6 +114,16 @@ class AndroidTunRuntimeTest {
         controller.stop()
 
         assertEquals(1, handle.closeCount)
+    }
+
+    @Test
+    fun borrowedEstablishedTunCloseIsNoop() {
+        val tun = EstablishedTun.borrowed(fd = 9, mtu = 1280)
+
+        tun.close()
+        tun.close()
+
+        assertEquals(EstablishedTun.borrowed(fd = 9, mtu = 1280), tun)
     }
 }
 

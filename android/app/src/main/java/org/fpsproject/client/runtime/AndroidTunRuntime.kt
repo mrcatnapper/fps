@@ -52,7 +52,7 @@ class VpnTunEstablisher(
         plan.routes.forEach { builder.addRoute(it.address, it.prefixLength) }
         plan.dnsServers.forEach { builder.addDnsServer(it) }
         val handle = builder.establish() ?: return null
-        return EstablishedTun(fd = handle.fd, mtu = plan.mtu, closeAction = handle::close)
+        return EstablishedTun.owned(fd = handle.fd, mtu = plan.mtu, handle = handle)
     }
 }
 
