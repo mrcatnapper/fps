@@ -69,6 +69,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   and WSS probes. It keeps the manager contract intact, uses the
   already-resolved underlying-network endpoint for DNS and protects each Java
   `Socket` before connect through the platform hook.
+- Added the first Android `VpnService` lifecycle and TUN fd ownership layer:
+  profile start, stop action, lease-triggered `VpnService.Builder`
+  establishment, leased IPv4 address/route planning and idempotent
+  `ParcelFileDescriptor` close through `HeadlessVpnController.stop()`.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -84,8 +88,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
-- Implement the real Android `VpnService` runtime: TUN fd ownership, DNS/route
-  behavior, lifecycle/reconnect and status reporting.
+- Wire the established `VpnService` fd into the native FPS TUN pump through a
+  JNI/async facade, then add lifecycle/reconnect and status reporting around
+  that pump.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 
@@ -97,8 +102,8 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Carrier behavior is app-configurable at the Android profile/runtime layer.
   The current headless model supports HTTPS GET and WSS probe metadata plus a
   fake-transport runner and a live OkHttp-backed HTTPS/WSS carrier transport
-  factory. The next step is wiring this into a real Android `VpnService`
-  lifecycle, not changing protocol core.
+  factory plus first `VpnService` TUN fd ownership. The next step is native
+  auth/pump wiring and Android lifecycle resilience, not changing protocol core.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets use the fd hook and OkHttp-owned
   sockets use the Java `Socket` hook before the socket can be captured by the
@@ -108,6 +113,7 @@ starts. It is a developer handoff document, not user/operator documentation.
   Do not rely on native resolver behavior after VPN activation.
 - Use two-phase TUN startup: authenticate and receive server lease first, then
   create/configure the Android `VpnService` fd and start the native TUN pump.
+  Current code implements fd creation/ownership; native pump startup is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

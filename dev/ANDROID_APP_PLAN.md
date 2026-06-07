@@ -15,9 +15,9 @@ handoff artifact, not operator documentation.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no real VPN lifecycle, GUI or native TUN
-  pump yet. A connected instrumented smoke exists, but it is opt-in and runs
-  only when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI, native auth path or native TUN pump
+  yet. A connected instrumented smoke exists, but it is opt-in and runs only
+  when an external Android device or emulator is attached.
 
 ## Implemented Headless Core Slice
 
@@ -47,6 +47,10 @@ Delivered:
   supports HTTPS GET and WSS carrier profiles, uses the already-resolved
   underlying-network endpoint through a per-transport DNS adapter and protects
   each Java `Socket` before connect through a platform hook.
+- The first `VpnService` lifecycle and TUN fd ownership layer exists. Service
+  start parses a profile and waits for a server lease; after a lease arrives,
+  `VpnService.Builder` installs the leased address and leased-subnet route and
+  owns the resulting `ParcelFileDescriptor` until controller stop.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -112,7 +116,8 @@ SDK use must be requested explicitly with `--host`.
   `ConnectivityManager.Network`; native resolver behavior after VPN activation
   is not trusted.
 - Startup is two-phase: authenticate and receive the server lease first, then
-  create/configure the `VpnService` fd and start the native TUN pump.
+  create/configure the `VpnService` fd. Starting the native TUN pump remains the
+  next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

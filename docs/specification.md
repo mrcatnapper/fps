@@ -646,7 +646,8 @@ TLS/TCP carrier are explicit opt-in targets above that core. The current Android
 scaffold adds a headless Kotlin runtime boundary: it parses client JSON and
 `fps://v1` profiles, models carrier probes and split-tunnel allowlists, models
 the VPN startup state machine, provides a live OkHttp HTTPS/WSS carrier
-transport factory behind the same headless manager contract, keeps platform
+transport factory behind the same headless manager contract, owns the first
+lease-triggered Android `VpnService` TUN file descriptor, keeps platform
 operations behind hooks, and builds an NDK library that reuses FPS native core
 pieces without linking Linux runtime code.
 
@@ -659,8 +660,9 @@ Linux-specific runtime is separate:
   operations to no-shell `ip` execution; Android should later back the same
   operations with `VpnService`;
 - unit tests use fake runtime/configurator objects and MockWebServer for live
-  OkHttp carrier transport checks. Android should later provide a real
-  `VpnService` file descriptor and Android network configurator;
+  OkHttp carrier transport checks. Android now has a first `VpnService.Builder`
+  fd ownership adapter; native pump wiring and richer Android network
+  configuration remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -676,8 +678,9 @@ Linux-specific runtime is separate:
   profile metadata, resolve those endpoints through the underlying-network hook,
   drive a deterministic fake-transport carrier manager and open live OkHttp
   HTTPS/WSS carrier transports with protect-before-connect ordering and
-  reconnect/backoff status. It does not yet own a real Android `VpnService` fd
-  or native TUN pump.
+  reconnect/backoff status. It can establish and own a `VpnService` fd after a
+  server lease, installing the leased IPv4 address and leased-subnet route. It
+  does not yet start the native TUN pump.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

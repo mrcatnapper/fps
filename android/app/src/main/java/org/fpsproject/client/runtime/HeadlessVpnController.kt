@@ -31,7 +31,19 @@ data class TunLease(
 data class EstablishedTun(
     val fd: Int,
     val mtu: Int,
-)
+) {
+    internal var closeAction: (() -> Unit)? = null
+
+    constructor(fd: Int, mtu: Int, closeAction: (() -> Unit)?) : this(fd, mtu) {
+        this.closeAction = closeAction
+    }
+
+    fun close() {
+        val action = closeAction ?: return
+        closeAction = null
+        action()
+    }
+}
 
 data class ResolvedEndpoint(
     val address: String,
@@ -147,6 +159,7 @@ class HeadlessVpnController(
 
     fun stop(): VpnRuntimeState {
         stopCarrierRunners()
+        tun?.close()
         tun = null
         lastError = null
         state = VpnRuntimeState.STOPPED

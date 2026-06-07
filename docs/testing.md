@@ -189,8 +189,10 @@ the headless VPN runtime state machine and the headless carrier runner with fake
 platform hooks/transports. They also cover profile-driven carrier planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
-HTTPS/WSS carrier transport factory through MockWebServer. These checks still do
-not require a real Android `VpnService` fd.
+HTTPS/WSS carrier transport factory through MockWebServer. They also cover
+Android TUN plan generation, `VpnService.Builder` call sequencing and idempotent
+TUN fd close ownership through fake builders. These checks still do not require
+an emulator or a real Android `VpnService` instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 
@@ -207,11 +209,13 @@ It is opt-in because it requires a real Android runtime.
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
-transport factory for app-owned carrier sockets. The native smoke reuses the FPS
-IPv4 TCP/UDP 5-tuple parser and links a reusable native core smoke library built
-from protocol codec/crypto, generic covert datagram transport and TLS/TCP
-carrier sources. The smoke intentionally excludes Linux relay/config/CLI, Linux
-TUN device code, Boost.Log and Boost.JSON-heavy operator paths.
+transport factory for app-owned carrier sockets. It also has a first
+lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with fake
+builders. The native smoke reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
+a reusable native core smoke library built from protocol codec/crypto, generic
+covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
+excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and
+Boost.JSON-heavy operator paths.
 
 Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
 root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to

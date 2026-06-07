@@ -169,10 +169,10 @@ Those remain release-hardening concerns.
 - Traffic-shape mimicry remains incomplete. FPS now has classified-record
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
-- Android remains pre-application: the headless profile/runtime boundary and
-  OkHttp app-owned HTTPS/WSS carrier transports exist, but real `VpnService` fd
-  ownership, Android lifecycle integration, native pump wiring and UI are not
-  implemented yet.
+- Android remains pre-application: the headless profile/runtime boundary,
+  OkHttp app-owned HTTPS/WSS carrier transports and first `VpnService` TUN fd
+  ownership layer exist, but native auth/pump wiring, Android lifecycle
+  resilience/status and UI are not implemented yet.
 
 ## Public Beta Gate
 

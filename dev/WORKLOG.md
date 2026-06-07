@@ -4,6 +4,66 @@
 
 ## 2026-06-07
 
+### Android VpnService lifecycle and TUN fd ownership
+
+Goal:
+
+- Add the first real Android `VpnService` lifecycle and TUN file-descriptor
+  ownership layer.
+- Keep the increment testable without an emulator: no native FPS auth/pump
+  wiring, no UI and no full tunnel route UX yet.
+
+Decisions:
+
+- Keep startup two-phase: profile start moves to `WAITING_FOR_LEASE`; TUN is
+  established only after an encrypted server lease is delivered by future
+  native/JNI auth wiring.
+- Add a testable TUN plan/establisher boundary around `VpnService.Builder`
+  instead of putting route/address logic directly in `FpsVpnService`.
+- First Android route plan installs the leased IPv4 address and the leased
+  subnet route only. Public split/full-tunnel route configuration remains a
+  later UX/runtime feature.
+- `EstablishedTun` owns a close action so `HeadlessVpnController.stop()` closes
+  the platform fd exactly once.
+
+Planned steps:
+
+- Add JVM tests for Android TUN plan calculation, builder invocation, establish
+  failure and idempotent fd close on controller stop.
+- Add platform-neutral Kotlin helpers for IPv4 formatting, TUN plan generation
+  and generic builder-based TUN establishment.
+- Wire `FpsVpnService` to parse profile intents, expose stop/start lifecycle,
+  implement Android platform hooks and own `ParcelFileDescriptor` closure.
+- Update Android boundary/testing/spec docs and run Android Docker checks plus
+  the usual local regression suite.
+
+Completed:
+
+- Added `AndroidTunPlan`, `VpnTunnelBuilder`, `TunHandle` and
+  `VpnTunEstablisher` as a JVM-testable boundary around Android
+  `VpnService.Builder`.
+- Added lease-only Android TUN planning: session name, lease MTU, client IPv4
+  address and leased-subnet route. Full/split public route UX stays future
+  work.
+- Extended `EstablishedTun` with an idempotent close action and changed
+  `HeadlessVpnController.stop()` to close owned TUN handles exactly once.
+- Wired `FpsVpnService` with start/stop actions, profile parsing,
+  lease-triggered TUN establishment, Android socket protection, non-VPN
+  underlying-network DNS and UID lookup hooks.
+- Added JVM tests for TUN plan generation, builder call ordering, establish
+  failure and fd ownership close behavior.
+- Updated Android developer notes, roadmap, beta status, testing docs and the
+  platform-boundary section of the specification.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+
 ### Android live OkHttp carrier transports
 
 Goal:

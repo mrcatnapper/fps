@@ -175,9 +175,12 @@ without claiming resistance to advanced timing/size traffic analysis.
   protect-before-connect ordering, reconnect/backoff counters and JVM tests.
 - [x] Add OkHttp-backed live HTTPS/WSS Android carrier transports with
   Java-socket protection, resolved-endpoint DNS and JVM MockWebServer tests.
+- [x] Add first Android `VpnService` lifecycle and TUN fd ownership layer:
+  profile start/stop, lease-triggered `VpnService.Builder` establishment and
+  idempotent fd close.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: implement real `VpnService` fd ownership and the
-  native/Kotlin async facade.
+  `dev/ANDROID_APP_PLAN.md`: implement native auth/TUN pump wiring, Android
+  lifecycle resilience/status and the native/Kotlin async facade.
 
 ## Phase 7: Fuzzing And Soak
 
