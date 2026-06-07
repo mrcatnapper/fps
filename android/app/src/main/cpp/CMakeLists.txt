@@ -105,6 +105,8 @@ target_link_libraries(fps_android_core_smoke PUBLIC
   "${FPS_ANDROID_CRYPTO_LIBRARY}")
 
 add_library(fps_android_native SHARED
+  android_jni_helpers.cpp
+  android_native_runtime.cpp
   fps_android_native.cpp)
 
 target_include_directories(fps_android_native

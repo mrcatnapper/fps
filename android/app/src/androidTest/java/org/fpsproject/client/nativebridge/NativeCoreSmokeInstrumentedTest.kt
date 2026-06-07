@@ -61,6 +61,7 @@ class NativeCoreSmokeInstrumentedTest {
         val initial = FpsNative.runtimeSnapshot(handle)
         assertTrue(initial.alive)
         assertFalse(initial.tunAttached)
+        assertEquals(null, initial.tunFdOwnership)
         assertEquals(null, initial.lastError)
 
         val attached = FpsNative.attachTunFd(handle, 123, 1280)
@@ -68,10 +69,24 @@ class NativeCoreSmokeInstrumentedTest {
         assertTrue(attached.tunAttached)
         assertEquals(123, attached.tunFd)
         assertEquals(1280, attached.tunMtu)
+        assertEquals("borrowed", attached.tunFdOwnership)
+
+        val badFd = FpsNative.attachTunFd(handle, -1, 1280)
+        assertTrue(badFd.alive)
+        assertFalse(badFd.tunAttached)
+        assertEquals(null, badFd.tunFdOwnership)
+        assertEquals("invalid_tun_fd", badFd.lastError)
+
+        val badMtu = FpsNative.attachTunFd(handle, 123, 0)
+        assertTrue(badMtu.alive)
+        assertFalse(badMtu.tunAttached)
+        assertEquals(null, badMtu.tunFdOwnership)
+        assertEquals("invalid_tun_mtu", badMtu.lastError)
 
         FpsNative.closeRuntime(handle)
         val closed = FpsNative.runtimeSnapshot(handle)
         assertFalse(closed.alive)
+        assertEquals(null, closed.tunFdOwnership)
         assertEquals("invalid_handle", closed.lastError)
     }
 }

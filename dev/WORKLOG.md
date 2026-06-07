@@ -4,6 +4,50 @@
 
 ## 2026-06-07
 
+### Android JNI boundary hardening
+
+Goal:
+
+- Keep the Android native boundary narrow before real auth/TUN pump wiring.
+- Separate JNI object conversion, native runtime state and exported JNI
+  entrypoints.
+- Make current TUN fd attachment explicitly borrowed, so future pump ownership
+  can be added without ambiguity.
+
+Planned steps:
+
+- Split Android native runtime registry/state out of `fps_android_native.cpp`.
+- Move JNI object construction and UTF/byte-array helpers into a small helper
+  module.
+- Add `tunFdOwnership` to non-secret runtime snapshots, initially
+  `borrowed` for attached fds and `null` otherwise.
+- Strengthen JVM and instrumented tests for zero handles, invalid handles,
+  invalid fd/mtu and snapshot secrecy.
+- Run Android Docker checks plus the usual local regression checks.
+
+Completed:
+
+- Split Android JNI code into thin exported entrypoints, native runtime
+  registry/state and JNI conversion helpers.
+- Kept native runtime registry/state out of public headers except for the
+  minimal handle/snapshot API.
+- Added `tunFdOwnership` snapshot metadata. Current TUN fd attachment is
+  explicitly `borrowed`; native code stores metadata only and never closes the
+  Java/Kotlin-owned descriptor.
+- Strengthened JVM and connected native smoke tests for zero native handles,
+  invalid handles, invalid fd/mtu, borrowed ownership and snapshot secrecy.
+- Updated Android boundary/spec/testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android native runtime boundary
 
 Goal:

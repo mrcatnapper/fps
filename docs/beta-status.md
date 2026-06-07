@@ -171,8 +171,9 @@ Those remain release-hardening concerns.
   claim timing/size distribution resistance.
 - Android remains pre-application: the headless profile/runtime boundary,
   OkHttp app-owned HTTPS/WSS carrier probes, first `VpnService` TUN fd ownership
-  layer and JNI native runtime handle exist, but native raw TLS/TCP auth/pump
-  wiring, Android lifecycle resilience/status and UI are not implemented yet.
+  layer and split JNI native runtime handle exist, but native raw TLS/TCP
+  auth/pump wiring, Android lifecycle resilience/status and UI are not
+  implemented yet.
 
 ## Public Beta Gate
 

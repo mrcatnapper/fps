@@ -9,6 +9,7 @@ data class NativeRuntimeSnapshot(
     val tunAttached: Boolean,
     val tunFd: Int,
     val tunMtu: Int,
+    val tunFdOwnership: String?,
     val lastError: String?,
 )
 
@@ -43,6 +44,7 @@ class FpsNativeRuntime private constructor(
                 tunAttached = false,
                 tunFd = -1,
                 tunMtu = 0,
+                tunFdOwnership = null,
                 lastError = "runtime_closed",
             )
         }

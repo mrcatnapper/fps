@@ -685,7 +685,10 @@ Linux-specific runtime is separate:
   a server lease, installing the leased IPv4 address and leased-subnet route. It
   requires `tun.enabled=true` before lease-triggered TUN establishment, exposes
   non-secret runtime snapshots, can attach the borrowed fd to a native runtime
-  handle, and does not yet start the native auth path or TUN pump.
+  handle with explicit `tunFdOwnership=borrowed` metadata, and does not yet
+  start the native auth path or TUN pump. Future native pump wiring must
+  duplicate the fd or use a separate native-owned attach path before native code
+  may close it.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

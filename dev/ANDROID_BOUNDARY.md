@@ -79,7 +79,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   `ParcelFileDescriptor` close through `HeadlessVpnController.stop()`.
 - Added the first `FpsNativeRuntime` JNI handle facade. It creates/owns native
   runtime state behind an opaque handle, exposes non-secret snapshots and can
-  attach a borrowed TUN fd without closing the Java-owned descriptor.
+  attach a borrowed TUN fd without closing the Java-owned descriptor. The JNI
+  implementation is split into entrypoints, runtime registry/state and object
+  conversion helpers so future native auth/pump wiring does not accumulate in a
+  single monolithic binding file.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -96,8 +99,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
 - Wire the established `VpnService` fd into the native FPS auth/TUN pump through
-  the new JNI handle facade, then add lifecycle/reconnect and status reporting
-  around that pump.
+  the new JNI handle facade. Current `attachTunFd` snapshots report
+  `tunFdOwnership=borrowed`; the future pump must duplicate the fd or introduce
+  a separate native-owned attach path before native code is allowed to close it.
+  Then add lifecycle/reconnect and status reporting around that pump.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 
@@ -122,8 +127,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Use two-phase TUN startup: authenticate and receive server lease first, then
   create/configure the Android `VpnService` fd for profiles with
   `tun.enabled=true` and start the native TUN pump. Current code implements fd
-  creation/ownership, borrowed-fd native attachment and non-secret runtime
-  snapshots; native pump startup is next.
+  creation/ownership, explicit borrowed-fd native attachment
+  (`tunFdOwnership=borrowed`) and non-secret runtime snapshots; native pump
+  startup is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for
