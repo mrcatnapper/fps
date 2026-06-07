@@ -4,6 +4,63 @@
 
 ## 2026-06-07
 
+### Android live OkHttp carrier transports
+
+Goal:
+
+- Add the first real Android carrier transport layer behind the existing
+  `HeadlessCarrierManager`.
+- Keep the increment headless and JVM-testable: no real `VpnService` fd
+  ownership, UI, JNI pump wiring or emulator requirement.
+
+Decisions:
+
+- Use OkHttp for Android HTTPS/WSS carrier sockets instead of project-local HTTP
+  or WebSocket code.
+- Pin the Android dependency through OkHttp BOM `5.3.2`, verified against Maven
+  Central.
+- Use MockWebServer3 for JVM tests.
+- Keep the existing `CarrierTransportFactory`/manager contract and add the
+  narrowest platform hooks required by OkHttp: Java `Socket` protection and
+  underlying-network DNS resolution.
+
+Planned steps:
+
+- Add JVM tests first for HTTPS GET success/failure, WSS open/probe/failure,
+  socket protection before connect and underlying-network DNS use.
+- Add OkHttp dependencies and implement an OkHttp transport factory for
+  `https_get` and `wss` carrier profiles.
+- Extend Android platform hooks without weakening the existing fd-based native
+  socket protection seam.
+- Update Android developer/testing docs and run Android Docker checks plus the
+  usual local regression suite.
+
+Completed:
+
+- Added OkHttp BOM `5.3.2`, OkHttp runtime dependency and MockWebServer3 plus
+  okhttp-tls test dependencies.
+- Extended Android platform hooks with Java `Socket` protection while keeping
+  the existing fd protection path for native/future sockets.
+- Added `OkHttpCarrierTransportFactory` for HTTPS GET and WSS carrier profiles.
+  Each transport uses the already-resolved underlying endpoint through a custom
+  DNS adapter and protects sockets before connect through a custom
+  `SocketFactory`.
+- Kept `HeadlessCarrierManager` compatible with native/fake transports by
+  adding an internal-protection flag instead of removing fd protection.
+- Added JVM tests for HTTPS success/failure, Java socket-protection failure,
+  WSS open/probe and WSS failure metadata.
+- Updated Android developer notes, roadmap, testing docs, beta status and the
+  platform-boundary section of the specification.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2 && ctest --test-dir build --output-on-failure && ctest --test-dir build -L local --output-on-failure`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+
 ### Android headless carrier runner
 
 Goal:

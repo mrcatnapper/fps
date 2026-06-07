@@ -6,6 +6,7 @@ import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.SplitTunnelPolicy
 import org.fpsproject.client.policy.TunFlowTuple
 import org.fpsproject.client.policy.UidResolver
+import java.net.Socket
 
 enum class VpnRuntimeState {
     STOPPED,
@@ -48,6 +49,8 @@ interface AndroidPlatformHooks {
     fun establishTun(profile: AndroidClientProfile, lease: TunLease): EstablishedTun?
 
     fun protectSocket(fd: Int): Boolean
+
+    fun protectSocket(socket: Socket): Boolean
 
     fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint>
 

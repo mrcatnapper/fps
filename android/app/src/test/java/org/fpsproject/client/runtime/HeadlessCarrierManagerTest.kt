@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.Socket
 import java.util.Base64
 
 class HeadlessCarrierManagerTest {
@@ -186,6 +187,8 @@ private class FakeCarrierHooks(
         protectedSockets += fd
         return protectResult
     }
+
+    override fun protectSocket(socket: Socket) = protectResult
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
         resolvedEndpoints += "$host:$port"

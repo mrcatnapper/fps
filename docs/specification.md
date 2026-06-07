@@ -645,9 +645,10 @@ normalization and generic datagram scheduling. TUN framing/adaptation and the
 TLS/TCP carrier are explicit opt-in targets above that core. The current Android
 scaffold adds a headless Kotlin runtime boundary: it parses client JSON and
 `fps://v1` profiles, models carrier probes and split-tunnel allowlists, models
-the VPN startup state machine, keeps platform operations behind hooks, and
-builds an NDK library that reuses FPS native core pieces without linking Linux
-runtime code.
+the VPN startup state machine, provides a live OkHttp HTTPS/WSS carrier
+transport factory behind the same headless manager contract, keeps platform
+operations behind hooks, and builds an NDK library that reuses FPS native core
+pieces without linking Linux runtime code.
 
 Linux-specific runtime is separate:
 
@@ -657,24 +658,26 @@ Linux-specific runtime is separate:
   semantic link/address operations. The Linux implementation translates those
   operations to no-shell `ip` execution; Android should later back the same
   operations with `VpnService`;
-- unit tests use fake runtime/configurator objects. Android should later provide
-  a `VpnService` file descriptor, protected carrier sockets and Android network
-  configurator;
+- unit tests use fake runtime/configurator objects and MockWebServer for live
+  OkHttp carrier transport checks. Android should later provide a real
+  `VpnService` file descriptor and Android network configurator;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
-- Outbound TCP carrier connects use an injectable `TcpSocketProtector`. The
-  current Linux runtime passes a no-op protector, while Android should call
-  `VpnService.protect(fd)` after socket open and before connect;
+- Outbound TCP carrier connects use an injectable protector boundary. The
+  current Linux runtime passes a no-op protector; Android native sockets use
+  the fd hook, while OkHttp-owned carrier sockets use the Java `Socket` hook
+  before connect;
 - The first Android direction is app-owned carrier sessions, socket protection
   through `TcpSocketProtector`/platform hooks, hostname resolution through
   Android's underlying network, two-phase lease-before-TUN startup and split
   tunnel by default.
 - The current Kotlin headless layer can derive carrier runtime plans from
-  profile metadata, resolve those endpoints through the underlying-network hook
-  and drive a deterministic fake-transport carrier manager with
-  protect-before-connect ordering and reconnect/backoff status. It does not yet
-  open real carrier sockets.
+  profile metadata, resolve those endpoints through the underlying-network hook,
+  drive a deterministic fake-transport carrier manager and open live OkHttp
+  HTTPS/WSS carrier transports with protect-before-connect ordering and
+  reconnect/backoff status. It does not yet own a real Android `VpnService` fd
+  or native TUN pump.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

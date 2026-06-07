@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.Socket
 import java.util.Base64
 
 class HeadlessVpnControllerTest {
@@ -175,6 +176,8 @@ private class FakeAndroidPlatformHooks(
         protectedSockets += fd
         return protectSocketResult
     }
+
+    override fun protectSocket(socket: Socket) = protectSocketResult
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
         resolvedEndpoints += "$host:$port"

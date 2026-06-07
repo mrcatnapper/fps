@@ -37,6 +37,8 @@ class CarrierTransportResult private constructor(
 
 interface CarrierTransport {
     val socketFd: Int
+    val protectsSocketsInternally: Boolean
+        get() = false
 
     fun connect(endpoint: ResolvedEndpoint): CarrierTransportResult
 
@@ -164,7 +166,7 @@ private class CarrierRunner(
         transport = candidate
 
         state = CarrierRuntimeState.PROTECTING
-        if (!hooks.protectSocket(candidate.socketFd)) {
+        if (!candidate.protectsSocketsInternally && !hooks.protectSocket(candidate.socketFd)) {
             candidate.close()
             transport = null
             enterBackoff("socket_protect_failed", nowMs)
