@@ -57,6 +57,10 @@ starts. It is a developer handoff document, not user/operator documentation.
   module with a `VpnService` shell, headless split-tunnel policy tests and a
   JNI library that reuses `parse_ipv4_flow_tuple(...)` for `arm64-v8a` and
   `x86_64`.
+- Added a headless Android profile/runtime layer that parses carrier probe
+  metadata and split-tunnel UID allowlists, exposes carrier runtime plans,
+  resolves carrier endpoints through platform hooks and evaluates fail-closed
+  UID policy decisions without opening real sockets.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -69,12 +73,13 @@ starts. It is a developer handoff document, not user/operator documentation.
 
 ## Follow-Up Increments
 
-- Decide how much full relay config parsing Android should reuse directly,
-  beyond the shared `fps://v1` profile import layer.
-- Decide whether Android should reuse C++ profile/config helpers directly or
-  keep profile parsing in Kotlin to avoid dragging Linux daemon/Boost.JSON paths
-  into the app.
-- Implement the Android `VpnService` design: TUN fd ownership, DNS/route
+- Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
+  and the current `fps://v1` client profile shape instead of dragging Linux
+  daemon/Boost.JSON config paths into the app.
+- Implement live app-owned carrier sockets from the existing carrier runtime
+  plans: HTTPS GET and WSS first, socket protection before connect, underlying
+  network DNS and deterministic headless tests with fake transports.
+- Implement the real Android `VpnService` runtime: TUN fd ownership, DNS/route
   behavior, lifecycle/reconnect and status reporting.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
@@ -84,9 +89,10 @@ starts. It is a developer handoff document, not user/operator documentation.
 - First Android beta should use app-owned carrier sessions. The Android app
   opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
-- Carrier behavior should be app-configurable at the Android layer: for example
-  periodic HTTPS GETs, TCP keepalive-friendly requests or WSS stream probes. This
-  does not require protocol-core changes yet.
+- Carrier behavior is app-configurable at the Android profile/runtime layer.
+  The current headless model supports HTTPS GET and WSS probe metadata; live
+  socket loops are the next implementation step and do not require
+  protocol-core changes.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android calls `VpnService.protect(fd)` before the socket
   can be captured by the VPN.

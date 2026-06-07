@@ -168,9 +168,12 @@ without claiming resistance to advanced timing/size traffic analysis.
   daemon/config/runtime code.
 - [x] Add a reproducible Android Docker build/test image plus an opt-in
   connected instrumented native smoke for device/emulator runtime validation.
+- [x] Add a headless Android profile/runtime layer for carrier probe metadata,
+  split-tunnel UID allowlists, carrier endpoint resolution and two-phase
+  lease-before-TUN state transitions with fake platform hooks.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: prototype the accepted app-owned carrier plus
-  two-phase lease/TUN runtime model.
+  `dev/ANDROID_APP_PLAN.md`: implement live app-owned HTTPS/WSS carrier loops,
+  real `VpnService` fd ownership and the native/Kotlin async facade.
 
 ## Phase 7: Fuzzing And Soak
 
@@ -188,5 +191,5 @@ without claiming resistance to advanced timing/size traffic analysis.
 ## Deferred: Advanced Shaping
 
 - Full-flow visible TLS record size/timing shaping.
-- Profile capture tooling and classifier regression lab.
+- Classifier regression lab for representative carrier profiles.
 - Statistical assertions for long-running traffic distributions.

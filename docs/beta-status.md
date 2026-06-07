@@ -72,6 +72,11 @@ and signed artifacts remain deferred.
 - GitHub Actions workflow files exist for `ubuntu-24.04 x gcc/clang` local
   CTest and Docker smoke, plus scheduled/manual quality checks for sanitizers,
   Valgrind, coverage and bounded fuzzing.
+- Android has a reproducible Docker build/test image and a headless Kotlin/NDK
+  scaffold. Current JVM tests cover client profile parsing, carrier probe
+  planning, split-tunnel UID allowlists, underlying-network endpoint resolution,
+  socket-protection failure handling and two-phase lease-before-TUN state
+  transitions without requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
   dispatch input before pushing images. It publishes only two tags per run: the
@@ -162,10 +167,9 @@ Those remain release-hardening concerns.
 - Traffic-shape mimicry remains incomplete. FPS now has classified-record
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
-- Android reuse still needs boundary work beyond the Linux beta runtime:
-  full relay config parsing still needs a reuse decision, and Android must
-  implement the accepted app-owned carrier, socket-protection, underlying-DNS,
-  two-phase lease/TUN and split-tunnel runtime design.
+- Android remains pre-application: the headless profile/runtime boundary exists,
+  but live app-owned HTTPS/WSS carrier sockets, real `VpnService` fd ownership,
+  lifecycle/reconnect and UI are not implemented yet.
 
 ## Public Beta Gate
 
@@ -189,7 +193,7 @@ Before public beta or public release, finish:
 
 ## Deferred After Beta
 
-- Android application implementation.
+- Full Android application implementation.
 - Authenticated/user-scoped proxy overlay examples.
 - Full timing/size shaper and traffic-analysis lab.
 - IPv6 lease allocation.

@@ -2,6 +2,38 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-07
+
+### Documentation consistency pass after Android headless runtime work
+
+Goal:
+
+- Review active `docs/` and `dev/` Markdown, excluding this work log and
+  articles, after the latest Android headless profile/runtime increments.
+- Remove or correct stale statements without changing product behavior.
+
+Completed:
+
+- Updated `docs/beta-status.md` to describe Android as a reproducible
+  Docker-built headless Kotlin/NDK scaffold with profile parsing, carrier probe
+  planning, split-tunnel policy, socket-protection and lease-before-TUN state
+  tests, while still clearly marking live Android carrier sockets, real
+  `VpnService` ownership and UI as future work.
+- Updated `dev/ANDROID_BOUNDARY.md` and `dev/ROADMAP.md` to record the
+  implemented Android profile/runtime slice and the next Android work:
+  live app-owned HTTPS/WSS carrier loops, real `VpnService` fd ownership and a
+  native/Kotlin async facade.
+- Marked `dev/UX_FLOW_REVIEW.md` as a historical operator-flow snapshot and
+  replaced stale suggested-next-increment text with current completion status.
+- Removed stale shaper/profile wording that still treated pcap profile capture
+  tooling as entirely future work.
+
+Verification:
+
+- `rg` checks for removed key-file/IFF/hold-wss/public-test-service terms across
+  `docs/` and `dev/` excluding `dev/WORKLOG.md`.
+- `git diff --check`
+
 ## 2026-06-06
 
 ### Android headless core profile/runtime slice

@@ -423,7 +423,8 @@ Adaptive behavior:
 Deferred work:
 
 - statistical assertions for record size/delay distributions;
-- profile capture tooling and classifier regression lab.
+- classifier regression lab and repeated pcap-level comparison against
+  representative carrier profiles.
 
 ## 8. Configuration
 
