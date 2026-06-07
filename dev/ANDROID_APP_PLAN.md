@@ -15,9 +15,9 @@ handoff artifact, not operator documentation.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI, native auth path or native TUN pump
-  yet. A connected instrumented smoke exists, but it is opt-in and runs only
-  when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI and no production native auth/TUN
+  pump yet. A connected instrumented smoke exists, but it is opt-in and runs
+  only when an external Android device or emulator is attached.
 
 ## Implemented Headless Core Slice
 
@@ -39,22 +39,28 @@ Delivered:
   for VPN permission, TUN establishment, socket protection, underlying-network
   DNS and UID lookup.
 - Carrier probe settings are modeled in Kotlin. The headless controller exposes
-  carrier runtime plans and can own a deterministic carrier manager that
-  resolves carrier endpoints through the underlying-network hook, calls socket
-  protection before connect, drives fake HTTPS/WSS probe transports, tracks
-  reconnect/backoff counters and exposes non-secret status.
-- A live OkHttp transport factory exists for app-owned carrier sockets. It
-  supports HTTPS GET and WSS carrier profiles, uses the already-resolved
-  underlying-network endpoint through a per-transport DNS adapter and protects
-  each Java `Socket` before connect through a platform hook.
+  carrier probe runtime plans and can own a deterministic carrier probe manager
+  that resolves carrier endpoints through the underlying-network hook, calls
+  socket protection before connect, drives fake HTTPS/WSS probe transports,
+  tracks reconnect/backoff counters and exposes non-secret status.
+- A live OkHttp probe transport factory exists for app-owned carrier keepalive
+  traffic. It supports HTTPS GET and WSS carrier probe profiles, uses the
+  already-resolved underlying-network endpoint through a per-transport DNS
+  adapter and protects each Java `Socket` before connect through a platform
+  hook. It is not an FPS wire carrier because OkHttp terminates TLS and does not
+  expose raw TLS/TCP bytes to `TlsTcpCarrierSession`.
 - The first `VpnService` lifecycle and TUN fd ownership layer exists. Service
   start parses a profile and waits for a server lease; after a lease arrives,
   `VpnService.Builder` installs the leased address and leased-subnet route when
   `tun.enabled=true` and owns the resulting `ParcelFileDescriptor` until
   controller stop.
 - The headless controller exposes a non-secret runtime snapshot with state,
-  last error, TUN presence/MTU and carrier status metadata for later UI/status
-  integration.
+  last error, TUN presence/MTU and carrier probe status metadata for later
+  UI/status integration.
+- `FpsNativeRuntime` is the first JNI handle wrapper for native core ownership.
+  It validates Android profile text in Kotlin, creates an opaque native runtime
+  handle, exposes non-secret native snapshots and can attach a borrowed TUN fd
+  without taking ownership from the Kotlin `ParcelFileDescriptor` holder.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -110,10 +116,13 @@ SDK use must be requested explicitly with `--host`.
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
   maintains HTTPS/WSS carrier traffic itself.
-- Carrier requests are configured at the Android layer: for example a periodic
-  HTTPS GET or a WSS stream probe. The current headless runner tests lifecycle
-  with fake transports, and the OkHttp transport factory provides the first live
-  HTTPS/WSS socket implementation without changing the FPS protocol.
+- Carrier probe requests are configured at the Android layer: for example a
+  periodic HTTPS GET or a WSS stream probe. The current headless probe runner
+  tests lifecycle with fake transports, and the OkHttp probe transport factory
+  provides live HTTPS/WSS keepalive sockets without changing the FPS protocol.
+- Real FPS carrier traffic must use native raw TCP/TLS stream handling through
+  `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
+  wire protocol.
 - Carrier sockets must be protected before `connect`. Native/future sockets use
   the fd hook; OkHttp-owned sockets use the Java `Socket` hook.
 - Hostname resolution for FPS/carrier endpoints must use Android's underlying
@@ -121,8 +130,8 @@ SDK use must be requested explicitly with `--host`.
   is not trusted.
 - Startup is two-phase: authenticate and receive the server lease first, then
   create/configure the `VpnService` fd only for an Android profile with
-  `tun.enabled=true`. Starting the native TUN pump remains the next native/JNI
-  step.
+  `tun.enabled=true`. Current native runtime wiring can accept the borrowed fd;
+  starting the native auth path and TUN pump remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed
@@ -147,9 +156,10 @@ Linux-oriented CMake targets:
 - Linux relay/config/profile operator code, Boost.JSON-heavy paths,
   Boost.Filesystem, Linux TUN device code and daemon CLI remain outside the
   Android native target.
-- Profile parsing should be reused from C++ only after the JSON/base64/UUID
-  helper boundary can build without dragging Linux daemon dependencies into the
-  app.
+- Profile parsing stays in Kotlin for app-level UX fields. Protocol-critical
+  profile semantics must not be reimplemented in Kotlin; move them through JNI
+  only after the JSON/base64/UUID helper boundary can build without dragging
+  Linux daemon dependencies into the app.
 
 ## Verification
 

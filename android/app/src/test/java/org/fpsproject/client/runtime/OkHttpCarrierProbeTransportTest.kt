@@ -21,7 +21,7 @@ import java.net.Socket
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-class OkHttpCarrierTransportTest {
+class OkHttpCarrierProbeTransportTest {
     private val servers = mutableListOf<MockWebServer>()
 
     @After
@@ -34,7 +34,7 @@ class OkHttpCarrierTransportTest {
         val server = newHttpsServer("carrier.example.test")
         server.enqueue(MockResponse.Builder().code(204).build())
         val hooks = FakeOkHttpHooks(server)
-        val factory = OkHttpCarrierTransportFactory(hooks, tlsClientBuilder(server))
+        val factory = OkHttpCarrierProbeTransportFactory(hooks, tlsClientBuilder(server))
         val transport = factory.create(plan(CarrierProbeMode.HTTPS_GET, server.port, "/ping"))
 
         val connected = transport.connect(ResolvedEndpoint("127.0.0.1", server.port))
@@ -52,7 +52,7 @@ class OkHttpCarrierTransportTest {
         val server = newHttpsServer("carrier.example.test")
         server.enqueue(MockResponse.Builder().code(503).body("nope").build())
         val hooks = FakeOkHttpHooks(server)
-        val factory = OkHttpCarrierTransportFactory(hooks, tlsClientBuilder(server))
+        val factory = OkHttpCarrierProbeTransportFactory(hooks, tlsClientBuilder(server))
         val transport = factory.create(plan(CarrierProbeMode.HTTPS_GET, server.port, "/ping"))
 
         val connected = transport.connect(ResolvedEndpoint("127.0.0.1", server.port))
@@ -66,7 +66,7 @@ class OkHttpCarrierTransportTest {
         val server = newHttpsServer("carrier.example.test")
         server.enqueue(MockResponse.Builder().code(204).build())
         val hooks = FakeOkHttpHooks(server, protectJavaSockets = false)
-        val factory = OkHttpCarrierTransportFactory(hooks, tlsClientBuilder(server))
+        val factory = OkHttpCarrierProbeTransportFactory(hooks, tlsClientBuilder(server))
         val transport = factory.create(plan(CarrierProbeMode.HTTPS_GET, server.port, "/ping"))
 
         val connected = transport.connect(ResolvedEndpoint("127.0.0.1", server.port))
@@ -93,7 +93,7 @@ class OkHttpCarrierTransportTest {
                 .build(),
         )
         val hooks = FakeOkHttpHooks(server)
-        val factory = OkHttpCarrierTransportFactory(hooks, tlsClientBuilder(server))
+        val factory = OkHttpCarrierProbeTransportFactory(hooks, tlsClientBuilder(server))
         val transport = factory.create(plan(CarrierProbeMode.WSS, server.port, "/stream"))
 
         val connected = transport.connect(ResolvedEndpoint("127.0.0.1", server.port))
@@ -117,13 +117,13 @@ class OkHttpCarrierTransportTest {
                 .build(),
         )
         val hooks = FakeOkHttpHooks(server)
-        val factory = OkHttpCarrierTransportFactory(hooks, tlsClientBuilder(server))
+        val factory = OkHttpCarrierProbeTransportFactory(hooks, tlsClientBuilder(server))
         val transport = factory.create(plan(CarrierProbeMode.WSS, server.port, "/stream"))
 
         assertTrue(transport.connect(ResolvedEndpoint("127.0.0.1", server.port)).ok)
         server.close()
 
-        var result = CarrierTransportResult.success()
+        var result = CarrierProbeResult.success()
         var attempt = 0
         while (attempt < 20 && result.ok) {
             result = transport.probe(1L + attempt)
@@ -158,8 +158,8 @@ class OkHttpCarrierTransportTest {
             .sslSocketFactory(fixture.clientCertificates.sslSocketFactory(), fixture.clientCertificates.trustManager)
     }
 
-    private fun plan(mode: CarrierProbeMode, port: Int, path: String): CarrierRuntimePlan {
-        return CarrierRuntimePlan(
+    private fun plan(mode: CarrierProbeMode, port: Int, path: String): CarrierProbeRuntimePlan {
+        return CarrierProbeRuntimePlan(
             id = 1,
             probe = CarrierProbeProfile(
                 mode = mode,

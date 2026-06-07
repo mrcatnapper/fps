@@ -4,6 +4,64 @@
 
 ## 2026-06-07
 
+### Android native runtime boundary
+
+Goal:
+
+- Prevent the Android layer from growing into a second FPS protocol stack.
+- Add the first handle-based JNI runtime boundary that can later own native
+  core objects, TUN pump wiring and raw TLS/TCP carrier sessions.
+
+Decisions:
+
+- Treat OkHttp HTTPS/WSS code as carrier probe/keepalive traffic only. It is
+  not an FPS wire carrier because OkHttp terminates TLS and does not expose the
+  raw TLS/TCP byte stream required by `TlsTcpCarrierSession`.
+- Keep Kotlin responsible for Android orchestration: profile UX parsing,
+  `VpnService` permission/fd creation, socket protection, underlying-network
+  DNS, UID policy and status presentation.
+- Keep Zero-RTT, TLS record parsing, classified records, fragmentation,
+  shaper decisions and the TUN packet pump in native C++ core.
+- The first native runtime facade stores validated profile text, owns an
+  `io_context`, exposes non-secret snapshots and accepts a borrowed TUN fd.
+  It does not start production network I/O yet.
+
+Planned steps:
+
+- Rename Android carrier transport/manager abstractions to carrier probe names.
+- Add `FpsNativeRuntime` handle wrapper plus JNI lifecycle/snapshot/TUN attach
+  functions.
+- Add JVM wrapper tests with a fake backend and connected JNI smoke coverage.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Renamed Android carrier runner/transport abstractions to `CarrierProbe*`,
+  `HeadlessCarrierProbeManager` and `OkHttpCarrierProbeTransportFactory`.
+- Added `FpsNativeRuntime` and `FpsNativeBackend` as a Kotlin handle wrapper
+  over JNI.
+- Added native runtime handle registry with non-secret snapshots and borrowed
+  TUN fd attachment. The native side does not close Java-owned fds in this
+  increment.
+- Added JVM tests for profile validation before native handle creation,
+  snapshot/close idempotency, invalid closed runtime handling and borrowed TUN
+  fd behavior.
+- Extended connected Android smoke coverage so a real device/emulator can verify
+  native runtime handle/snapshot/TUN-attach JNI calls.
+- Updated Android boundary, roadmap, beta status, specification and testing
+  docs to make OkHttp probe-only and raw TLS/TCP native FPS carrier ownership
+  explicit.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android PR hardening: TUN contract and runtime snapshot
 
 Goal:

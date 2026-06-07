@@ -3,7 +3,7 @@ package org.fpsproject.client.runtime
 import org.fpsproject.client.config.AndroidClientProfile
 import org.fpsproject.client.config.CarrierProbeMode
 
-enum class CarrierRuntimeState {
+enum class CarrierProbeRuntimeState {
     STOPPED,
     RESOLVING,
     PROTECTING,
@@ -13,10 +13,10 @@ enum class CarrierRuntimeState {
     FAILED,
 }
 
-data class CarrierRuntimeStatus(
+data class CarrierProbeRuntimeStatus(
     val id: Int,
     val mode: CarrierProbeMode,
-    val state: CarrierRuntimeState,
+    val state: CarrierProbeRuntimeState,
     val attempts: Int,
     val successfulProbes: Int,
     val reconnects: Int,
@@ -24,43 +24,43 @@ data class CarrierRuntimeStatus(
     val nextRetryDelayMs: Long,
 )
 
-class CarrierTransportResult private constructor(
+class CarrierProbeResult private constructor(
     val ok: Boolean,
     val error: String?,
 ) {
     companion object {
-        fun success() = CarrierTransportResult(ok = true, error = null)
+        fun success() = CarrierProbeResult(ok = true, error = null)
 
-        fun failure(error: String) = CarrierTransportResult(ok = false, error = error)
+        fun failure(error: String) = CarrierProbeResult(ok = false, error = error)
     }
 }
 
-interface CarrierTransport {
+interface CarrierProbeTransport {
     val socketFd: Int
     val protectsSocketsInternally: Boolean
         get() = false
 
-    fun connect(endpoint: ResolvedEndpoint): CarrierTransportResult
+    fun connect(endpoint: ResolvedEndpoint): CarrierProbeResult
 
-    fun probe(nowMs: Long): CarrierTransportResult
+    fun probe(nowMs: Long): CarrierProbeResult
 
     fun close()
 }
 
-fun interface CarrierTransportFactory {
-    fun create(plan: CarrierRuntimePlan): CarrierTransport
+fun interface CarrierProbeTransportFactory {
+    fun create(plan: CarrierProbeRuntimePlan): CarrierProbeTransport
 }
 
-class HeadlessCarrierManager(
+class HeadlessCarrierProbeManager(
     profile: AndroidClientProfile,
     private val hooks: AndroidPlatformHooks,
-    private val transportFactory: CarrierTransportFactory,
+    private val transportFactory: CarrierProbeTransportFactory,
     private val initialBackoffMs: Long = 1000,
     private val maxBackoffMs: Long = 30_000,
 ) {
     private val runners = profile.carriers.mapIndexed { index, probe ->
         CarrierRunner(
-            plan = CarrierRuntimePlan(id = index, probe = probe),
+            plan = CarrierProbeRuntimePlan(id = index, probe = probe),
             hooks = hooks,
             transportFactory = transportFactory,
             initialBackoffMs = initialBackoffMs,
@@ -68,33 +68,33 @@ class HeadlessCarrierManager(
         )
     }
 
-    fun start(nowMs: Long = 0): List<CarrierRuntimeStatus> {
+    fun start(nowMs: Long = 0): List<CarrierProbeRuntimeStatus> {
         runners.forEach { it.start(nowMs) }
         return statuses()
     }
 
-    fun tick(nowMs: Long): List<CarrierRuntimeStatus> {
+    fun tick(nowMs: Long): List<CarrierProbeRuntimeStatus> {
         runners.forEach { it.tick(nowMs) }
         return statuses()
     }
 
-    fun stop(): List<CarrierRuntimeStatus> {
+    fun stop(): List<CarrierProbeRuntimeStatus> {
         runners.forEach { it.stop() }
         return statuses()
     }
 
-    fun statuses(): List<CarrierRuntimeStatus> = runners.map { it.status() }
+    fun statuses(): List<CarrierProbeRuntimeStatus> = runners.map { it.status() }
 }
 
 private class CarrierRunner(
-    private val plan: CarrierRuntimePlan,
+    private val plan: CarrierProbeRuntimePlan,
     private val hooks: AndroidPlatformHooks,
-    private val transportFactory: CarrierTransportFactory,
+    private val transportFactory: CarrierProbeTransportFactory,
     private val initialBackoffMs: Long,
     private val maxBackoffMs: Long,
 ) {
-    private var state = CarrierRuntimeState.STOPPED
-    private var transport: CarrierTransport? = null
+    private var state = CarrierProbeRuntimeState.STOPPED
+    private var transport: CarrierProbeTransport? = null
     private var attempts = 0
     private var successfulProbes = 0
     private var reconnects = 0
@@ -105,31 +105,31 @@ private class CarrierRunner(
     private var nextProbeAtMs = Long.MAX_VALUE
 
     fun start(nowMs: Long) {
-        if (state != CarrierRuntimeState.STOPPED) {
+        if (state != CarrierProbeRuntimeState.STOPPED) {
             return
         }
-        state = CarrierRuntimeState.RESOLVING
+        state = CarrierProbeRuntimeState.RESOLVING
         resolveAndConnect(nowMs)
     }
 
     fun tick(nowMs: Long) {
         when (state) {
-            CarrierRuntimeState.RUNNING -> {
+            CarrierProbeRuntimeState.RUNNING -> {
                 if (nowMs >= nextProbeAtMs) {
                     probe(nowMs)
                 }
             }
-            CarrierRuntimeState.BACKOFF -> {
+            CarrierProbeRuntimeState.BACKOFF -> {
                 if (nowMs >= nextRetryAtMs) {
-                    state = CarrierRuntimeState.RESOLVING
+                    state = CarrierProbeRuntimeState.RESOLVING
                     resolveAndConnect(nowMs)
                 }
             }
-            CarrierRuntimeState.RESOLVING,
-            CarrierRuntimeState.PROTECTING,
-            CarrierRuntimeState.CONNECTING,
-            CarrierRuntimeState.STOPPED,
-            CarrierRuntimeState.FAILED,
+            CarrierProbeRuntimeState.RESOLVING,
+            CarrierProbeRuntimeState.PROTECTING,
+            CarrierProbeRuntimeState.CONNECTING,
+            CarrierProbeRuntimeState.STOPPED,
+            CarrierProbeRuntimeState.FAILED,
             -> Unit
         }
     }
@@ -137,13 +137,13 @@ private class CarrierRunner(
     fun stop() {
         transport?.close()
         transport = null
-        state = CarrierRuntimeState.STOPPED
+        state = CarrierProbeRuntimeState.STOPPED
         nextRetryDelayMs = 0
         nextRetryAtMs = 0
         nextProbeAtMs = Long.MAX_VALUE
     }
 
-    fun status() = CarrierRuntimeStatus(
+    fun status() = CarrierProbeRuntimeStatus(
         id = plan.id,
         mode = plan.probe.mode,
         state = state,
@@ -155,7 +155,7 @@ private class CarrierRunner(
     )
 
     private fun resolveAndConnect(nowMs: Long) {
-        state = CarrierRuntimeState.RESOLVING
+        state = CarrierProbeRuntimeState.RESOLVING
         val endpoints = hooks.resolveOnUnderlyingNetwork(plan.probe.endpoint.host, plan.probe.endpoint.port)
         if (endpoints.isEmpty()) {
             enterBackoff("resolve_empty", nowMs)
@@ -165,7 +165,7 @@ private class CarrierRunner(
         val candidate = transportFactory.create(plan)
         transport = candidate
 
-        state = CarrierRuntimeState.PROTECTING
+        state = CarrierProbeRuntimeState.PROTECTING
         if (!candidate.protectsSocketsInternally && !hooks.protectSocket(candidate.socketFd)) {
             candidate.close()
             transport = null
@@ -173,7 +173,7 @@ private class CarrierRunner(
             return
         }
 
-        state = CarrierRuntimeState.CONNECTING
+        state = CarrierProbeRuntimeState.CONNECTING
         attempts += 1
         val connected = candidate.connect(endpoints.first())
         if (!connected.ok) {
@@ -183,7 +183,7 @@ private class CarrierRunner(
             return
         }
 
-        state = CarrierRuntimeState.RUNNING
+        state = CarrierProbeRuntimeState.RUNNING
         lastError = null
         backoffMs = initialBackoffMs
         nextRetryDelayMs = 0
@@ -211,7 +211,7 @@ private class CarrierRunner(
     }
 
     private fun enterBackoff(error: String, nowMs: Long) {
-        state = CarrierRuntimeState.BACKOFF
+        state = CarrierProbeRuntimeState.BACKOFF
         lastError = error
         nextRetryDelayMs = backoffMs
         nextRetryAtMs = nowMs + backoffMs

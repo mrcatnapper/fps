@@ -81,7 +81,7 @@ class FpsVpnService : VpnService() {
             state = VpnRuntimeState.STOPPED,
             lastError = null,
             tun = TunRuntimeSnapshot(fdPresent = false, mtu = null),
-            carriers = emptyList(),
+            carrierProbes = emptyList(),
         )
     }
 }

@@ -140,10 +140,10 @@ class HeadlessVpnControllerTest {
     }
 
     @Test
-    fun exposesCarrierRuntimePlansFromProfile() {
+    fun exposesCarrierProbeRuntimePlansFromProfile() {
         val controller = HeadlessVpnController(profile, FakeAndroidPlatformHooks())
 
-        val plans = controller.carrierPlans()
+        val plans = controller.carrierProbePlans()
 
         assertEquals(2, plans.size)
         assertEquals(0, plans[0].id)
@@ -156,14 +156,14 @@ class HeadlessVpnControllerTest {
     @Test
     fun snapshotReportsNonSecretRuntimeState() {
         val hooks = FakeAndroidPlatformHooks()
-        val factory = CarrierTransportFactory {
-            FakeSnapshotTransport(socketFd = 200 + it.id)
+        val factory = CarrierProbeTransportFactory {
+            FakeSnapshotProbeTransport(socketFd = 200 + it.id)
         }
         val controller = HeadlessVpnController(profile, hooks)
         val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
 
         controller.start()
-        controller.startCarrierRunners(factory, nowMs = 0)
+        controller.startCarrierProbeRunners(factory, nowMs = 0)
         controller.onLeaseReceived(lease)
 
         val snapshot = controller.snapshot()
@@ -173,7 +173,7 @@ class HeadlessVpnControllerTest {
         assertEquals(null, snapshot.lastError)
         assertTrue(snapshot.tun.fdPresent)
         assertEquals(1280, snapshot.tun.mtu)
-        assertEquals(2, snapshot.carriers.size)
+        assertEquals(2, snapshot.carrierProbes.size)
         assertFalse(text.contains(profile.zeroRtt.clientUuid))
         assertFalse(text.contains(profile.zeroRtt.serverPublicKeyBase64))
     }
@@ -183,7 +183,7 @@ class HeadlessVpnControllerTest {
         val hooks = FakeAndroidPlatformHooks()
         val controller = HeadlessVpnController(profile, hooks)
 
-        assertEquals(listOf(ResolvedEndpoint("203.0.113.20", 443)), controller.resolveCarrierEndpoint(controller.carrierPlans()[0]))
+        assertEquals(listOf(ResolvedEndpoint("203.0.113.20", 443)), controller.resolveCarrierEndpoint(controller.carrierProbePlans()[0]))
         assertEquals(listOf("origin.example.test:443"), hooks.resolvedEndpoints)
     }
 
@@ -265,12 +265,12 @@ private class FakeAndroidPlatformHooks(
     override fun uidForFlow(flow: TunFlowTuple) = uidForFlowResult
 }
 
-private class FakeSnapshotTransport(
+private class FakeSnapshotProbeTransport(
     override val socketFd: Int,
-) : CarrierTransport {
-    override fun connect(endpoint: ResolvedEndpoint) = CarrierTransportResult.success()
+) : CarrierProbeTransport {
+    override fun connect(endpoint: ResolvedEndpoint) = CarrierProbeResult.success()
 
-    override fun probe(nowMs: Long) = CarrierTransportResult.success()
+    override fun probe(nowMs: Long) = CarrierProbeResult.success()
 
     override fun close() = Unit
 }

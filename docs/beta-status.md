@@ -76,9 +76,9 @@ and signed artifacts remain deferred.
   scaffold. Current JVM tests cover client profile parsing, carrier probe
   planning, split-tunnel UID allowlists, underlying-network endpoint resolution,
   socket-protection failure handling, deterministic fake-transport carrier
-  runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS carrier transport
-  tests and two-phase lease-before-TUN state transitions without requiring an
-  emulator.
+  probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS probe
+  transport tests, native-runtime wrapper tests and two-phase lease-before-TUN
+  state transitions without requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
   dispatch input before pushing images. It publishes only two tags per run: the
@@ -170,9 +170,9 @@ Those remain release-hardening concerns.
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
 - Android remains pre-application: the headless profile/runtime boundary,
-  OkHttp app-owned HTTPS/WSS carrier transports and first `VpnService` TUN fd
-  ownership layer exist, but native auth/pump wiring, Android lifecycle
-  resilience/status and UI are not implemented yet.
+  OkHttp app-owned HTTPS/WSS carrier probes, first `VpnService` TUN fd ownership
+  layer and JNI native runtime handle exist, but native raw TLS/TCP auth/pump
+  wiring, Android lifecycle resilience/status and UI are not implemented yet.
 
 ## Public Beta Gate
 
