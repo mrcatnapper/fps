@@ -232,9 +232,10 @@ The connected check runs `:android:app:connectedDebugAndroidTest`, loads
 checks the JNI native runtime handle/snapshot, executor start/stop/no-op command
 and native-owned duplicate TUN fd API. It also starts the native TUN pump
 skeleton against a pipe fd, writes one valid IPv4 UDP packet plus one malformed
-byte sequence, and verifies read/parse/drop counters. The debug VPN harness
-also drives a real `VpnService` fd through `HeadlessNativeVpnRuntime`, verifies
-native `owned_duplicate` attachment plus pump startup and covers explicit
+byte sequence, drains bounded policy metadata, completes allow/drop decisions
+and verifies read/parse/drop/policy counters. The debug VPN harness also drives
+a real `VpnService` fd through `HeadlessNativeVpnRuntime`, verifies native
+`owned_duplicate` attachment plus pump startup and covers explicit
 stop/debug-revoke cleanup. It is opt-in because it requires a real Android
 runtime.
 

@@ -78,9 +78,11 @@ Delivered:
   owned duplicate. It then starts the native TUN pump skeleton. The managed
   emulator smoke verifies this path with a real `VpnService` fd and exercises
   explicit stop plus a debug revoke path. The pump reads from the duplicated fd,
-  parses IPv4 TCP/UDP 5-tuples with shared native code and records non-secret
-  counters/drop reasons, but it does not start native auth, carrier I/O or
-  covert enqueue yet.
+  parses IPv4 TCP/UDP 5-tuples with shared native code and queues bounded
+  metadata for Kotlin split-tunnel policy decisions. Packet bytes remain in
+  native-owned state. Kotlin can complete packets as allow/drop and update
+  non-secret counters, but native auth, carrier I/O and covert enqueue are not
+  started yet.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -167,9 +169,10 @@ emulator/system-image layers to rebuild.
   `tun.enabled=true`. Current native runtime wiring duplicates the fd through
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
   the runtime executor lifecycle is explicit, the first native TUN read/parse
-  pump starts after fd attachment and emulator coverage exercises real fd
-  attach/pump/stop/revoke. Starting the native auth path, carrier I/O and covert
-  enqueue remains the next native/JNI step.
+  pump starts after fd attachment, exposes a bounded policy metadata queue and
+  emulator coverage exercises real fd attach/pump/stop/revoke. Starting the
+  native auth path, carrier I/O and covert enqueue remains the next native/JNI
+  step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

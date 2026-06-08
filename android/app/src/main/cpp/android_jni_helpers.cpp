@@ -117,12 +117,51 @@ auto tun_flow_tuple_object(JNIEnv* env, const fps::net::TunFlowTuple& tuple) -> 
     );
 }
 
+auto tun_policy_packet_array(JNIEnv* env, const std::vector<fps::android_native::NativeTunPolicyPacketFields>& packets) -> jobjectArray {
+    auto packet_class = find_local_class(env, "org/fpsproject/client/nativebridge/NativeTunPolicyPacket");
+    if(packet_class.get() == nullptr) {
+        return nullptr;
+    }
+    auto* constructor = env->GetMethodID(packet_class.get(), "<init>", "(JILorg/fpsproject/client/policy/TunFlowTuple;)V");
+    if(constructor == nullptr) {
+        return nullptr;
+    }
+    auto* array = env->NewObjectArray(static_cast<jsize>(packets.size()), packet_class.get(), nullptr);
+    if(array == nullptr) {
+        return nullptr;
+    }
+
+    for(std::size_t index = 0; index < packets.size(); ++index) {
+        auto flow = LocalRef<jobject>{env, tun_flow_tuple_object(env, packets[index].flow)};
+        if(flow.get() == nullptr) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+        auto packet = LocalRef<jobject>{
+            env,
+            env->NewObject(
+                packet_class.get(), constructor, static_cast<jlong>(packets[index].packet_id), static_cast<jint>(packets[index].packet_size), flow.get()
+            ),
+        };
+        if(packet.get() == nullptr) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(array, static_cast<jsize>(index), packet.get());
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+    }
+    return array;
+}
+
 auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRuntimeSnapshotFields& snapshot) -> jobject {
     auto snapshot_class = find_local_class(env, "org/fpsproject/client/nativebridge/NativeRuntimeSnapshot");
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJLjava/lang/String;)V");
+    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJLjava/lang/String;)V");
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -146,7 +185,9 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jboolean>(snapshot.tun_pump_running),
         static_cast<jint>(snapshot.tun_fd), static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.tun_packets_read),
         static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
-        tun_drop_reason_string.get(), static_cast<jlong>(snapshot.commands_posted),
+        tun_drop_reason_string.get(), static_cast<jlong>(snapshot.tun_policy_pending), static_cast<jlong>(snapshot.tun_policy_in_flight),
+        static_cast<jlong>(snapshot.tun_policy_allowed), static_cast<jlong>(snapshot.tun_policy_dropped),
+        static_cast<jlong>(snapshot.tun_policy_queue_full), static_cast<jlong>(snapshot.commands_posted),
         static_cast<jlong>(snapshot.commands_completed), error_string.get()
     );
 }

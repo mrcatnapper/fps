@@ -4,6 +4,60 @@
 
 ## 2026-06-08
 
+### Android native TUN policy bridge
+
+Goal:
+
+- Connect the native Android TUN pump to the Kotlin split-tunnel policy layer
+  without enabling covert enqueue yet.
+- Keep native-owned packet bytes inside native state; expose only bounded
+  metadata to Kotlin so policy can fail closed without leaking packet payloads.
+
+Plan:
+
+- Add a bounded native queue of parsed outbound TUN packets. Each item keeps an
+  internal packet copy plus metadata: packet id, packet size and parsed
+  TCP/UDP 5-tuple.
+- Add JNI/Kotlin APIs to drain pending policy metadata and complete a packet as
+  `ALLOW` or `DROP`.
+- Extend native snapshots with policy pending/allowed/dropped/queue-full
+  counters.
+- Add JVM fake-backend tests first, then native/instrumented smoke coverage for
+  metadata drain and decision application.
+- Update Android developer notes to mark this as the current bridge before
+  native carrier enqueue.
+
+Completed:
+
+- Added `NativeTunPolicyPacket` metadata and JNI/Kotlin APIs to drain pending
+  native TUN policy packets and complete them as allow/drop.
+- Extended native runtime snapshots with policy pending/in-flight,
+  allowed/dropped and queue-full counters.
+- Changed the Android native TUN pump so parsed IPv4 TCP/UDP packets are copied
+  into bounded native-owned pending state. Kotlin receives only packet id, size
+  and parsed 5-tuple metadata; raw packet bytes are not exposed through JNI.
+- Added `HeadlessNativeVpnRuntime.applyPendingTunPolicy(...)`, which drains
+  native metadata, applies the existing Kotlin split-tunnel UID policy and
+  completes each packet in native state.
+- Kept covert enqueue intentionally disabled in this increment. Allowed packets
+  are counted and discarded from native in-flight state; the next Android step
+  is to route allowed packets into native carrier enqueue.
+- Added JVM fake-backend tests for metadata drain/completion and
+  `HeadlessNativeVpnRuntime` policy application.
+- Extended the native Android instrumented smoke so a pipe-backed TUN packet is
+  drained as metadata and completed with both allow and drop decisions.
+- Updated Android boundary, app plan, testing and specification docs.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `git diff --check`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+
 ### Android native runtime VpnService lifecycle
 
 Goal:

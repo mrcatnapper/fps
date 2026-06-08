@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
 import java.util.Base64
@@ -114,15 +115,40 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(28L, parsed.tunBytesRead)
         assertEquals(1L, parsed.tunPacketsParsed)
         assertEquals(0L, parsed.tunPacketsDropped)
+        assertEquals(1L, parsed.tunPolicyPending)
         assertEquals(null, parsed.tunLastDropReason)
+
+        val pendingAllow = FpsNative.drainTunPolicyPackets(handle, 8)
+        assertEquals(1, pendingAllow.size)
+        assertEquals(28, pendingAllow.single().packetSize)
+        assertEquals(TunProtocol.UDP, pendingAllow.single().flow.protocol)
+        assertEquals(0x0a420002L, pendingAllow.single().flow.sourceIpv4)
+        val allowed = FpsNative.completeTunPolicyPacket(handle, pendingAllow.single().packetId, SplitTunnelDecision.ALLOW)
+        assertEquals(0L, allowed.tunPolicyPending)
+        assertEquals(0L, allowed.tunPolicyInFlight)
+        assertEquals(1L, allowed.tunPolicyAllowed)
+        assertEquals(0L, allowed.tunPolicyDropped)
+        assertEquals(0L, allowed.tunPacketsDropped)
+
+        output.write(validUdpPacket())
+        output.flush()
+        val parsedForDrop = awaitSnapshot(handle) { it.tunPacketsParsed == 2L && it.tunPolicyPending == 1L }
+        assertEquals(2L, parsedForDrop.tunPacketsRead)
+        val pendingDrop = FpsNative.drainTunPolicyPackets(handle, 8)
+        assertEquals(1, pendingDrop.size)
+        val policyDropped = FpsNative.completeTunPolicyPacket(handle, pendingDrop.single().packetId, SplitTunnelDecision.DROP)
+        assertEquals(1L, policyDropped.tunPolicyAllowed)
+        assertEquals(1L, policyDropped.tunPolicyDropped)
+        assertEquals(1L, policyDropped.tunPacketsDropped)
+        assertEquals("tun_policy_drop", policyDropped.tunLastDropReason)
 
         output.write(byteArrayOf(0x60))
         output.flush()
-        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 1L }
-        assertEquals(2L, dropped.tunPacketsRead)
-        assertEquals(29L, dropped.tunBytesRead)
-        assertEquals(1L, dropped.tunPacketsParsed)
-        assertEquals(1L, dropped.tunPacketsDropped)
+        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 2L }
+        assertEquals(3L, dropped.tunPacketsRead)
+        assertEquals(57L, dropped.tunBytesRead)
+        assertEquals(2L, dropped.tunPacketsParsed)
+        assertEquals(2L, dropped.tunPacketsDropped)
         assertEquals("non_ipv4_packet", dropped.tunLastDropReason)
 
         val pumpStopped = FpsNative.stopTunPump(handle)

@@ -39,6 +39,11 @@ data class NativeVpnRuntimeSnapshot(
                 tunPacketsParsed = 0,
                 tunPacketsDropped = 0,
                 tunLastDropReason = null,
+                tunPolicyPending = 0,
+                tunPolicyInFlight = 0,
+                tunPolicyAllowed = 0,
+                tunPolicyDropped = 0,
+                tunPolicyQueueFull = 0,
                 commandsPosted = 0,
                 commandsCompleted = 0,
                 lastError = "runtime_stopped",
@@ -121,6 +126,16 @@ class HeadlessNativeVpnRuntime private constructor(
     fun stopCarrierProbeRunners(): List<CarrierProbeRuntimeStatus> = controller.stopCarrierProbeRunners()
 
     fun policyDecision(flow: TunFlowTuple?): SplitTunnelDecision = controller.policyDecision(flow)
+
+    fun drainTunPolicyPackets(maxPackets: Int = 64): List<NativeTunPolicyPacket> = nativeRuntime.drainTunPolicyPackets(maxPackets)
+
+    fun applyPendingTunPolicy(maxPackets: Int = 64): NativeRuntimeSnapshot {
+        var snapshot = nativeRuntime.snapshot()
+        for (packet in drainTunPolicyPackets(maxPackets)) {
+            snapshot = nativeRuntime.completeTunPolicyPacket(packet.packetId, policyDecision(packet.flow))
+        }
+        return snapshot
+    }
 
     fun snapshot(): NativeVpnRuntimeSnapshot {
         return NativeVpnRuntimeSnapshot(

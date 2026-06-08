@@ -2,10 +2,17 @@ package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.config.AndroidClientProfile
+import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.policy.TunFlowTuple
 
 const val TUN_FD_OWNERSHIP_OWNED_DUPLICATE = "owned_duplicate"
+
+data class NativeTunPolicyPacket(
+    val packetId: Long,
+    val packetSize: Int,
+    val flow: TunFlowTuple,
+)
 
 data class NativeRuntimeSnapshot(
     val alive: Boolean,
@@ -21,6 +28,11 @@ data class NativeRuntimeSnapshot(
     val tunPacketsParsed: Long,
     val tunPacketsDropped: Long,
     val tunLastDropReason: String?,
+    val tunPolicyPending: Long,
+    val tunPolicyInFlight: Long,
+    val tunPolicyAllowed: Long,
+    val tunPolicyDropped: Long,
+    val tunPolicyQueueFull: Long,
     val commandsPosted: Long,
     val commandsCompleted: Long,
     val lastError: String?,
@@ -44,6 +56,10 @@ interface FpsNativeBackend {
     fun postNoopCommand(handle: Long): NativeRuntimeSnapshot
 
     fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
+
+    fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket>
+
+    fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot
 }
 
 class FpsNativeRuntime private constructor(
@@ -84,6 +100,11 @@ class FpsNativeRuntime private constructor(
                 tunPacketsParsed = 0,
                 tunPacketsDropped = 0,
                 tunLastDropReason = null,
+                tunPolicyPending = 0,
+                tunPolicyInFlight = 0,
+                tunPolicyAllowed = 0,
+                tunPolicyDropped = 0,
+                tunPolicyQueueFull = 0,
                 commandsPosted = 0,
                 commandsCompleted = 0,
                 lastError = "runtime_closed",
@@ -142,6 +163,22 @@ class FpsNativeRuntime private constructor(
         return backend.attachTunFdOwnedDuplicate(activeHandle, fd, mtu)
     }
 
+    fun drainTunPolicyPackets(maxPackets: Int): List<NativeTunPolicyPacket> {
+        val activeHandle = handle
+        if (activeHandle == 0L || maxPackets <= 0) {
+            return emptyList()
+        }
+        return backend.drainTunPolicyPackets(activeHandle, maxPackets)
+    }
+
+    fun completeTunPolicyPacket(packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.completeTunPolicyPacket(activeHandle, packetId, decision)
+    }
+
     override fun close() {
         val activeHandle = handle
         if (activeHandle == 0L) {
@@ -180,4 +217,16 @@ object FpsNative : FpsNativeBackend {
     external override fun postNoopCommand(handle: Long): NativeRuntimeSnapshot
 
     external override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
+
+    external fun nativeDrainTunPolicyPackets(handle: Long, maxPackets: Int): Array<NativeTunPolicyPacket>
+
+    override fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket> {
+        return nativeDrainTunPolicyPackets(handle, maxPackets).toList()
+    }
+
+    external fun nativeCompleteTunPolicyPacket(handle: Long, packetId: Long, allow: Boolean): NativeRuntimeSnapshot
+
+    override fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
+        return nativeCompleteTunPolicyPacket(handle, packetId, decision == SplitTunnelDecision.ALLOW)
+    }
 }

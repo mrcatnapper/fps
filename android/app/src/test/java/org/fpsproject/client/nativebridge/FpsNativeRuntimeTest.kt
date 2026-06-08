@@ -2,6 +2,9 @@ package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.runtime.TunHandle
+import org.fpsproject.client.policy.SplitTunnelDecision
+import org.fpsproject.client.policy.TunFlowTuple
+import org.fpsproject.client.policy.TunProtocol
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -180,6 +183,42 @@ class FpsNativeRuntimeTest {
         assertFalse(snapshot.alive)
         assertEquals("runtime_closed", snapshot.lastError)
     }
+
+    @Test
+    fun tunPolicyPacketsDrainAsMetadataAndCompleteByOpaquePacketId() {
+        val backend = FakeNativeBackend(
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 41,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+                NativeTunPolicyPacket(
+                    packetId = 42,
+                    packetSize = 40,
+                    flow = TunFlowTuple(TunProtocol.TCP, 0x0a420002, 53001, 0x5db8d822, 8443),
+                ),
+            ),
+        )
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val drained = runtime.drainTunPolicyPackets(maxPackets = 1)
+        val afterAllow = runtime.completeTunPolicyPacket(41, SplitTunnelDecision.ALLOW)
+        val next = runtime.drainTunPolicyPackets(maxPackets = 8)
+        val afterDrop = runtime.completeTunPolicyPacket(42, SplitTunnelDecision.DROP)
+
+        assertEquals(1, drained.size)
+        assertEquals(41L, drained.single().packetId)
+        assertEquals(28, drained.single().packetSize)
+        assertEquals(TunProtocol.UDP, drained.single().flow.protocol)
+        assertEquals(1L, afterAllow.tunPolicyAllowed)
+        assertEquals(42L, next.single().packetId)
+        assertEquals(1L, afterDrop.tunPolicyAllowed)
+        assertEquals(1L, afterDrop.tunPolicyDropped)
+        assertEquals(0L, afterDrop.tunPolicyPending)
+        assertEquals(0L, afterDrop.tunPolicyInFlight)
+        assertEquals(listOf(41L to SplitTunnelDecision.ALLOW, 42L to SplitTunnelDecision.DROP), backend.completedPolicy)
+    }
 }
 
 private fun nativeSnapshot(
@@ -196,6 +235,11 @@ private fun nativeSnapshot(
     tunPacketsParsed: Long = 0,
     tunPacketsDropped: Long = 0,
     tunLastDropReason: String? = null,
+    tunPolicyPending: Long = 0,
+    tunPolicyInFlight: Long = 0,
+    tunPolicyAllowed: Long = 0,
+    tunPolicyDropped: Long = 0,
+    tunPolicyQueueFull: Long = 0,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
     lastError: String? = null,
@@ -213,19 +257,30 @@ private fun nativeSnapshot(
     tunPacketsParsed = tunPacketsParsed,
     tunPacketsDropped = tunPacketsDropped,
     tunLastDropReason = tunLastDropReason,
+    tunPolicyPending = tunPolicyPending,
+    tunPolicyInFlight = tunPolicyInFlight,
+    tunPolicyAllowed = tunPolicyAllowed,
+    tunPolicyDropped = tunPolicyDropped,
+    tunPolicyQueueFull = tunPolicyQueueFull,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
     lastError = lastError,
 )
 
-private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) : FpsNativeBackend {
+private class FakeNativeBackend(
+    private val returnZeroHandle: Boolean = false,
+    initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
+) : FpsNativeBackend {
     private var nextHandle = 1L
     val createdProfiles = mutableListOf<Pair<Long, String>>()
     val closedHandles = mutableListOf<Long>()
     val attachedTun = mutableListOf<Triple<Long, Int, Int>>()
     val startedTunPumps = mutableListOf<Long>()
     val stoppedTunPumps = mutableListOf<Long>()
+    val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
+    private val pendingPolicy = ArrayDeque(initialPolicyPackets)
+    private val inFlightPolicy = mutableSetOf<Long>()
 
     override fun createRuntime(profileText: String): Long {
         val handle = nextHandle++
@@ -329,6 +384,38 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
             tunFd = fd,
             tunMtu = mtu,
             tunFdOwnership = TUN_FD_OWNERSHIP_OWNED_DUPLICATE,
+            lastError = null,
+        )
+        snapshots[handle] = snapshot
+        return snapshot
+    }
+
+    override fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket> {
+        val current = snapshots[handle] ?: return emptyList()
+        val out = mutableListOf<NativeTunPolicyPacket>()
+        repeat(maxPackets.coerceAtLeast(0)) {
+            val packet = pendingPolicy.removeFirstOrNull() ?: return@repeat
+            out += packet
+            inFlightPolicy += packet.packetId
+        }
+        snapshots[handle] = current.copy(
+            tunPolicyPending = pendingPolicy.size.toLong(),
+            tunPolicyInFlight = inFlightPolicy.size.toLong(),
+        )
+        return out
+    }
+
+    override fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (!inFlightPolicy.remove(packetId)) {
+            return current.copy(lastError = "unknown_tun_policy_packet_id").also { snapshots[handle] = it }
+        }
+        completedPolicy += packetId to decision
+        val snapshot = current.copy(
+            tunPolicyPending = pendingPolicy.size.toLong(),
+            tunPolicyInFlight = inFlightPolicy.size.toLong(),
+            tunPolicyAllowed = current.tunPolicyAllowed + if (decision == SplitTunnelDecision.ALLOW) 1 else 0,
+            tunPolicyDropped = current.tunPolicyDropped + if (decision == SplitTunnelDecision.DROP) 1 else 0,
             lastError = null,
         )
         snapshots[handle] = snapshot
