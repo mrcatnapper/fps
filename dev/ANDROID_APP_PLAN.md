@@ -3,6 +3,10 @@
 This developer note records the current Android client direction. It is a
 handoff artifact, not operator documentation.
 
+Testing methodology and emulator rollout are tracked in
+[`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md). Keep that file current
+when Android test infrastructure or emulator strategy changes.
+
 ## Current Baseline
 
 - Use Kotlin for the Android application layer and C++20/NDK for FPS native
@@ -190,3 +194,7 @@ tools/run_android_checks.sh --connected
 `--connected` requires `adb devices` to show a device or emulator in the
 `device` state. It installs and runs the instrumented native smoke on that
 runtime; it is not part of ordinary CI.
+
+The next testing infrastructure increment should add the opt-in managed-device
+lane described in [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md), not a
+custom emulator script embedded into the ordinary build image.

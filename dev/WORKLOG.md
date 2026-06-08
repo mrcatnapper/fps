@@ -4,6 +4,39 @@
 
 ## 2026-06-08
 
+### Android emulator testing methodology
+
+Goal:
+
+- Record the testing strategy before adding emulator-managed Android checks.
+- Keep the plan explicit so later agents do not conflate JVM tests, connected
+  native smoke, Gradle Managed Devices and full VPN E2E.
+
+Decisions:
+
+- Keep default Android checks Docker/JVM-first.
+- Add Gradle Managed Devices as the first emulator path, starting with an
+  opt-in API 30 ATD lane before any PR-gating CI.
+- Do not merge emulator system images into `Dockerfile.android` yet; keep that
+  image as the reproducible SDK/NDK/vcpkg build image.
+- Use emulator/device tests only for Android framework behavior: real
+  `VpnService` preparation/establishment, revoke/stop lifecycle,
+  protect-before-connect, underlying-network resolution and
+  `ConnectivityManager.getConnectionOwnerUid(...)` policy behavior.
+
+Completed:
+
+- Added `dev/ANDROID_TESTING_PLAN.md` with references, current baseline,
+  proposed testing layers, Gradle Managed Device direction, Docker/emulator
+  boundary, VPN-specific test scenarios, stability rules and near-term
+  implementation steps.
+- Linked the testing plan from `dev/ANDROID_APP_PLAN.md` and
+  `dev/ANDROID_BOUNDARY.md`.
+
+Verification:
+
+- `git diff --check`
+
 ### Android native TUN pump skeleton
 
 Goal:

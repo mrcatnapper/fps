@@ -3,6 +3,12 @@
 This note records the current tactical plan before Android application work
 starts. It is a developer handoff document, not user/operator documentation.
 
+Android emulator/device testing strategy is tracked separately in
+[`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md). This boundary document
+describes what code belongs on each side of the Kotlin/JNI/native split; the
+testing plan describes how those boundaries are verified on JVM, connected
+devices and future Gradle-managed emulators.
+
 ## Boundary State
 
 - `CovertDatagramTransport` is the right reusable transport seam: it schedules
@@ -118,6 +124,11 @@ starts. It is a developer handoff document, not user/operator documentation.
   starts the `io_context` worker thread and starts a non-protocol read/parse
   pump. The next step is to connect pump decisions to Android split-tunnel
   policy and then to native raw TLS/TCP auth/carrier I/O.
+- Add the opt-in Gradle Managed Device lane described in
+  [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
+  emulator behavior for PR gating. The first managed-device tests should stay
+  small: native smoke, real `VpnService` consent/establish lifecycle and
+  protect-before-connect checks.
 
 ## Accepted Android Direction
 
