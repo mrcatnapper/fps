@@ -3,6 +3,12 @@
 This note records the current tactical plan before Android application work
 starts. It is a developer handoff document, not user/operator documentation.
 
+Android emulator/device testing strategy is tracked separately in
+[`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md). This boundary document
+describes what code belongs on each side of the Kotlin/JNI/native split; the
+testing plan describes how those boundaries are verified on JVM, connected
+devices and future Gradle-managed emulators.
+
 ## Boundary State
 
 - `CovertDatagramTransport` is the right reusable transport seam: it schedules
@@ -89,6 +95,15 @@ starts. It is a developer handoff document, not user/operator documentation.
   owns both layers, performs lease-triggered TUN establishment and attaches the
   resulting fd to native as an owned duplicate. It intentionally does not start
   native auth, carrier I/O or the TUN packet pump.
+- Added the first native runtime executor lifecycle. The JNI runtime can start
+  and stop one Boost.Asio `io_context` worker thread, exposes non-secret
+  lifecycle/counter snapshots and has a deterministic no-op posted-command
+  smoke path for future native work.
+- Added the first native Android TUN pump skeleton. It starts after
+  lease-triggered TUN fd attachment, reads the native-owned duplicate fd through
+  a non-blocking executor loop, parses IPv4 TCP/UDP 5-tuples with shared core
+  code and records non-secret packet/drop counters. It intentionally does not
+  run FPS auth, raw carrier I/O or covert datagram enqueue yet.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -104,14 +119,17 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
-- Wire the established `VpnService` fd into the native FPS auth/TUN pump through
-  the JNI handle facade. Current `HeadlessNativeVpnRuntime` duplicates the fd
-  into native-owned RAII state and snapshots report
-  `tunFdOwnership=owned_duplicate`; the next step is to start the native auth
-  path and packet pump on that descriptor, then add lifecycle/reconnect and
-  status reporting around the pump.
-- Decide whether Android should keep the same synchronous executor-only
-  contract or introduce a separate async adapter for UI/JNI-facing calls.
+- Wire the native pump output into policy and transport. Current
+  `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
+  starts the `io_context` worker thread and starts a non-protocol read/parse
+  pump. The next step is to connect pump decisions to Android split-tunnel
+  policy and then to native raw TLS/TCP auth/carrier I/O.
+- Use the opt-in Gradle Managed Device lane described in
+  [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
+  emulator behavior for PR gating. The lane is launched through
+  `Dockerfile.android-emulator` plus `/dev/kvm`; first tests should stay small:
+  native smoke, real `VpnService` consent/establish lifecycle and
+  protect-before-connect checks.
 
 ## Accepted Android Direction
 
@@ -136,7 +154,9 @@ starts. It is a developer handoff document, not user/operator documentation.
   `tun.enabled=true` and start the native TUN pump. Current code implements fd
   creation/ownership, native-owned duplicate attachment
   (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
-  non-secret runtime snapshots; native pump startup is next.
+  explicit native `io_context` executor lifecycle plus a non-protocol native
+  TUN read/parse pump with non-secret runtime snapshots; native auth/carrier
+  enqueue wiring is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for
@@ -144,8 +164,9 @@ starts. It is a developer handoff document, not user/operator documentation.
   parse the TCP/UDP 5-tuple, ask `ConnectivityManager.getConnectionOwnerUid`,
   allow only configured UIDs and drop `INVALID_UID`, unsupported protocols,
   malformed packets and unknown fragments by default.
-- Keep the C++ core synchronous and same-executor. Android should expose a thin
-  async/JNI facade that posts all native operations onto the FPS `io_context`.
+- Keep the C++ core synchronous and same-executor. Android JNI-facing operations
+  must post native work onto the runtime `io_context`; direct cross-thread
+  carrier enqueue remains forbidden.
 
 ## Alternatives Kept For Future Review
 

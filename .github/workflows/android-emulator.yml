@@ -1,0 +1,32 @@
+name: Android Emulator
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  managed-device:
+    name: managed-device smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Check KVM availability
+        run: |
+          test -e /dev/kvm
+          ls -l /dev/kvm
+
+      - name: Run Docker-managed Android emulator smoke
+        run: tools/run_android_checks.sh --docker-managed-device

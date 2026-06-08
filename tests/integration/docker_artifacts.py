@@ -265,6 +265,112 @@ def main():
         )
         reject_secrets(publish_workflow, "image publish workflow")
 
+    android_emulator_workflow = read(repo / ".github/workflows/android-emulator.yml")
+    require_all(
+        android_emulator_workflow,
+        [
+            "Android Emulator",
+            "workflow_dispatch",
+            "ubuntu-24.04",
+            "docker/setup-buildx-action@v4",
+            "/dev/kvm",
+            "tools/run_android_checks.sh --docker-managed-device",
+        ],
+        "Android emulator workflow",
+    )
+    reject_secrets(android_emulator_workflow, "Android emulator workflow")
+
+    android_checks = read(repo / "tools/run_android_checks.sh")
+    require_all(
+        android_checks,
+        [
+            "--managed-device",
+            "--docker-managed-device",
+            "FPS_ANDROID_BASE_IMAGE",
+            "FPS_ANDROID_BASE_TARGET",
+            "android-gradle-base",
+            "FPS_ANDROID_REUSE_DOCKER_IMAGE",
+            "FPS_ANDROID_EMULATOR_IMAGE",
+            "FPS_ANDROID_EMULATOR_DOCKERFILE",
+            "FPS_ANDROID_MANAGED_DEVICE_TASK",
+            "FPS_ANDROID_EMULATOR_GPU",
+            "fpsApi30AtdDebugAndroidTest",
+            "/dev/kvm",
+            "ensure_docker_image",
+        ],
+        "Android check helper",
+    )
+    reject_secrets(android_checks, "Android check helper")
+
+    android_dockerfile = read(repo / "Dockerfile.android")
+    require_all(
+        android_dockerfile,
+        [
+            "AS android-gradle-base",
+            "RUN ./gradlew --no-daemon :android:app:dependencies",
+            "FROM android-gradle-base AS ci",
+            "COPY . ./",
+        ],
+        "Android build Dockerfile",
+    )
+    reject_secrets(android_dockerfile, "Android build Dockerfile")
+
+    android_emulator_dockerfile = read(repo / "Dockerfile.android-emulator")
+    require_all(
+        android_emulator_dockerfile,
+        [
+            "ARG FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base",
+            "FROM ${FPS_ANDROID_BASE_IMAGE}",
+            "system-images;android-30;aosp_atd;x86_64",
+        ],
+        "Android emulator Dockerfile",
+    )
+    require("COPY . ./" not in android_emulator_dockerfile, "Android emulator Dockerfile must not copy full source")
+    reject_secrets(android_emulator_dockerfile, "Android emulator Dockerfile")
+
+    android_gradle = read(repo / "android/app/build.gradle.kts")
+    require_all(
+        android_gradle,
+        [
+            "fpsApi30Atd",
+            "apiLevel = 30",
+            "systemImageSource = \"aosp-atd\"",
+            "testedAbi = \"x86_64\"",
+            "androidx.test.uiautomator:uiautomator",
+        ],
+        "Android Gradle managed-device config",
+    )
+    reject_secrets(android_gradle, "Android Gradle managed-device config")
+
+    android_vpn_smoke = read(
+        repo / "android/app/src/androidTest/java/org/fpsproject/client/VpnServiceEstablishInstrumentedTest.kt",
+    )
+    require_all(
+        android_vpn_smoke,
+        [
+            "VpnService.prepare",
+            "UiDevice",
+            "TestVpnHarnessActivity.ACTION_ESTABLISH",
+            "TestVpnEstablishService.ACTION_CLOSE",
+            "awaitEstablished",
+            "awaitClosed",
+        ],
+        "Android VpnService establish smoke",
+    )
+    reject_secrets(android_vpn_smoke, "Android VpnService establish smoke")
+
+    android_debug_manifest = read(repo / "android/app/src/debug/AndroidManifest.xml")
+    require_all(
+        android_debug_manifest,
+        [
+            "TestVpnHarnessActivity",
+            "TestVpnEstablishService",
+            "android.permission.BIND_VPN_SERVICE",
+        ],
+        "Android debug test manifest",
+    )
+    reject_secrets(android_debug_manifest, "Android debug test manifest")
+
     quality_checks = read(repo / "tools/run_quality_checks.sh")
     require_all(
         quality_checks,

@@ -112,6 +112,21 @@ from the image. This is useful for quick checks, but remember that generated
 build outputs will be written to the mounted workspace unless the command
 redirects them elsewhere.
 
+Android Docker checks have the same reuse path. Set
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` when the relevant Android image tags already
+exist and you only want to rerun Gradle/tests:
+
+```sh
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
+  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
+  tools/run_android_checks.sh --docker
+
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
+  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
+  FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local \
+  tools/run_android_checks.sh --docker-managed-device
+```
+
 ## Android Bootstrap Checks
 
 The Android client scaffold is command-line only; Android Studio is not
@@ -130,8 +145,8 @@ Android verification independent from host SDK/NDK/vcpkg paths.
 `Dockerfile.android` installs JDK 21, Android command-line tools, platform 36,
 build-tools 36.0.0, NDK 28.2, SDK CMake and Android OpenSSL through vcpkg. This
 image is a build/test image, not the FPS product runtime image. It deliberately
-does not include an emulator; connected tests run against an external device or
-emulator through the host `adb` server.
+does not include an emulator. Emulator execution uses the separate
+`Dockerfile.android-emulator` child image.
 
 Host SDK checks remain available for developers who already have a local SDK.
 Install the Android SDK under `/opt/android-sdk` and export:
@@ -164,12 +179,12 @@ Android Kotlin code should use Android/Kotlin/JVM libraries for common parsing
 and encoding tasks. Client profile parsing uses Android's `org.json`; JVM unit
 tests get the same API through a test-only dependency so they stay headless.
 
-`Dockerfile.android` prewarms Gradle before the full source `COPY`: it copies
-only the Gradle wrapper, build files and minimal Android project metadata, sets
-a stable `GRADLE_USER_HOME`, runs a dependency-resolution task, and only then
-copies the full source tree. This keeps Android SDK/NDK/vcpkg layers separate
-from source changes and caches the Gradle distribution/dependency graph in an
-image layer used by later one-shot `docker run` checks.
+`Dockerfile.android` prewarms Gradle in the source-free `android-gradle-base`
+stage before the full source `COPY`: it copies only the Gradle wrapper, build
+files and minimal Android project metadata, sets a stable `GRADLE_USER_HOME`,
+runs a dependency-resolution task, and only then copies the full source tree in
+the final `ci` stage. This keeps Android SDK/NDK/vcpkg and Gradle dependency
+layers separate from source changes.
 
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
@@ -195,10 +210,14 @@ cover Android TUN plan generation, `VpnService.Builder` call sequencing,
 idempotent TUN fd close ownership through fake builders and the Kotlin
 `FpsNativeRuntime` wrapper with a fake native backend. They also cover the
 headless Kotlin/native lifecycle bridge that establishes TUN after lease
-delivery and duplicates the descriptor into native-owned runtime state. They assert
-that lease-triggered TUN startup requires `tun.enabled=true` and that snapshots
-report only non-secret state/TUN/carrier-probe/native metadata. These checks
-still do not require an emulator or a real Android `VpnService` instance.
+delivery, starts the native executor lifecycle and duplicates the descriptor
+into native-owned runtime state. They also exercise the Kotlin/JNI-facing TUN
+pump lifecycle through fake backends: pump startup requires a started runtime
+and attached TUN fd, lease-triggered attach starts the pump, and stop/close are
+idempotent. They assert that lease-triggered TUN startup requires
+`tun.enabled=true` and that snapshots report only non-secret
+state/TUN/carrier-probe/native metadata. These checks still do not require an
+emulator or a real Android `VpnService` instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 
@@ -210,8 +229,39 @@ tools/run_android_checks.sh --connected
 The connected check runs `:android:app:connectedDebugAndroidTest`, loads
 `libfps_android_native.so` on the target, calls the JNI `nativeVersion()` and
 `nativeCoreSmoke()` paths, verifies a native IPv4 TCP tuple parse fixture and
-checks the JNI native runtime handle/snapshot/native-owned duplicate TUN fd API.
-It is opt-in because it requires a real Android runtime.
+checks the JNI native runtime handle/snapshot, executor start/stop/no-op command
+and native-owned duplicate TUN fd API. It also starts the native TUN pump
+skeleton against a pipe fd, writes one valid IPv4 UDP packet plus one malformed
+byte sequence, and verifies read/parse/drop counters. It is opt-in because it
+requires a real Android runtime.
+
+For reproducible post-JVM checks without relying on host SDK paths, use the
+Docker-managed emulator lane:
+
+```sh
+ls -l /dev/kvm
+tools/run_android_checks.sh --docker-managed-device
+```
+
+This builds `Dockerfile.android`, then builds `Dockerfile.android-emulator`
+to the source-free `android-gradle-base` target, then builds
+`Dockerfile.android-emulator` from that local base image. The emulator image
+adds Android's `emulator` package, `platforms;android-30` and
+`system-images;android-30;aosp_atd;x86_64`, then runs the Gradle Managed Device
+task `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm`
+passed through and the current workspace bind-mounted at `/workspaces`. The
+bind mount is intentional: source edits do not invalidate the heavy
+emulator/system-image layers. The managed-device lane runs the same
+instrumented native smoke as `--connected` and also exercises a debug-only real
+`VpnService.prepare(...)` / `VpnService.Builder.establish()` smoke. The VPN
+smoke requests consent through the system dialog when needed, verifies a real
+TUN fd and closes it. This lane is opt-in and is not part of ordinary PR CI
+until repeated local runs prove it stable.
+
+GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
+same `--docker-managed-device` command on demand. It is intentionally not a
+required PR check: emulator availability and startup latency are still treated
+as infrastructure variables until repeated scheduled/manual runs prove stable.
 
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models
@@ -253,7 +303,7 @@ The output should reference Android runtime libraries such as `liblog.so`,
 
 ## GitHub Actions CI
 
-The repository defines three GitHub Actions workflow files:
+The repository defines four GitHub Actions workflow files:
 
 - `CI`: runs on pull requests, pushes to `main` and manual dispatch. It covers
   `ubuntu-24.04 x gcc/clang` local builds/tests through the repository
@@ -263,6 +313,9 @@ The repository defines three GitHub Actions workflow files:
   `tools/run_quality_checks.sh --all` inside the same `Dockerfile` `ci` stage,
   including clang-20, ASan/UBSan, Valgrind, llvm-cov and bounded libFuzzer
   smoke.
+- `Android Emulator`: runs on manual dispatch only. It executes the
+  Docker-managed Gradle Managed Device smoke through `/dev/kvm` and remains
+  outside the required PR checks.
 - `Publish Images`: runs on manual dispatch only. It first runs the same Docker
   runtime smoke, then can publish Ubuntu and Alpine images to GHCR when
   `publish=true`. With the default `publish=false`, it is a build-only

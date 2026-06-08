@@ -180,9 +180,14 @@ without claiming resistance to advanced timing/size traffic analysis.
   idempotent fd close.
 - [x] Add first JNI native runtime handle/snapshot boundary with native-owned
   duplicate TUN fd attachment.
+- [x] Add first JNI native runtime executor lifecycle with idempotent
+  start/stop and posted-command smoke coverage.
+- [x] Add first Android native TUN pump skeleton: native-owned duplicate fd
+  non-blocking read loop, IPv4 TCP/UDP parse counters and lifecycle smoke.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: implement native raw TLS/TCP auth/TUN pump wiring,
-  Android lifecycle resilience/status and the native/Kotlin async facade.
+  `dev/ANDROID_APP_PLAN.md`: wire native TUN pump policy/enqueue decisions,
+  implement native raw TLS/TCP auth/carrier I/O, Android lifecycle
+  resilience/status and richer native/Kotlin async commands.
 
 ## Phase 7: Fuzzing And Soak
 

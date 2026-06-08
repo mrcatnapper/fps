@@ -36,15 +36,28 @@ class HeadlessNativeVpnRuntimeTest {
     private val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
 
     @Test
-    fun startCreatesNativeRuntimeAndWaitsForLease() {
+    fun startStartsNativeRuntimeAndWaitsForLease() {
         val backend = FakeCoordinatorNativeBackend()
         val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
 
         assertEquals(VpnRuntimeState.WAITING_FOR_LEASE, runtime.start())
         assertEquals(1, backend.createdProfiles.size)
         assertEquals(profileJson, backend.createdProfiles.single().second)
+        assertEquals(listOf(1L), backend.startedHandles)
         assertTrue(runtime.snapshot().native.alive)
+        assertTrue(runtime.snapshot().native.started)
         assertFalse(runtime.snapshot().vpn.tun.fdPresent)
+    }
+
+    @Test
+    fun startDoesNotStartNativeRuntimeWhenVpnPermissionIsMissing() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(vpnPermissionGranted = false), backend)
+
+        assertEquals(VpnRuntimeState.NEEDS_VPN_PERMISSION, runtime.start())
+
+        assertEquals(emptyList<Long>(), backend.startedHandles)
+        assertFalse(runtime.snapshot().native.started)
     }
 
     @Test
@@ -60,9 +73,11 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(VpnRuntimeState.RUNNING, state)
         assertEquals(1, hooks.establishTunCalls)
         assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
+        assertEquals(listOf(1L), backend.startedTunPumps)
         assertTrue(snapshot.vpn.tun.fdPresent)
         assertTrue(snapshot.native.tunAttached)
         assertEquals(TUN_FD_OWNERSHIP_OWNED_DUPLICATE, snapshot.native.tunFdOwnership)
+        assertTrue(snapshot.native.tunPumpRunning)
     }
 
     @Test
@@ -85,7 +100,26 @@ class HeadlessNativeVpnRuntimeTest {
     }
 
     @Test
-    fun stopClosesNativeRuntimeAndOwnedTunExactlyOnce() {
+    fun nativeTunPumpStartFailureFailsClosedAndClosesEstablishedTun() {
+        val backend = FakeCoordinatorNativeBackend(pumpResult = PumpResult.FAIL_TUN_NOT_ATTACHED)
+        val tunHandle = CountingTunHandle(fd = 77)
+        val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.owned(fd = tunHandle.fd, mtu = 1280, handle = tunHandle))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val state = runtime.onLeaseReceived(lease)
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.FAILED, state)
+        assertEquals("native_tun_pump_start_failed", snapshot.vpn.lastError)
+        assertFalse(snapshot.vpn.tun.fdPresent)
+        assertFalse(snapshot.native.tunPumpRunning)
+        assertEquals("tun_not_attached", snapshot.native.lastError)
+        assertEquals(1, tunHandle.closeCount)
+    }
+
+    @Test
+    fun stopIsIdempotentAndCloseReleasesNativeHandle() {
         val backend = FakeCoordinatorNativeBackend()
         val tunHandle = CountingTunHandle(fd = 77)
         val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.owned(fd = tunHandle.fd, mtu = 1280, handle = tunHandle))
@@ -95,7 +129,11 @@ class HeadlessNativeVpnRuntimeTest {
         runtime.onLeaseReceived(lease)
         runtime.stop()
         runtime.stop()
+        runtime.close()
+        runtime.close()
 
+        assertEquals(listOf(1L, 1L, 1L), backend.stoppedHandles)
+        assertEquals(listOf(1L, 1L, 1L), backend.stoppedTunPumps)
         assertEquals(listOf(1L), backend.closedHandles)
         assertEquals(1, tunHandle.closeCount)
         assertEquals(VpnRuntimeState.STOPPED, runtime.snapshot().vpn.state)
@@ -115,31 +153,70 @@ class HeadlessNativeVpnRuntimeTest {
     }
 }
 
+private fun coordinatorSnapshot(
+    alive: Boolean = true,
+    started: Boolean = false,
+    workerThreadRunning: Boolean = false,
+    tunAttached: Boolean = false,
+    tunPumpRunning: Boolean = false,
+    tunFd: Int = -1,
+    tunMtu: Int = 0,
+    tunFdOwnership: String? = null,
+    tunPacketsRead: Long = 0,
+    tunBytesRead: Long = 0,
+    tunPacketsParsed: Long = 0,
+    tunPacketsDropped: Long = 0,
+    tunLastDropReason: String? = null,
+    commandsPosted: Long = 0,
+    commandsCompleted: Long = 0,
+    lastError: String? = null,
+) = NativeRuntimeSnapshot(
+    alive = alive,
+    started = started,
+    workerThreadRunning = workerThreadRunning,
+    tunAttached = tunAttached,
+    tunPumpRunning = tunPumpRunning,
+    tunFd = tunFd,
+    tunMtu = tunMtu,
+    tunFdOwnership = tunFdOwnership,
+    tunPacketsRead = tunPacketsRead,
+    tunBytesRead = tunBytesRead,
+    tunPacketsParsed = tunPacketsParsed,
+    tunPacketsDropped = tunPacketsDropped,
+    tunLastDropReason = tunLastDropReason,
+    commandsPosted = commandsPosted,
+    commandsCompleted = commandsCompleted,
+    lastError = lastError,
+)
+
 private enum class AttachResult {
     SUCCESS,
     FAIL_INVALID_FD,
 }
 
+private enum class PumpResult {
+    SUCCESS,
+    FAIL_TUN_NOT_ATTACHED,
+}
+
 private class FakeCoordinatorNativeBackend(
     private val attachResult: AttachResult = AttachResult.SUCCESS,
+    private val pumpResult: PumpResult = PumpResult.SUCCESS,
 ) : FpsNativeBackend {
     private var nextHandle = 1L
     val createdProfiles = mutableListOf<Pair<Long, String>>()
+    val startedHandles = mutableListOf<Long>()
+    val stoppedHandles = mutableListOf<Long>()
     val closedHandles = mutableListOf<Long>()
     val attachedTun = mutableListOf<Triple<Long, Int, Int>>()
+    val startedTunPumps = mutableListOf<Long>()
+    val stoppedTunPumps = mutableListOf<Long>()
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
 
     override fun createRuntime(profileText: String): Long {
         val handle = nextHandle++
         createdProfiles += handle to profileText
-        snapshots[handle] = NativeRuntimeSnapshot(
-            alive = true,
-            tunAttached = false,
-            tunFd = -1,
-            tunMtu = 0,
-            tunFdOwnership = null,
-            lastError = null,
-        )
+        snapshots[handle] = coordinatorSnapshot()
         return handle
     }
 
@@ -149,30 +226,83 @@ private class FakeCoordinatorNativeBackend(
     }
 
     override fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot {
-        return snapshots[handle] ?: NativeRuntimeSnapshot(
+        return snapshots[handle] ?: coordinatorSnapshot(
             alive = false,
-            tunAttached = false,
-            tunFd = -1,
-            tunMtu = 0,
-            tunFdOwnership = null,
             lastError = "runtime_closed",
         )
+    }
+
+    override fun startTunPump(handle: Long): NativeRuntimeSnapshot {
+        startedTunPumps += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        val snapshot = when (pumpResult) {
+            PumpResult.SUCCESS -> current.copy(
+                tunPumpRunning = true,
+                lastError = null,
+            )
+            PumpResult.FAIL_TUN_NOT_ATTACHED -> current.copy(
+                tunPumpRunning = false,
+                lastError = "tun_not_attached",
+            )
+        }
+        snapshots[handle] = snapshot
+        return snapshot
+    }
+
+    override fun stopTunPump(handle: Long): NativeRuntimeSnapshot {
+        stoppedTunPumps += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            tunPumpRunning = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun startRuntime(handle: Long): NativeRuntimeSnapshot {
+        startedHandles += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            started = true,
+            workerThreadRunning = true,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun stopRuntime(handle: Long): NativeRuntimeSnapshot {
+        stoppedHandles += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            started = false,
+            workerThreadRunning = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun postNoopCommand(handle: Long): NativeRuntimeSnapshot {
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(lastError = "runtime_stopped").also { snapshots[handle] = it }
+        }
+        return current.copy(
+            commandsPosted = current.commandsPosted + 1,
+            commandsCompleted = current.commandsCompleted + 1,
+            lastError = null,
+        ).also { snapshots[handle] = it }
     }
 
     override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
         attachedTun += Triple(handle, fd, mtu)
         val snapshot = when (attachResult) {
-            AttachResult.SUCCESS -> NativeRuntimeSnapshot(
-                alive = true,
+            AttachResult.SUCCESS -> (snapshots[handle] ?: coordinatorSnapshot()).copy(
                 tunAttached = true,
                 tunFd = fd,
                 tunMtu = mtu,
                 tunFdOwnership = TUN_FD_OWNERSHIP_OWNED_DUPLICATE,
                 lastError = null,
             )
-            AttachResult.FAIL_INVALID_FD -> NativeRuntimeSnapshot(
-                alive = true,
+            AttachResult.FAIL_INVALID_FD -> (snapshots[handle] ?: coordinatorSnapshot()).copy(
                 tunAttached = false,
+                tunPumpRunning = false,
                 tunFd = -1,
                 tunMtu = 0,
                 tunFdOwnership = null,

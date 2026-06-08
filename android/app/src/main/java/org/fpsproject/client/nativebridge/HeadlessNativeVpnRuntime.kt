@@ -27,10 +27,20 @@ data class NativeVpnRuntimeSnapshot(
             ),
             native = NativeRuntimeSnapshot(
                 alive = false,
+                started = false,
+                workerThreadRunning = false,
                 tunAttached = false,
+                tunPumpRunning = false,
                 tunFd = -1,
                 tunMtu = 0,
                 tunFdOwnership = null,
+                tunPacketsRead = 0,
+                tunBytesRead = 0,
+                tunPacketsParsed = 0,
+                tunPacketsDropped = 0,
+                tunLastDropReason = null,
+                commandsPosted = 0,
+                commandsCompleted = 0,
                 lastError = "runtime_stopped",
             ),
         )
@@ -62,7 +72,18 @@ class HeadlessNativeVpnRuntime private constructor(
     val lastError: String?
         get() = controller.lastError
 
-    fun start(): VpnRuntimeState = controller.start()
+    fun start(): VpnRuntimeState {
+        val next = controller.start()
+        if (next != VpnRuntimeState.WAITING_FOR_LEASE) {
+            return next
+        }
+        val nativeSnapshot = nativeRuntime.start()
+        if (!nativeSnapshot.alive || !nativeSnapshot.started || !nativeSnapshot.workerThreadRunning) {
+            controller.fail("native_runtime_start_failed")
+            return controller.state
+        }
+        return controller.state
+    }
 
     fun onLeaseReceived(lease: TunLease): VpnRuntimeState {
         val next = controller.onLeaseReceived(lease)
@@ -77,6 +98,11 @@ class HeadlessNativeVpnRuntime private constructor(
         val nativeSnapshot = nativeRuntime.attachTun(tun)
         if (!nativeSnapshot.alive || !nativeSnapshot.tunAttached || nativeSnapshot.tunFdOwnership != TUN_FD_OWNERSHIP_OWNED_DUPLICATE) {
             controller.fail("native_tun_attach_failed", closeTun = true)
+            return controller.state
+        }
+        val pumpSnapshot = nativeRuntime.startTunPump()
+        if (!pumpSnapshot.alive || !pumpSnapshot.tunPumpRunning) {
+            controller.fail("native_tun_pump_start_failed", closeTun = true)
             return controller.state
         }
         return controller.state
@@ -104,11 +130,13 @@ class HeadlessNativeVpnRuntime private constructor(
     }
 
     fun stop(): VpnRuntimeState {
-        nativeRuntime.close()
+        nativeRuntime.stopTunPump()
+        nativeRuntime.stop()
         return controller.stop()
     }
 
     override fun close() {
         stop()
+        nativeRuntime.close()
     }
 }

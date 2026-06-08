@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.fpsproject.client.policy.TunProtocol
+import java.io.FileOutputStream
 import java.util.Base64
 
 class NativeCoreSmokeInstrumentedTest {
@@ -62,9 +63,21 @@ class NativeCoreSmokeInstrumentedTest {
 
         val initial = FpsNative.runtimeSnapshot(handle)
         assertTrue(initial.alive)
+        assertFalse(initial.started)
+        assertFalse(initial.workerThreadRunning)
         assertFalse(initial.tunAttached)
         assertEquals(null, initial.tunFdOwnership)
         assertEquals(null, initial.lastError)
+
+        val started = FpsNative.startRuntime(handle)
+        assertTrue(started.started)
+        assertTrue(started.workerThreadRunning)
+        assertEquals(0L, started.commandsPosted)
+        assertEquals(0L, started.commandsCompleted)
+
+        val posted = FpsNative.postNoopCommand(handle)
+        assertEquals(1L, posted.commandsPosted)
+        assertEquals(1L, posted.commandsCompleted)
 
         val pipe = ParcelFileDescriptor.createPipe()
         val readEnd = pipe[0]
@@ -88,6 +101,41 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(null, badMtu.tunFdOwnership)
         assertEquals("invalid_tun_mtu", badMtu.lastError)
 
+        val reattached = FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        assertTrue(reattached.tunAttached)
+        val pumpStarted = FpsNative.startTunPump(handle)
+        assertTrue(pumpStarted.tunPumpRunning)
+
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+        output.write(validUdpPacket())
+        output.flush()
+        val parsed = awaitSnapshot(handle) { it.tunPacketsParsed == 1L }
+        assertEquals(1L, parsed.tunPacketsRead)
+        assertEquals(28L, parsed.tunBytesRead)
+        assertEquals(1L, parsed.tunPacketsParsed)
+        assertEquals(0L, parsed.tunPacketsDropped)
+        assertEquals(null, parsed.tunLastDropReason)
+
+        output.write(byteArrayOf(0x60))
+        output.flush()
+        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 1L }
+        assertEquals(2L, dropped.tunPacketsRead)
+        assertEquals(29L, dropped.tunBytesRead)
+        assertEquals(1L, dropped.tunPacketsParsed)
+        assertEquals(1L, dropped.tunPacketsDropped)
+        assertEquals("non_ipv4_packet", dropped.tunLastDropReason)
+
+        val pumpStopped = FpsNative.stopTunPump(handle)
+        assertFalse(pumpStopped.tunPumpRunning)
+
+        val stopped = FpsNative.stopRuntime(handle)
+        assertFalse(stopped.started)
+        assertFalse(stopped.workerThreadRunning)
+        val rejected = FpsNative.postNoopCommand(handle)
+        assertEquals("runtime_stopped", rejected.lastError)
+        assertEquals(1L, rejected.commandsPosted)
+        assertEquals(1L, rejected.commandsCompleted)
+
         FpsNative.closeRuntime(handle)
         readEnd.close()
         writeEnd.close()
@@ -96,4 +144,26 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(null, closed.tunFdOwnership)
         assertEquals("invalid_handle", closed.lastError)
     }
+
+    private fun awaitSnapshot(handle: Long, predicate: (NativeRuntimeSnapshot) -> Boolean): NativeRuntimeSnapshot {
+        var snapshot = FpsNative.runtimeSnapshot(handle)
+        repeat(100) {
+            if (predicate(snapshot)) {
+                return snapshot
+            }
+            Thread.sleep(20)
+            snapshot = FpsNative.runtimeSnapshot(handle)
+        }
+        return snapshot
+    }
+
+    private fun validUdpPacket() = byteArrayOf(
+        0x45, 0x00, 0x00, 0x1c,
+        0x00, 0x00, 0x40, 0x00,
+        0x40, 0x11, 0x00, 0x00,
+        0x0a, 0x42, 0x00, 0x02,
+        0x5d.toByte(), 0xb8.toByte(), 0xd8.toByte(), 0x22,
+        0xcf.toByte(), 0x08, 0x01, 0xbb.toByte(),
+        0x00, 0x08, 0x00, 0x00,
+    )
 }

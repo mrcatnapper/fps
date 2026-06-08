@@ -4,6 +4,342 @@
 
 ## 2026-06-08
 
+### Android testing plan status cleanup
+
+Goal:
+
+- Remove stale "future helper" wording before opening the Android PR.
+- Keep Android testing docs aligned with the implemented managed-device,
+  Docker-managed-device and VpnService smoke baseline.
+
+Completed:
+
+- Replaced the old near-term implementation checklist in
+  `dev/ANDROID_TESTING_PLAN.md` with completed baseline and current next
+  runtime steps.
+- Clarified that `tools/run_android_checks.sh --managed-device` and
+  `--docker-managed-device` are already implemented paths.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
+CI follow-up:
+
+- First PR CI exposed that `fps_docker_artifacts` runs inside the Linux CI
+  Docker image, while `.dockerignore` excluded `.github`; the test could not
+  read `.github/workflows/android-emulator.yml`.
+- Fixed by allowing only `.github/workflows/*.yml` into the Docker build
+  context, keeping the DevOps artifact check active in CI without copying the
+  whole `.github` directory.
+
+### Android Docker image cache split
+
+Goal:
+
+- Avoid rebuilding heavy Android emulator/system-image layers on ordinary
+  source edits.
+- Clean stale local Android test images before rebuilding to avoid disk
+  exhaustion.
+
+Plan:
+
+- Split `Dockerfile.android` into a source-free Gradle/cache base stage and the
+  final source-copied `ci` stage.
+- Make `Dockerfile.android-emulator` inherit from the source-free base image,
+  not from the final Android CI image.
+- Teach `tools/run_android_checks.sh --docker-managed-device` to build that
+  source-free base target and pass it to the emulator Dockerfile.
+- Update docs and static artifact checks.
+
+Completed:
+
+- Added `android-gradle-base` to `Dockerfile.android`.
+- Changed `Dockerfile.android-emulator` default base to
+  `fps:android-gradle-base` and kept the full repository source out of the
+  emulator image.
+- Added `FPS_ANDROID_BASE_IMAGE` and `FPS_ANDROID_BASE_TARGET` to the Android
+  check helper.
+- Removed stale local Android image tags and pruned dangling images; root
+  filesystem usage dropped from 86% to 38%.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+
+Notes:
+
+- The second managed-device run reused `fps:android-emulator-cache-split`
+  directly and did not rebuild either the source-free base image or the
+  emulator image.
+- After rebuilding the new split images, `/` is at 62% used with 22 GB free.
+
+### Android real VpnService establish smoke
+
+Goal:
+
+- Add the first emulator-only smoke test that exercises Android's real
+  `VpnService.prepare(...)` and `VpnService.Builder.establish()` path.
+- Keep this out of production/release code and out of ordinary PR CI.
+
+Plan:
+
+- Add a debug-only Android VPN test harness activity/service that can request
+  VPN permission, establish a real TUN fd from a test lease and close it.
+- Add an instrumented test that drives the permission dialog with UI Automator
+  when needed and verifies the real fd/MTU/close lifecycle.
+- Keep the smoke under `--managed-device` / the manual `Android Emulator`
+  workflow only.
+- Update Android testing docs and verify with the Docker-managed emulator lane.
+
+Completed:
+
+- Added a debug-only Android test harness activity/service under `src/debug`.
+  Release builds do not include this harness.
+- Added `VpnServiceEstablishInstrumentedTest`, which drives VPN consent with
+  UI Automator when needed, establishes a real TUN fd through
+  `AndroidVpnTunnelBuilder`, checks fd/MTU metadata and closes the fd.
+- Added the UI Automator androidTest dependency.
+- Updated Android testing docs and artifact contract checks.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-vpn-smoke tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-vpn-smoke FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-vpn-smoke tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Notes:
+
+- The managed-device lane now reports `Starting 4 tests on fpsApi30Atd`.
+- The AGP `testedAbi` warning still appears despite `testedAbi = "x86_64"`;
+  this remains a known AGP warning quirk and does not fail the lane.
+
+### Android emulator test workflow polish
+
+Goal:
+
+- Make the new Docker-managed Android emulator lane easier to reuse during
+  local development and safe to trigger manually from GitHub Actions.
+- Add static contract coverage so the Android Docker/tooling pieces do not
+  silently drift apart.
+
+Planned steps:
+
+- Add an opt-in image reuse mode to `tools/run_android_checks.sh` so repeated
+  emulator checks can run without rebuilding the Android Docker images.
+- Add a manual-only GitHub Actions workflow for the emulator lane.
+- Extend `tests/integration/docker_artifacts.py` with Android tooling contract
+  checks.
+- Update Android testing docs and verify shell/Python/static checks plus the
+  Docker-managed emulator lane.
+
+Completed:
+
+- Added `FPS_ANDROID_REUSE_DOCKER_IMAGE=1` support to the Android check helper.
+  The helper now reuses existing base/emulator image tags when present and
+  builds only missing images.
+- Added `.github/workflows/android-emulator.yml`, a manual-only workflow for
+  the Docker-managed Gradle Managed Device smoke.
+- Added static artifact coverage for the Android workflow, helper modes,
+  Dockerfiles and `fpsApi30Atd` Gradle Managed Device contract.
+- Updated Android testing docs and developer Android plans.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local tools/run_android_checks.sh --docker-managed-device`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `git diff --check`
+
+### Android Docker-managed emulator lane
+
+Goal:
+
+- Add the first post-JVM Android test harness that can run instrumented tests in
+  an emulator without relying on host SDK paths.
+- Keep the ordinary Android CI image lightweight; put emulator packages and
+  system images into a separate child image.
+
+Planned steps:
+
+- Add Gradle Managed Device config for an API 30 AOSP ATD x86_64 device named
+  `fpsApi30Atd`.
+- Add `Dockerfile.android-emulator` as a child of `Dockerfile.android`.
+- Extend `tools/run_android_checks.sh` with `--managed-device` and
+  `--docker-managed-device`.
+- Update Android testing docs and verify the existing instrumented native smoke
+  through the new lane when possible.
+
+Completed:
+
+- Added the `fpsApi30Atd` Gradle Managed Device configuration.
+- Added `Dockerfile.android-emulator`, a child of `Dockerfile.android` that
+  installs emulator runtime libraries, Android's `emulator`, API 30 platform
+  files and the AOSP ATD x86_64 system image.
+- Extended `tools/run_android_checks.sh` with `--managed-device` and
+  `--docker-managed-device`.
+- Updated Android testing docs, Android app plan, boundary notes and the public
+  testing/specification docs.
+
+Notes:
+
+- The managed-device smoke currently emits AGP's experimental GPU property
+  warning and still prints the `testedAbi` recommendation even with
+  `testedAbi = "x86_64"` set on the managed device. The lane runs and passes;
+  keep watching this after AGP upgrades.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local bash -lc './gradlew --no-daemon :android:app:tasks --all | grep -F fpsApi30Atd'`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+### Android emulator testing methodology
+
+Goal:
+
+- Record the testing strategy before adding emulator-managed Android checks.
+- Keep the plan explicit so later agents do not conflate JVM tests, connected
+  native smoke, Gradle Managed Devices and full VPN E2E.
+
+Decisions:
+
+- Keep default Android checks Docker/JVM-first.
+- Add Gradle Managed Devices as the first emulator path, starting with an
+  opt-in API 30 ATD lane before any PR-gating CI.
+- Do not merge emulator system images into `Dockerfile.android` yet; keep that
+  image as the reproducible SDK/NDK/vcpkg build image.
+- Use emulator/device tests only for Android framework behavior: real
+  `VpnService` preparation/establishment, revoke/stop lifecycle,
+  protect-before-connect, underlying-network resolution and
+  `ConnectivityManager.getConnectionOwnerUid(...)` policy behavior.
+
+Completed:
+
+- Added `dev/ANDROID_TESTING_PLAN.md` with references, current baseline,
+  proposed testing layers, Gradle Managed Device direction, Docker/emulator
+  boundary, VPN-specific test scenarios, stability rules and near-term
+  implementation steps.
+- Linked the testing plan from `dev/ANDROID_APP_PLAN.md` and
+  `dev/ANDROID_BOUNDARY.md`.
+
+Verification:
+
+- `git diff --check`
+
+### Android native TUN pump skeleton
+
+Goal:
+
+- Add the first native Android TUN fd pump skeleton on top of the existing
+  native-owned duplicate fd and runtime executor lifecycle.
+- Keep this increment intentionally non-protocol: no FPS auth, raw carrier I/O
+  or covert datagram enqueue yet. The pump only reads packets, parses
+  TCP/UDP IPv4 5-tuples through shared core code and records non-secret
+  counters/drop reasons.
+
+Planned steps:
+
+- Extend native runtime snapshots with TUN pump state and packet counters.
+- Add Kotlin/JNI APIs for `startTunPump` and `stopTunPump`.
+- Implement a native non-blocking read loop scheduled on the runtime
+  `io_context`; start/stop must be idempotent and stop must not depend on a
+  blocking TUN read returning.
+- Wire `HeadlessNativeVpnRuntime` to start the pump after lease-triggered TUN
+  fd attachment and stop it before native executor shutdown.
+- Add JVM fake-backend tests and connected native smoke coverage using a pipe
+  fd to validate valid IPv4 parsing, malformed packet drops and lifecycle
+  counters.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Extended `NativeRuntimeSnapshot` with TUN pump state, packet read/byte
+  counters, parsed/drop counters and a metadata-only last drop reason.
+- Added `startTunPump`/`stopTunPump` Kotlin, JNI and native runtime APIs.
+- Implemented a non-blocking native read loop scheduled on the runtime
+  `io_context`. The loop reads the native-owned duplicate fd, parses IPv4
+  TCP/UDP 5-tuples through `parse_ipv4_flow_tuple(...)`, records counters and
+  drops malformed/unsupported packets without logging payload bytes.
+- Wired `HeadlessNativeVpnRuntime` so lease-triggered TUN fd attachment starts
+  the pump and stop/close stops it before native executor shutdown.
+- Added JVM fake-backend coverage for pump lifecycle and coordinator failure
+  paths.
+- Extended connected Android native smoke so a pipe fd validates real JNI/native
+  pump start, valid IPv4 UDP parsing, malformed packet drop counters and stop.
+- Updated Android boundary, app plan, roadmap, specification and testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -L local --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check`
+
+### Android native executor lifecycle
+
+Goal:
+
+- Add the first explicit native runtime execution model before Android auth,
+  raw carrier I/O or TUN packet pumping.
+- Ensure JNI/Kotlin-facing native operations have a safe same-executor posting
+  path instead of relying on arbitrary caller threads.
+
+Planned steps:
+
+- Extend native snapshots with executor lifecycle metadata:
+  `started`, `workerThreadRunning`, `commandsPosted`, `commandsCompleted`.
+- Add Kotlin/JNI runtime methods for `startRuntime`, `stopRuntime` and a
+  test-only `postNoopCommand`.
+- Implement one Boost.Asio `io_context` worker thread per native runtime with
+  idempotent start/stop/close semantics.
+- Update `HeadlessNativeVpnRuntime` to start native before entering the lease
+  wait state and stop native together with the controller.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Added native runtime `startRuntime`, `stopRuntime` and test-only
+  `postNoopCommand` JNI/Kotlin APIs.
+- Added one Boost.Asio `io_context` worker thread per native runtime with
+  idempotent start/stop and close-stops-before-erase behavior.
+- Extended non-secret native snapshots with executor lifecycle flags and posted
+  command counters.
+- Updated `HeadlessNativeVpnRuntime` so native starts after VPN permission is
+  available and before lease wait is returned; service shutdown now closes the
+  native handle after stopping.
+- Updated JVM tests, connected JNI smoke coverage and Android boundary docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android native TUN fd ownership
 
 Goal:

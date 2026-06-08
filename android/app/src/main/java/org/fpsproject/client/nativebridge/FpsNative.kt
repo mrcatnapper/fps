@@ -9,10 +9,20 @@ const val TUN_FD_OWNERSHIP_OWNED_DUPLICATE = "owned_duplicate"
 
 data class NativeRuntimeSnapshot(
     val alive: Boolean,
+    val started: Boolean,
+    val workerThreadRunning: Boolean,
     val tunAttached: Boolean,
+    val tunPumpRunning: Boolean,
     val tunFd: Int,
     val tunMtu: Int,
     val tunFdOwnership: String?,
+    val tunPacketsRead: Long,
+    val tunBytesRead: Long,
+    val tunPacketsParsed: Long,
+    val tunPacketsDropped: Long,
+    val tunLastDropReason: String?,
+    val commandsPosted: Long,
+    val commandsCompleted: Long,
     val lastError: String?,
 )
 
@@ -21,7 +31,17 @@ interface FpsNativeBackend {
 
     fun closeRuntime(handle: Long)
 
+    fun startRuntime(handle: Long): NativeRuntimeSnapshot
+
+    fun stopRuntime(handle: Long): NativeRuntimeSnapshot
+
     fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot
+
+    fun startTunPump(handle: Long): NativeRuntimeSnapshot
+
+    fun stopTunPump(handle: Long): NativeRuntimeSnapshot
+
+    fun postNoopCommand(handle: Long): NativeRuntimeSnapshot
 
     fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
 }
@@ -52,14 +72,64 @@ class FpsNativeRuntime private constructor(
         if (activeHandle == 0L) {
             return NativeRuntimeSnapshot(
                 alive = false,
+                started = false,
+                workerThreadRunning = false,
                 tunAttached = false,
+                tunPumpRunning = false,
                 tunFd = -1,
                 tunMtu = 0,
                 tunFdOwnership = null,
+                tunPacketsRead = 0,
+                tunBytesRead = 0,
+                tunPacketsParsed = 0,
+                tunPacketsDropped = 0,
+                tunLastDropReason = null,
+                commandsPosted = 0,
+                commandsCompleted = 0,
                 lastError = "runtime_closed",
             )
         }
         return backend.runtimeSnapshot(activeHandle)
+    }
+
+    fun startTunPump(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.startTunPump(activeHandle)
+    }
+
+    fun stopTunPump(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.stopTunPump(activeHandle)
+    }
+
+    fun start(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.startRuntime(activeHandle)
+    }
+
+    fun stop(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.stopRuntime(activeHandle)
+    }
+
+    fun postNoopCommand(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.postNoopCommand(activeHandle)
     }
 
     fun attachTun(tun: EstablishedTun): NativeRuntimeSnapshot = attachTunFdOwnedDuplicate(tun.fd, tun.mtu)
@@ -97,7 +167,17 @@ object FpsNative : FpsNativeBackend {
 
     external override fun closeRuntime(handle: Long)
 
+    external override fun startRuntime(handle: Long): NativeRuntimeSnapshot
+
+    external override fun stopRuntime(handle: Long): NativeRuntimeSnapshot
+
     external override fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot
+
+    external override fun startTunPump(handle: Long): NativeRuntimeSnapshot
+
+    external override fun stopTunPump(handle: Long): NativeRuntimeSnapshot
+
+    external override fun postNoopCommand(handle: Long): NativeRuntimeSnapshot
 
     external override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
 }

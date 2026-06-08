@@ -3,6 +3,10 @@
 This developer note records the current Android client direction. It is a
 handoff artifact, not operator documentation.
 
+Testing methodology and emulator rollout are tracked in
+[`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md). Keep that file current
+when Android test infrastructure or emulator strategy changes.
+
 ## Current Baseline
 
 - Use Kotlin for the Android application layer and C++20/NDK for FPS native
@@ -15,9 +19,10 @@ handoff artifact, not operator documentation.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI and no production native auth/TUN
-  pump yet. A connected instrumented smoke exists, but it is opt-in and runs
-  only when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI and no production native auth or
+  carrier I/O yet. A native TUN pump skeleton exists for fd read/parse/counter
+  validation, and connected instrumented smoke remains opt-in when an external
+  Android device or emulator is attached.
 
 ## Implemented Headless Core Slice
 
@@ -61,13 +66,19 @@ Delivered:
   It validates Android profile text in Kotlin, creates an opaque native runtime
   handle, exposes non-secret native snapshots and duplicates a TUN fd into
   native-owned RAII state without taking ownership from the Kotlin
-  `ParcelFileDescriptor` holder. The native binding is split into thin JNI
-  entrypoints, runtime registry/state and object-conversion helpers.
+  `ParcelFileDescriptor` holder. It also owns the first explicit native
+  Boost.Asio `io_context` executor lifecycle with idempotent start/stop and
+  deterministic no-op posted-command smoke coverage. The native binding is split
+  into thin JNI entrypoints, runtime registry/state and object-conversion
+  helpers.
 - `HeadlessNativeVpnRuntime` is the current Kotlin lifecycle bridge between the
   headless VPN controller and the JNI runtime handle. It creates the native
-  runtime, waits for the lease, establishes the Android TUN fd and attaches that
-  fd to native as an owned duplicate. It does not start native auth, carrier I/O
-  or a TUN packet pump.
+  runtime, starts its executor after VPN permission is available, waits for the
+  lease, establishes the Android TUN fd and attaches that fd to native as an
+  owned duplicate. It then starts the native TUN pump skeleton. The pump reads
+  from the duplicated fd, parses IPv4 TCP/UDP 5-tuples with shared native code
+  and records non-secret counters/drop reasons, but it does not start native
+  auth, carrier I/O or covert enqueue yet.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -117,7 +128,21 @@ tools/run_android_checks.sh --docker
 the Linux product runtime image. It installs the Android SDK/NDK and Android
 OpenSSL triplets, then runs the host Android checks inside the container.
 Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
-SDK use must be requested explicitly with `--host`.
+SDK use must be requested explicitly with `--host`. The source-free
+`android-gradle-base` stage owns SDK/NDK/vcpkg plus Gradle dependency cache;
+the final `ci` stage is the only Android stage that copies the whole
+repository.
+
+Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
+that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
+it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
+hosts where `/dev/kvm` can be passed through to Docker. For repeated local
+runs after the images have already been built, set
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` to rerun the checks without rebuilding the
+base/emulator images. The emulator image inherits from the source-free
+`android-gradle-base` image and receives the current source tree through the
+test container bind mount, so ordinary source edits do not force the
+emulator/system-image layers to rebuild.
 
 ## Accepted Runtime Direction
 
@@ -139,13 +164,15 @@ SDK use must be requested explicitly with `--host`.
   create/configure the `VpnService` fd only for an Android profile with
   `tun.enabled=true`. Current native runtime wiring duplicates the fd through
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
-  starting the native auth path and TUN pump remains the next native/JNI step.
+  the runtime executor lifecycle is explicit and the first native TUN read/parse
+  pump starts after fd attachment. Starting the native auth path, carrier I/O
+  and covert enqueue remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed
   packets, unsupported protocols, unknown fragments and invalid UIDs.
-- JNI/Kotlin entry points must post native operations onto the FPS `io_context`.
-  Direct cross-thread carrier enqueue remains forbidden.
+- JNI/Kotlin entry points must post native operations onto the runtime
+  `io_context`. Direct cross-thread carrier enqueue remains forbidden.
 
 ## Native Dependency Boundary
 
@@ -176,8 +203,20 @@ tools/run_android_checks.sh
 tools/run_android_checks.sh --docker
 tools/run_android_checks.sh --host
 tools/run_android_checks.sh --connected
+tools/run_android_checks.sh --managed-device
+tools/run_android_checks.sh --docker-managed-device
 ```
 
 `--connected` requires `adb devices` to show a device or emulator in the
 `device` state. It installs and runs the instrumented native smoke on that
 runtime; it is not part of ordinary CI.
+
+`--managed-device` runs the Gradle Managed Device task with the current SDK and
+emulator environment. `--docker-managed-device` builds the emulator child image
+and runs the same task inside Docker with `/dev/kvm`. Keep these lanes opt-in
+until repeated runs prove them stable enough for scheduled CI. GitHub Actions
+has a manual-only `Android Emulator` workflow for this lane; it is not a
+required PR check. The lane currently runs both the native/JNI smoke and a
+debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
+smoke that requests VPN consent when needed, verifies a real TUN fd/MTU and
+closes it.

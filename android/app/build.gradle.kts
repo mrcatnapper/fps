@@ -36,6 +36,20 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("fpsApi30Atd") {
+                    device = "Pixel 2"
+                    apiLevel = 30
+                    systemImageSource = "aosp-atd"
+                    require64Bit = true
+                    testedAbi = "x86_64"
+                }
+            }
+        }
+    }
 }
 
 dependencies {
@@ -51,4 +65,5 @@ dependencies {
     androidTestImplementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }

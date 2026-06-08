@@ -57,7 +57,7 @@ RUN set -eux; \
       openssl:arm64-android \
       openssl:x64-android
 
-FROM android-deps AS ci
+FROM android-deps AS android-gradle-base
 
 WORKDIR /workspaces
 ENV GRADLE_USER_HOME=/opt/gradle-cache
@@ -71,8 +71,10 @@ COPY android/app/src/main/cpp/CMakeLists.txt android/app/src/main/cpp/CMakeLists
 RUN ./gradlew --no-daemon :android:app:dependencies >/tmp/fps-android-gradle-dependencies.txt \
     && rm -f /tmp/fps-android-gradle-dependencies.txt
 
-COPY . ./
-
 ENV FPS_ANDROID_DOCKER=1
+
+FROM android-gradle-base AS ci
+
+COPY . ./
 
 CMD ["tools/run_android_checks.sh", "--host"]
