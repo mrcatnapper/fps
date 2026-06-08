@@ -4,6 +4,49 @@
 
 ## 2026-06-08
 
+### Android real VpnService establish smoke
+
+Goal:
+
+- Add the first emulator-only smoke test that exercises Android's real
+  `VpnService.prepare(...)` and `VpnService.Builder.establish()` path.
+- Keep this out of production/release code and out of ordinary PR CI.
+
+Plan:
+
+- Add a debug-only Android VPN test harness activity/service that can request
+  VPN permission, establish a real TUN fd from a test lease and close it.
+- Add an instrumented test that drives the permission dialog with UI Automator
+  when needed and verifies the real fd/MTU/close lifecycle.
+- Keep the smoke under `--managed-device` / the manual `Android Emulator`
+  workflow only.
+- Update Android testing docs and verify with the Docker-managed emulator lane.
+
+Completed:
+
+- Added a debug-only Android test harness activity/service under `src/debug`.
+  Release builds do not include this harness.
+- Added `VpnServiceEstablishInstrumentedTest`, which drives VPN consent with
+  UI Automator when needed, establishes a real TUN fd through
+  `AndroidVpnTunnelBuilder`, checks fd/MTU metadata and closes the fd.
+- Added the UI Automator androidTest dependency.
+- Updated Android testing docs and artifact contract checks.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-vpn-smoke tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-vpn-smoke FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-vpn-smoke tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Notes:
+
+- The managed-device lane now reports `Starting 4 tests on fpsApi30Atd`.
+- The AGP `testedAbi` warning still appears despite `testedAbi = "x86_64"`;
+  this remains a known AGP warning quirk and does not fail the lane.
+
 ### Android emulator test workflow polish
 
 Goal:

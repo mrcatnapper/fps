@@ -248,9 +248,12 @@ from that local image. The emulator image adds Android's `emulator` package,
 `platforms;android-30` and `system-images;android-30;aosp_atd;x86_64`, then
 runs the Gradle Managed Device task
 `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm` passed
-through. The managed-device lane currently runs the same instrumented native
-smoke as `--connected`; it is opt-in and is not part of ordinary PR CI until
-repeated local runs prove it stable.
+through. The managed-device lane runs the same instrumented native smoke as
+`--connected` and also exercises a debug-only real `VpnService.prepare(...)` /
+`VpnService.Builder.establish()` smoke. The VPN smoke requests consent through
+the system dialog when needed, verifies a real TUN fd and closes it. This lane
+is opt-in and is not part of ordinary PR CI until repeated local runs prove it
+stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

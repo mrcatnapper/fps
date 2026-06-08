@@ -316,10 +316,40 @@ def main():
             "apiLevel = 30",
             "systemImageSource = \"aosp-atd\"",
             "testedAbi = \"x86_64\"",
+            "androidx.test.uiautomator:uiautomator",
         ],
         "Android Gradle managed-device config",
     )
     reject_secrets(android_gradle, "Android Gradle managed-device config")
+
+    android_vpn_smoke = read(
+        repo / "android/app/src/androidTest/java/org/fpsproject/client/VpnServiceEstablishInstrumentedTest.kt",
+    )
+    require_all(
+        android_vpn_smoke,
+        [
+            "VpnService.prepare",
+            "UiDevice",
+            "TestVpnHarnessActivity.ACTION_ESTABLISH",
+            "TestVpnEstablishService.ACTION_CLOSE",
+            "awaitEstablished",
+            "awaitClosed",
+        ],
+        "Android VpnService establish smoke",
+    )
+    reject_secrets(android_vpn_smoke, "Android VpnService establish smoke")
+
+    android_debug_manifest = read(repo / "android/app/src/debug/AndroidManifest.xml")
+    require_all(
+        android_debug_manifest,
+        [
+            "TestVpnHarnessActivity",
+            "TestVpnEstablishService",
+            "android.permission.BIND_VPN_SERVICE",
+        ],
+        "Android debug test manifest",
+    )
+    reject_secrets(android_debug_manifest, "Android debug test manifest")
 
     quality_checks = read(repo / "tools/run_quality_checks.sh")
     require_all(

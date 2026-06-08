@@ -210,4 +210,7 @@ emulator environment. `--docker-managed-device` builds the emulator child image
 and runs the same task inside Docker with `/dev/kvm`. Keep these lanes opt-in
 until repeated runs prove them stable enough for scheduled CI. GitHub Actions
 has a manual-only `Android Emulator` workflow for this lane; it is not a
-required PR check.
+required PR check. The lane currently runs both the native/JNI smoke and a
+debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
+smoke that requests VPN consent when needed, verifies a real TUN fd/MTU and
+closes it.

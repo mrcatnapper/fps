@@ -42,7 +42,10 @@ documentation.
 - Current instrumented smoke validates native library loading, crypto/core
   smoke, IPv4 5-tuple parsing, native runtime handle lifecycle, executor
   start/stop, native-owned duplicate TUN fd attachment and the first native
-  TUN pump skeleton against a pipe fd.
+  TUN pump skeleton against a pipe fd. The managed-device lane also includes a
+  debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
+  smoke that requests consent through UI Automator when needed, verifies a real
+  TUN fd/MTU and closes it.
 
 ## Testing Layers For FPS Android
 
@@ -71,11 +74,11 @@ for contracts that require real Android framework behavior.
      a later test explicitly declares that dependency.
 
 4. **Emulator-managed VPN smoke**
-   - Add a Gradle Managed Device lane once the current native pump skeleton is
-     stable. This lane should run a small instrumented test that exercises real
-     `VpnService` preparation/establishment behavior, not just fake builders.
-   - This lane must be opt-in until it has been run repeatedly without
-     flakiness on the project VM.
+   - The Gradle Managed Device lane runs a small instrumented test that
+     exercises real `VpnService` preparation/establishment behavior, not just
+     fake builders.
+   - This lane must remain opt-in until it has been run repeatedly without
+     flakiness on the project VM and GitHub-hosted runners.
 
 5. **Real device/manual release smoke**
    - Keep a short manual or agent-run checklist for device-specific behavior
@@ -161,11 +164,13 @@ path.
 Prioritize these emulator/device scenarios in order:
 
 1. **Real `VpnService` preparation and fd establishment**
-   - Test `VpnService.prepare(...)` behavior.
-   - If user consent is needed, use UI Automator to accept the system dialog in
-     the managed-device lane.
-   - Verify that the service can establish the TUN fd after a test lease and
-     that native snapshots report fd attachment plus pump running.
+   - Current managed-device coverage uses a debug-only harness activity/service
+     to test `VpnService.prepare(...)` behavior, accept the system dialog with
+     UI Automator when needed, establish a real TUN fd after a test lease and
+     close it.
+   - Next coverage should route that real fd through the full
+     `HeadlessNativeVpnRuntime` attach path instead of only proving the Android
+     framework establishment contract.
 
 2. **Service revoke/stop lifecycle**
    - Exercise `onRevoke()` and explicit stop.
@@ -226,7 +231,7 @@ Prioritize these emulator/device scenarios in order:
 4. Run the current instrumented smoke on the managed device manually.
 5. Add a manual-only GitHub Actions entrypoint and image-reuse mode for local
    reruns.
-6. If stable, add a small real `VpnService` consent/establish smoke with a
-   test-only lease injection path.
+6. Add a small real `VpnService` consent/establish smoke with a test-only lease
+   injection path.
 7. Keep managed-device CI manual/scheduled until repeated local runs show it is
    stable enough for PR gating.
