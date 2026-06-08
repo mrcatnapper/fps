@@ -161,7 +161,7 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJLjava/lang/String;)V");
+    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJJJJLjava/lang/String;)V");
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -187,8 +187,9 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
         tun_drop_reason_string.get(), static_cast<jlong>(snapshot.tun_policy_pending), static_cast<jlong>(snapshot.tun_policy_in_flight),
         static_cast<jlong>(snapshot.tun_policy_allowed), static_cast<jlong>(snapshot.tun_policy_dropped),
-        static_cast<jlong>(snapshot.tun_policy_queue_full), static_cast<jlong>(snapshot.commands_posted),
-        static_cast<jlong>(snapshot.commands_completed), error_string.get()
+        static_cast<jlong>(snapshot.tun_policy_queue_full), static_cast<jlong>(snapshot.tun_covert_enqueue_attempted),
+        static_cast<jlong>(snapshot.tun_covert_enqueue_accepted), static_cast<jlong>(snapshot.tun_covert_enqueue_rejected),
+        static_cast<jlong>(snapshot.commands_posted), static_cast<jlong>(snapshot.commands_completed), error_string.get()
     );
 }
 

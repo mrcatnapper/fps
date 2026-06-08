@@ -250,6 +250,57 @@ class FpsNativeRuntimeTest {
         assertEquals(0L, snapshot.tunPolicyAllowed)
         assertEquals(0L, snapshot.tunPolicyDropped)
     }
+
+    @Test
+    fun allowedTunPolicyPacketRequiresOutboundTransport() {
+        val backend = FakeNativeBackend(
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 41,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+            ),
+        )
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val packet = runtime.drainTunPolicyPackets(maxPackets = 1).single()
+        val snapshot = runtime.completeTunPolicyPacket(packet.packetId, SplitTunnelDecision.ALLOW)
+
+        assertEquals("no_carrier_transport", snapshot.lastError)
+        assertEquals("no_carrier_transport", snapshot.tunLastDropReason)
+        assertEquals(1L, snapshot.tunPolicyAllowed)
+        assertEquals(0L, snapshot.tunPolicyDropped)
+        assertEquals(1L, snapshot.tunPacketsDropped)
+        assertEquals(1L, snapshot.tunCovertEnqueueAttempted)
+        assertEquals(0L, snapshot.tunCovertEnqueueAccepted)
+        assertEquals(1L, snapshot.tunCovertEnqueueRejected)
+    }
+
+    @Test
+    fun droppedTunPolicyPacketDoesNotAttemptOutboundTransport() {
+        val backend = FakeNativeBackend(
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 41,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+            ),
+        )
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val packet = runtime.drainTunPolicyPackets(maxPackets = 1).single()
+        val snapshot = runtime.completeTunPolicyPacket(packet.packetId, SplitTunnelDecision.DROP)
+
+        assertEquals(null, snapshot.lastError)
+        assertEquals(0L, snapshot.tunCovertEnqueueAttempted)
+        assertEquals(0L, snapshot.tunCovertEnqueueAccepted)
+        assertEquals(0L, snapshot.tunCovertEnqueueRejected)
+        assertEquals(0L, snapshot.tunPolicyAllowed)
+        assertEquals(1L, snapshot.tunPolicyDropped)
+        assertEquals(1L, snapshot.tunPacketsDropped)
+    }
 }
 
 private fun nativeSnapshot(
@@ -271,6 +322,9 @@ private fun nativeSnapshot(
     tunPolicyAllowed: Long = 0,
     tunPolicyDropped: Long = 0,
     tunPolicyQueueFull: Long = 0,
+    tunCovertEnqueueAttempted: Long = 0,
+    tunCovertEnqueueAccepted: Long = 0,
+    tunCovertEnqueueRejected: Long = 0,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
     lastError: String? = null,
@@ -293,6 +347,9 @@ private fun nativeSnapshot(
     tunPolicyAllowed = tunPolicyAllowed,
     tunPolicyDropped = tunPolicyDropped,
     tunPolicyQueueFull = tunPolicyQueueFull,
+    tunCovertEnqueueAttempted = tunCovertEnqueueAttempted,
+    tunCovertEnqueueAccepted = tunCovertEnqueueAccepted,
+    tunCovertEnqueueRejected = tunCovertEnqueueRejected,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
     lastError = lastError,
@@ -444,11 +501,26 @@ private class FakeNativeBackend(
             return current.copy(lastError = "unknown_tun_policy_packet_id").also { snapshots[handle] = it }
         }
         completedPolicy += packetId to decision
+        if (decision == SplitTunnelDecision.ALLOW) {
+            val snapshot = current.copy(
+                tunPolicyPending = pendingPolicy.size.toLong(),
+                tunPolicyInFlight = inFlightPolicy.size.toLong(),
+                tunPolicyAllowed = current.tunPolicyAllowed + 1,
+                tunPacketsDropped = current.tunPacketsDropped + 1,
+                tunLastDropReason = "no_carrier_transport",
+                tunCovertEnqueueAttempted = current.tunCovertEnqueueAttempted + 1,
+                tunCovertEnqueueRejected = current.tunCovertEnqueueRejected + 1,
+                lastError = "no_carrier_transport",
+            )
+            snapshots[handle] = snapshot
+            return snapshot
+        }
         val snapshot = current.copy(
             tunPolicyPending = pendingPolicy.size.toLong(),
             tunPolicyInFlight = inFlightPolicy.size.toLong(),
-            tunPolicyAllowed = current.tunPolicyAllowed + if (decision == SplitTunnelDecision.ALLOW) 1 else 0,
-            tunPolicyDropped = current.tunPolicyDropped + if (decision == SplitTunnelDecision.DROP) 1 else 0,
+            tunPolicyDropped = current.tunPolicyDropped + 1,
+            tunPacketsDropped = current.tunPacketsDropped + 1,
+            tunLastDropReason = "tun_policy_drop",
             lastError = null,
         )
         snapshots[handle] = snapshot

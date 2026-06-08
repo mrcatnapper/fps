@@ -666,11 +666,13 @@ Linux-specific runtime is separate:
   skeleton that reads from the duplicated fd, parses IPv4 TCP/UDP 5-tuples,
   exposes bounded metadata for Kotlin split-tunnel policy decisions and records
   non-secret counters/drop reasons. Packet bytes stay in native state. A
-  policy `allow` decision currently releases the packet from native in-flight
-  accounting only; it does not send the packet through FPS until native carrier
-  enqueue is added. TUN reattach/clear drops pending and in-flight policy
-  packets from the old fd. Native FPS auth, carrier I/O and covert enqueue
-  remain follow-up work;
+  policy `allow` decision now attempts to hand the native-owned packet to an
+  outbound native transport seam. Until real native carrier auth/I/O is wired,
+  the default runtime has no carrier transport and reports
+  `no_carrier_transport` with explicit enqueue rejected counters instead of
+  silently treating the packet as forwarded. TUN reattach/clear drops pending
+  and in-flight policy packets from the old fd. Native FPS auth, carrier I/O
+  and real covert enqueue remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -698,9 +700,12 @@ Linux-specific runtime is separate:
   its Boost.Asio executor, post deterministic test commands and start/stop a
   first TUN pump skeleton. That pump currently reads packets, parses
   TCP/UDP 5-tuples, exposes metadata to Kotlin policy and accepts allow/drop
-  completion decisions. It does not yet run native FPS auth, raw carrier I/O or
-  covert datagram enqueue, so production Android code must not interpret
-  `allow` as successful packet forwarding yet.
+  completion decisions. `ALLOW` reaches a native outbound seam and is counted
+  separately as attempted/accepted/rejected enqueue; without a carrier
+  transport it fails with `no_carrier_transport`. The runtime does not yet run
+  native FPS auth or raw carrier I/O, so production Android code must not treat
+  policy allow as successful remote delivery until the native carrier is
+  attached.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

@@ -4,6 +4,75 @@
 
 ## 2026-06-08
 
+### Android native TUN packet enqueue bridge
+
+Goal:
+
+- Close the next Android runtime gap after policy metadata: when Kotlin
+  completes a native TUN packet as `ALLOW`, native code must either hand the
+  native-owned packet bytes to an outbound transport seam or return a clear
+  no-transport diagnostic. Allowed packets must no longer be silently consumed
+  as accounting-only success.
+
+Plan:
+
+- Add focused tests first for the new contract:
+  - `ALLOW` with no native outbound sink returns `no_carrier_transport` and
+    keeps counters diagnosable;
+  - `DROP` releases packet state without touching the outbound sink;
+  - `ALLOW` with an installed fake/capture sink passes exact packet bytes once;
+  - queue/backpressure rejection releases in-flight state without pretending the
+    packet was forwarded.
+- Add a minimal native outbound packet sink interface inside the Android native
+  runtime. The default production state has no sink until real native carrier
+  auth/I/O exists.
+- Extend native/JNI/Kotlin snapshots with non-secret enqueue counters:
+  attempted, accepted and rejected.
+- Keep raw packet bytes inside native code. JNI exposes only test/control
+  metadata and counters, not payload samples.
+- Update Android boundary/spec/testing docs after implementation.
+
+Verification target:
+
+- `tools/run_android_checks.sh --docker`
+- `tools/run_android_checks.sh --docker-managed-device`
+- focused local Gradle/JVM tests if the Docker lane is too slow during
+  iteration
+- `git diff --check`
+
+Completed:
+
+- Added native snapshot counters for outbound TUN enqueue attempts, accepted
+  packets and rejected packets.
+- Changed `ALLOW` completion semantics: policy allow now attempts the native
+  outbound packet seam. With no carrier transport installed, native returns
+  `no_carrier_transport`, increments rejected counters and records a drop
+  reason instead of treating the packet as forwarded.
+- Kept `DROP` as a local policy drop that does not touch the outbound seam.
+- Added a capture sink used only by instrumented tests to verify exact
+  native-owned packet bytes reach the outbound seam by SHA-256 digest. Ordinary
+  snapshots still expose only metadata/counters.
+- Kept the capture sink out of the production-facing `FpsNative` Kotlin facade;
+  instrumented tests access it through a debug-source `FpsNativeTestHooks`
+  wrapper backed by separate JNI symbols.
+- Added `assembleRelease` to the Android host/Docker check lane so debug-only
+  hooks cannot become an accidental production-variant dependency.
+- Added JVM fake-backend coverage for no-carrier allow and policy drop
+  behavior.
+- Extended Android instrumented smoke with default no-carrier rejection, capture
+  sink accept and capture sink reject/backpressure-style behavior.
+- Updated Android boundary, testing, specification and roadmap notes.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check origin/develop..HEAD`
+
 ### Android native TUN policy bridge
 
 Goal:

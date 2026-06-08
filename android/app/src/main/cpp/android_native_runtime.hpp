@@ -35,6 +35,9 @@ struct NativeRuntimeSnapshotFields {
     std::uint64_t tun_policy_allowed = 0;
     std::uint64_t tun_policy_dropped = 0;
     std::uint64_t tun_policy_queue_full = 0;
+    std::uint64_t tun_covert_enqueue_attempted = 0;
+    std::uint64_t tun_covert_enqueue_accepted = 0;
+    std::uint64_t tun_covert_enqueue_rejected = 0;
     std::uint64_t commands_posted = 0;
     std::uint64_t commands_completed = 0;
     std::string last_error;
@@ -59,6 +62,8 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> std::vector<NativeTunPolicyPacketFields>;
 [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native

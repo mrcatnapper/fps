@@ -194,15 +194,17 @@ tools/run_android_checks.sh --host
 ./gradlew :android:app:tasks --all
 ./gradlew :android:app:testDebugUnitTest
 ./gradlew :android:app:assembleDebug
+./gradlew :android:app:assembleRelease
 ./gradlew :android:app:assembleDebugAndroidTest
 ```
 
-`tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
-and assembles the instrumented test APK. It does not require an emulator. The
-JVM tests cover Android client-profile parsing, fail-closed split-tunnel policy,
-the headless VPN runtime state machine and the headless carrier probe runner
-with fake platform hooks/transports. They also cover profile-driven carrier
-probe planning,
+`tools/run_android_checks.sh --host` runs JVM unit tests, assembles debug and
+release APKs, and assembles the instrumented test APK. It does not require an
+emulator. The release APK smoke keeps debug-only test hooks from becoming an
+accidental production dependency. The JVM tests cover Android client-profile
+parsing, fail-closed split-tunnel policy, the headless VPN runtime state machine
+and the headless carrier probe runner with fake platform hooks/transports. They
+also cover profile-driven carrier probe planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
 HTTPS/WSS carrier probe transport factory through MockWebServer. They also
