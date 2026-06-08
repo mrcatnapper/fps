@@ -10,7 +10,7 @@ import org.junit.Test
 import java.net.Socket
 import java.util.Base64
 
-class HeadlessCarrierManagerTest {
+class HeadlessCarrierProbeManagerTest {
     private val profile = AndroidClientProfileParser.parse(
         """
         {
@@ -35,8 +35,8 @@ class HeadlessCarrierManagerTest {
     @Test
     fun startsOneRunnerPerCarrierAndProtectsBeforeConnect() {
         val hooks = FakeCarrierHooks()
-        val factory = FakeCarrierTransportFactory(events = hooks.events)
-        val manager = HeadlessCarrierManager(profile, hooks, factory)
+        val factory = FakeCarrierProbeTransportFactory(events = hooks.events)
+        val manager = HeadlessCarrierProbeManager(profile, hooks, factory)
 
         manager.start(nowMs = 1000)
 
@@ -45,14 +45,14 @@ class HeadlessCarrierManagerTest {
         assertEquals(listOf(100, 101), factory.connectOrder)
         assertTrue(hooks.events.indexOf("protect:100") < hooks.events.indexOf("connect:100"))
         assertTrue(hooks.events.indexOf("protect:101") < hooks.events.indexOf("connect:101"))
-        assertEquals(2, manager.statuses().count { it.state == CarrierRuntimeState.RUNNING })
+        assertEquals(2, manager.statuses().count { it.state == CarrierProbeRuntimeState.RUNNING })
     }
 
     @Test
     fun ticksPeriodicHttpsProbeByInterval() {
         val hooks = FakeCarrierHooks()
-        val factory = FakeCarrierTransportFactory()
-        val manager = HeadlessCarrierManager(profile, hooks, factory)
+        val factory = FakeCarrierProbeTransportFactory()
+        val manager = HeadlessCarrierProbeManager(profile, hooks, factory)
 
         manager.start(nowMs = 1000)
         manager.tick(nowMs = 1000)
@@ -68,8 +68,8 @@ class HeadlessCarrierManagerTest {
     @Test
     fun reconnectsPersistentWssAfterProbeFailure() {
         val hooks = FakeCarrierHooks()
-        val factory = FakeCarrierTransportFactory()
-        val manager = HeadlessCarrierManager(
+        val factory = FakeCarrierProbeTransportFactory()
+        val manager = HeadlessCarrierProbeManager(
             profile,
             hooks,
             factory,
@@ -81,7 +81,7 @@ class HeadlessCarrierManagerTest {
         factory.created[1].failNextProbe = "wss_disconnect"
         manager.tick(nowMs = 0)
 
-        assertEquals(CarrierRuntimeState.BACKOFF, manager.statuses()[1].state)
+        assertEquals(CarrierProbeRuntimeState.BACKOFF, manager.statuses()[1].state)
         assertEquals("wss_disconnect", manager.statuses()[1].lastError)
         assertEquals(1, manager.statuses()[1].reconnects)
 
@@ -89,27 +89,27 @@ class HeadlessCarrierManagerTest {
         assertEquals(1, factory.created.count { it.plan.id == 1 })
 
         manager.tick(nowMs = 1000)
-        assertEquals(CarrierRuntimeState.RUNNING, manager.statuses()[1].state)
+        assertEquals(CarrierProbeRuntimeState.RUNNING, manager.statuses()[1].state)
         assertEquals(2, factory.created.count { it.plan.id == 1 })
     }
 
     @Test
     fun resolveConnectAndProbeFailuresUseBackoffWithoutCrashing() {
         val resolveHooks = FakeCarrierHooks(resolveEndpoints = emptyList())
-        val resolveManager = HeadlessCarrierManager(profile, resolveHooks, FakeCarrierTransportFactory(), initialBackoffMs = 500)
+        val resolveManager = HeadlessCarrierProbeManager(profile, resolveHooks, FakeCarrierProbeTransportFactory(), initialBackoffMs = 500)
 
         resolveManager.start(nowMs = 10)
 
-        assertEquals(CarrierRuntimeState.BACKOFF, resolveManager.statuses()[0].state)
+        assertEquals(CarrierProbeRuntimeState.BACKOFF, resolveManager.statuses()[0].state)
         assertEquals("resolve_empty", resolveManager.statuses()[0].lastError)
         assertEquals(500L, resolveManager.statuses()[0].nextRetryDelayMs)
 
-        val connectFactory = FakeCarrierTransportFactory(connectErrors = mutableMapOf(0 to "connect_failed"))
-        val connectManager = HeadlessCarrierManager(profile, FakeCarrierHooks(), connectFactory, initialBackoffMs = 500)
+        val connectFactory = FakeCarrierProbeTransportFactory(connectErrors = mutableMapOf(0 to "connect_failed"))
+        val connectManager = HeadlessCarrierProbeManager(profile, FakeCarrierHooks(), connectFactory, initialBackoffMs = 500)
 
         connectManager.start(nowMs = 10)
 
-        assertEquals(CarrierRuntimeState.BACKOFF, connectManager.statuses()[0].state)
+        assertEquals(CarrierProbeRuntimeState.BACKOFF, connectManager.statuses()[0].state)
         assertEquals("connect_failed", connectManager.statuses()[0].lastError)
         assertEquals(1, connectManager.statuses()[0].attempts)
     }
@@ -117,12 +117,12 @@ class HeadlessCarrierManagerTest {
     @Test
     fun socketProtectionFailureDoesNotConnect() {
         val hooks = FakeCarrierHooks(protectResult = false)
-        val factory = FakeCarrierTransportFactory()
-        val manager = HeadlessCarrierManager(profile, hooks, factory)
+        val factory = FakeCarrierProbeTransportFactory()
+        val manager = HeadlessCarrierProbeManager(profile, hooks, factory)
 
         manager.start(nowMs = 0)
 
-        assertEquals(CarrierRuntimeState.BACKOFF, manager.statuses()[0].state)
+        assertEquals(CarrierProbeRuntimeState.BACKOFF, manager.statuses()[0].state)
         assertEquals("socket_protect_failed", manager.statuses()[0].lastError)
         assertTrue(factory.connectOrder.isEmpty())
         assertTrue(factory.created.all { it.closed })
@@ -130,19 +130,19 @@ class HeadlessCarrierManagerTest {
 
     @Test
     fun stopIsIdempotentAndClosesTransports() {
-        val manager = HeadlessCarrierManager(profile, FakeCarrierHooks(), FakeCarrierTransportFactory())
+        val manager = HeadlessCarrierProbeManager(profile, FakeCarrierHooks(), FakeCarrierProbeTransportFactory())
 
         manager.start(nowMs = 0)
         val firstStop = manager.stop()
         val secondStop = manager.stop()
 
-        assertEquals(2, firstStop.count { it.state == CarrierRuntimeState.STOPPED })
-        assertEquals(2, secondStop.count { it.state == CarrierRuntimeState.STOPPED })
+        assertEquals(2, firstStop.count { it.state == CarrierProbeRuntimeState.STOPPED })
+        assertEquals(2, secondStop.count { it.state == CarrierProbeRuntimeState.STOPPED })
     }
 
     @Test
     fun statusDoesNotExposeSecrets() {
-        val manager = HeadlessCarrierManager(profile, FakeCarrierHooks(), FakeCarrierTransportFactory())
+        val manager = HeadlessCarrierProbeManager(profile, FakeCarrierHooks(), FakeCarrierProbeTransportFactory())
 
         manager.start(nowMs = 0)
         val text = manager.statuses().toString()
@@ -155,15 +155,15 @@ class HeadlessCarrierManagerTest {
     @Test
     fun controllerCanOwnCarrierRunnerLifecycle() {
         val hooks = FakeCarrierHooks()
-        val factory = FakeCarrierTransportFactory(events = hooks.events)
+        val factory = FakeCarrierProbeTransportFactory(events = hooks.events)
         val controller = HeadlessVpnController(profile, hooks)
 
         assertEquals(VpnRuntimeState.WAITING_FOR_LEASE, controller.start())
-        val started = controller.startCarrierRunners(factory, nowMs = 0)
-        val stopped = controller.stopCarrierRunners()
+        val started = controller.startCarrierProbeRunners(factory, nowMs = 0)
+        val stopped = controller.stopCarrierProbeRunners()
 
         assertEquals(2, started.size)
-        assertEquals(2, stopped.count { it.state == CarrierRuntimeState.STOPPED })
+        assertEquals(2, stopped.count { it.state == CarrierProbeRuntimeState.STOPPED })
         assertEquals(VpnRuntimeState.WAITING_FOR_LEASE, controller.state)
     }
 }
@@ -198,15 +198,15 @@ private class FakeCarrierHooks(
     override fun uidForFlow(flow: org.fpsproject.client.policy.TunFlowTuple) = -1
 }
 
-private class FakeCarrierTransportFactory(
+private class FakeCarrierProbeTransportFactory(
     private val connectErrors: MutableMap<Int, String> = mutableMapOf(),
     private val events: MutableList<String> = mutableListOf(),
-) : CarrierTransportFactory {
-    val created = mutableListOf<FakeCarrierTransport>()
+) : CarrierProbeTransportFactory {
+    val created = mutableListOf<FakeCarrierProbeTransport>()
     val connectOrder = mutableListOf<Int>()
 
-    override fun create(plan: CarrierRuntimePlan): CarrierTransport {
-        val transport = FakeCarrierTransport(
+    override fun create(plan: CarrierProbeRuntimePlan): CarrierProbeTransport {
+        val transport = FakeCarrierProbeTransport(
             plan = plan,
             socketFd = 100 + created.size,
             connectErrors = connectErrors,
@@ -218,29 +218,29 @@ private class FakeCarrierTransportFactory(
     }
 }
 
-private class FakeCarrierTransport(
-    val plan: CarrierRuntimePlan,
+private class FakeCarrierProbeTransport(
+    val plan: CarrierProbeRuntimePlan,
     override val socketFd: Int,
     private val connectErrors: MutableMap<Int, String>,
     private val connectOrder: MutableList<Int>,
     private val events: MutableList<String>,
-) : CarrierTransport {
+) : CarrierProbeTransport {
     val probeTimes = mutableListOf<Long>()
     var failNextProbe: String? = null
     var closed = false
 
-    override fun connect(endpoint: ResolvedEndpoint): CarrierTransportResult {
+    override fun connect(endpoint: ResolvedEndpoint): CarrierProbeResult {
         events += "connect:$socketFd"
         connectOrder += socketFd
-        return connectErrors.remove(plan.id)?.let { CarrierTransportResult.failure(it) } ?: CarrierTransportResult.success()
+        return connectErrors.remove(plan.id)?.let { CarrierProbeResult.failure(it) } ?: CarrierProbeResult.success()
     }
 
-    override fun probe(nowMs: Long): CarrierTransportResult {
+    override fun probe(nowMs: Long): CarrierProbeResult {
         probeTimes += nowMs
         return failNextProbe?.let {
             failNextProbe = null
-            CarrierTransportResult.failure(it)
-        } ?: CarrierTransportResult.success()
+            CarrierProbeResult.failure(it)
+        } ?: CarrierProbeResult.success()
     }
 
     override fun close() {

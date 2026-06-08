@@ -2,7 +2,190 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-08
+
+### Android native TUN fd ownership
+
+Goal:
+
+- Move the current Android native runtime boundary from borrowed TUN fd metadata
+  to native-owned duplicate fd ownership, without starting native auth, raw
+  carrier I/O or the TUN packet pump.
+
+Planned steps:
+
+- Update Kotlin/JNI tests so `FpsNativeRuntime` expects
+  `tunFdOwnership=owned_duplicate`.
+- Add C++ RAII ownership for `dup(fd)` in the Android native runtime registry.
+- Keep Kotlin/Android ownership of the original `ParcelFileDescriptor`; native
+  owns and closes only the duplicate.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Replaced the borrowed attach API with
+  `attachTunFdOwnedDuplicate(...)` in Kotlin/JNI.
+- Added a small C++ `UniqueFd` RAII wrapper and duplicated the Android TUN fd
+  before storing it in native runtime state.
+- Kept original Kotlin fd ownership unchanged; `HeadlessNativeVpnRuntime` now
+  treats anything except `owned_duplicate` as attach failure and fails closed.
+- Updated JVM tests, connected JNI smoke coverage and Android boundary docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ## 2026-06-07
+
+### Android native runtime orchestration
+
+Goal:
+
+- Connect the headless Android VPN controller and the JNI native runtime handle
+  without starting real native auth, carrier I/O or the TUN pump yet.
+- Make the lease -> Android TUN fd -> borrowed native attach order explicit and
+  testable.
+
+Planned steps:
+
+- Add a headless Kotlin coordinator that owns `HeadlessVpnController` and
+  `FpsNativeRuntime`.
+- Update `FpsVpnService` to use the coordinator while keeping current service
+  behavior.
+- Add JVM tests for successful lease/fd attach, native attach failure,
+  idempotent stop and snapshot secrecy.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Added `HeadlessNativeVpnRuntime` as the Kotlin lifecycle bridge between the
+  headless VPN controller and `FpsNativeRuntime`.
+- Updated `FpsVpnService` to own the coordinator instead of only the controller.
+- Kept the current boundary intentionally non-I/O: the coordinator establishes
+  Android TUN after lease delivery and attaches the fd to native as borrowed
+  metadata, but does not start native auth, raw TLS carrier I/O or the TUN pump.
+- Added JVM coverage for native runtime creation, lease-triggered TUN attach,
+  native attach failure, fd close behavior, idempotent stop and snapshot
+  secrecy.
+- Updated Android boundary/spec/testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
+### Android JNI boundary hardening
+
+Goal:
+
+- Keep the Android native boundary narrow before real auth/TUN pump wiring.
+- Separate JNI object conversion, native runtime state and exported JNI
+  entrypoints.
+- Make current TUN fd attachment explicitly borrowed, so future pump ownership
+  can be added without ambiguity.
+
+Planned steps:
+
+- Split Android native runtime registry/state out of `fps_android_native.cpp`.
+- Move JNI object construction and UTF/byte-array helpers into a small helper
+  module.
+- Add `tunFdOwnership` to non-secret runtime snapshots, initially
+  `borrowed` for attached fds and `null` otherwise.
+- Strengthen JVM and instrumented tests for zero handles, invalid handles,
+  invalid fd/mtu and snapshot secrecy.
+- Run Android Docker checks plus the usual local regression checks.
+
+Completed:
+
+- Split Android JNI code into thin exported entrypoints, native runtime
+  registry/state and JNI conversion helpers.
+- Kept native runtime registry/state out of public headers except for the
+  minimal handle/snapshot API.
+- Added `tunFdOwnership` snapshot metadata. Current TUN fd attachment is
+  explicitly `borrowed`; native code stores metadata only and never closes the
+  Java/Kotlin-owned descriptor.
+- Strengthened JVM and connected native smoke tests for zero native handles,
+  invalid handles, invalid fd/mtu, borrowed ownership and snapshot secrecy.
+- Updated Android boundary/spec/testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
+### Android native runtime boundary
+
+Goal:
+
+- Prevent the Android layer from growing into a second FPS protocol stack.
+- Add the first handle-based JNI runtime boundary that can later own native
+  core objects, TUN pump wiring and raw TLS/TCP carrier sessions.
+
+Decisions:
+
+- Treat OkHttp HTTPS/WSS code as carrier probe/keepalive traffic only. It is
+  not an FPS wire carrier because OkHttp terminates TLS and does not expose the
+  raw TLS/TCP byte stream required by `TlsTcpCarrierSession`.
+- Keep Kotlin responsible for Android orchestration: profile UX parsing,
+  `VpnService` permission/fd creation, socket protection, underlying-network
+  DNS, UID policy and status presentation.
+- Keep Zero-RTT, TLS record parsing, classified records, fragmentation,
+  shaper decisions and the TUN packet pump in native C++ core.
+- The first native runtime facade stores validated profile text, owns an
+  `io_context`, exposes non-secret snapshots and accepts a borrowed TUN fd.
+  It does not start production network I/O yet.
+
+Planned steps:
+
+- Rename Android carrier transport/manager abstractions to carrier probe names.
+- Add `FpsNativeRuntime` handle wrapper plus JNI lifecycle/snapshot/TUN attach
+  functions.
+- Add JVM wrapper tests with a fake backend and connected JNI smoke coverage.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Renamed Android carrier runner/transport abstractions to `CarrierProbe*`,
+  `HeadlessCarrierProbeManager` and `OkHttpCarrierProbeTransportFactory`.
+- Added `FpsNativeRuntime` and `FpsNativeBackend` as a Kotlin handle wrapper
+  over JNI.
+- Added native runtime handle registry with non-secret snapshots and borrowed
+  TUN fd attachment. The native side does not close Java-owned fds in this
+  increment.
+- Added JVM tests for profile validation before native handle creation,
+  snapshot/close idempotency, invalid closed runtime handling and borrowed TUN
+  fd behavior.
+- Extended connected Android smoke coverage so a real device/emulator can verify
+  native runtime handle/snapshot/TUN-attach JNI calls.
+- Updated Android boundary, roadmap, beta status, specification and testing
+  docs to make OkHttp probe-only and raw TLS/TCP native FPS carrier ownership
+  explicit.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
 
 ### Android PR hardening: TUN contract and runtime snapshot
 

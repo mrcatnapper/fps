@@ -9,7 +9,10 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <utility>
 
+#include "android_jni_helpers.hpp"
+#include "android_native_runtime.hpp"
 #include "fps/core/crypto.hpp"
 #include "fps/core/enum.hpp"
 #include "fps/log/logging.hpp"
@@ -19,41 +22,6 @@
 #include "fps/net/tun_packet.hpp"
 
 namespace {
-
-[[nodiscard]] auto find_class(JNIEnv* env, const char* name) -> jclass { return env->FindClass(name); }
-
-[[nodiscard]] auto protocol_value(JNIEnv* env, fps::net::TunIpProtocol protocol) -> jobject {
-    const auto class_name = "org/fpsproject/client/policy/TunProtocol";
-    auto* protocol_class = find_class(env, class_name);
-    if(protocol_class == nullptr) {
-        return nullptr;
-    }
-    const auto* field_name = protocol == fps::net::TunIpProtocol::tcp ? "TCP" : "UDP";
-    auto* field = env->GetStaticFieldID(protocol_class, field_name, ("L" + std::string{class_name} + ";").c_str());
-    if(field == nullptr) {
-        return nullptr;
-    }
-    return env->GetStaticObjectField(protocol_class, field);
-}
-
-[[nodiscard]] auto to_tuple_object(JNIEnv* env, const fps::net::TunFlowTuple& tuple) -> jobject {
-    auto* tuple_class = find_class(env, "org/fpsproject/client/policy/TunFlowTuple");
-    if(tuple_class == nullptr) {
-        return nullptr;
-    }
-    auto* constructor = env->GetMethodID(tuple_class, "<init>", "(Lorg/fpsproject/client/policy/TunProtocol;JIJI)V");
-    if(constructor == nullptr) {
-        return nullptr;
-    }
-    auto* protocol = protocol_value(env, tuple.protocol);
-    if(protocol == nullptr) {
-        return nullptr;
-    }
-    return env->NewObject(
-        tuple_class, constructor, protocol, static_cast<jlong>(tuple.source_ipv4), static_cast<jint>(tuple.source_port),
-        static_cast<jlong>(tuple.destination_ipv4), static_cast<jint>(tuple.destination_port)
-    );
-}
 
 [[nodiscard]] auto ignored_trace_value() noexcept -> int { return 42; }
 
@@ -137,26 +105,38 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_fpsproject_client_nativebridge_Fps
 }
 
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_parseIpv4FlowTuple(JNIEnv* env, jobject /* self */, jbyteArray packet) {
-    if(packet == nullptr) {
+    auto bytes = fps::android_jni::byte_array_to_bytes(env, packet);
+    if(!bytes) {
         return nullptr;
     }
-    const auto size = env->GetArrayLength(packet);
-    if(size <= 0) {
-        return nullptr;
-    }
-
-    auto* raw = env->GetByteArrayElements(packet, nullptr);
-    if(raw == nullptr) {
-        return nullptr;
-    }
-    const std::span<const std::byte> bytes{
-        reinterpret_cast<const std::byte*>(raw),
-        static_cast<std::size_t>(size),
-    };
-    const auto parsed = fps::net::parse_ipv4_flow_tuple(bytes);
-    env->ReleaseByteArrayElements(packet, raw, JNI_ABORT);
+    const auto parsed = fps::net::parse_ipv4_flow_tuple(std::span<const std::byte>{bytes->data(), bytes->size()});
     if(!parsed) {
         return nullptr;
     }
-    return to_tuple_object(env, parsed.value());
+    return fps::android_jni::tun_flow_tuple_object(env, parsed.value());
+}
+
+extern "C" JNIEXPORT jlong JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_createRuntime(JNIEnv* env, jobject /* self */, jstring profile_text) {
+    auto profile = fps::android_jni::jstring_to_string(env, profile_text);
+    if(!profile || profile->empty()) {
+        return 0;
+    }
+    return static_cast<jlong>(fps::android_native::create_runtime(std::move(profile.value())));
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_closeRuntime(JNIEnv* /* env */, jobject /* self */, jlong handle) {
+    fps::android_native::close_runtime(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_runtimeSnapshot(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::runtime_snapshot(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_attachTunFdOwnedDuplicate(JNIEnv* env, jobject /* self */, jlong handle, jint fd, jint mtu) {
+    const auto snapshot = fps::android_native::attach_tun_fd_owned_duplicate(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(fd), static_cast<int>(mtu)
+    );
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }

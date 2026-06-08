@@ -58,7 +58,7 @@ data class ResolvedEndpoint(
     val port: Int,
 )
 
-data class CarrierRuntimePlan(
+data class CarrierProbeRuntimePlan(
     val id: Int,
     val probe: CarrierProbeProfile,
 )
@@ -72,7 +72,7 @@ data class VpnRuntimeSnapshot(
     val state: VpnRuntimeState,
     val lastError: String?,
     val tun: TunRuntimeSnapshot,
-    val carriers: List<CarrierRuntimeStatus>,
+    val carrierProbes: List<CarrierProbeRuntimeStatus>,
 )
 
 interface AndroidPlatformHooks {
@@ -97,11 +97,11 @@ class HeadlessVpnController(
     private val profile: AndroidClientProfile,
     private val hooks: AndroidPlatformHooks,
 ) {
-    private val carrierPlans = profile.carriers.mapIndexed { index, probe ->
-        CarrierRuntimePlan(id = index, probe = probe)
+    private val carrierProbePlans = profile.carriers.mapIndexed { index, probe ->
+        CarrierProbeRuntimePlan(id = index, probe = probe)
     }
     private val splitTunnelPolicy = SplitTunnelPolicy(profile.splitTunnel.allowedUids, PlatformUidResolver(hooks))
-    private var carrierManager: HeadlessCarrierManager? = null
+    private var carrierProbeManager: HeadlessCarrierProbeManager? = null
 
     var state: VpnRuntimeState = VpnRuntimeState.STOPPED
         private set
@@ -150,30 +150,30 @@ class HeadlessVpnController(
         return true
     }
 
-    fun carrierPlans(): List<CarrierRuntimePlan> = carrierPlans.toList()
+    fun carrierProbePlans(): List<CarrierProbeRuntimePlan> = carrierProbePlans.toList()
 
     fun resolveServerEndpoint(): List<ResolvedEndpoint> {
         return hooks.resolveOnUnderlyingNetwork(profile.server.host, profile.server.port)
     }
 
-    fun resolveCarrierEndpoint(plan: CarrierRuntimePlan): List<ResolvedEndpoint> {
+    fun resolveCarrierEndpoint(plan: CarrierProbeRuntimePlan): List<ResolvedEndpoint> {
         return hooks.resolveOnUnderlyingNetwork(plan.probe.endpoint.host, plan.probe.endpoint.port)
     }
 
-    fun startCarrierRunners(transportFactory: CarrierTransportFactory, nowMs: Long = 0): List<CarrierRuntimeStatus> {
-        if (carrierManager == null) {
-            carrierManager = HeadlessCarrierManager(profile, hooks, transportFactory)
+    fun startCarrierProbeRunners(transportFactory: CarrierProbeTransportFactory, nowMs: Long = 0): List<CarrierProbeRuntimeStatus> {
+        if (carrierProbeManager == null) {
+            carrierProbeManager = HeadlessCarrierProbeManager(profile, hooks, transportFactory)
         }
-        return carrierManager!!.start(nowMs)
+        return carrierProbeManager!!.start(nowMs)
     }
 
-    fun tickCarrierRunners(nowMs: Long): List<CarrierRuntimeStatus> {
-        return carrierManager?.tick(nowMs) ?: emptyList()
+    fun tickCarrierProbeRunners(nowMs: Long): List<CarrierProbeRuntimeStatus> {
+        return carrierProbeManager?.tick(nowMs) ?: emptyList()
     }
 
-    fun stopCarrierRunners(): List<CarrierRuntimeStatus> {
-        val stopped = carrierManager?.stop() ?: emptyList()
-        carrierManager = null
+    fun stopCarrierProbeRunners(): List<CarrierProbeRuntimeStatus> {
+        val stopped = carrierProbeManager?.stop() ?: emptyList()
+        carrierProbeManager = null
         return stopped
     }
 
@@ -187,12 +187,12 @@ class HeadlessVpnController(
             state = state,
             lastError = lastError,
             tun = TunRuntimeSnapshot(fdPresent = activeTun != null, mtu = activeTun?.mtu),
-            carriers = carrierManager?.statuses() ?: emptyList(),
+            carrierProbes = carrierProbeManager?.statuses() ?: emptyList(),
         )
     }
 
     fun stop(): VpnRuntimeState {
-        stopCarrierRunners()
+        stopCarrierProbeRunners()
         tun?.close()
         tun = null
         lastError = null
@@ -200,7 +200,11 @@ class HeadlessVpnController(
         return state
     }
 
-    private fun fail(error: String) {
+    internal fun fail(error: String, closeTun: Boolean = false) {
+        if (closeTun) {
+            tun?.close()
+            tun = null
+        }
         lastError = error
         state = VpnRuntimeState.FAILED
     }

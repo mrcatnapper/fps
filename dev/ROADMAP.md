@@ -171,16 +171,18 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add a headless Android profile/runtime layer for carrier probe metadata,
   split-tunnel UID allowlists, carrier endpoint resolution and two-phase
   lease-before-TUN state transitions with fake platform hooks.
-- [x] Add a deterministic headless carrier runner with fake transports,
+- [x] Add a deterministic headless carrier probe runner with fake transports,
   protect-before-connect ordering, reconnect/backoff counters and JVM tests.
-- [x] Add OkHttp-backed live HTTPS/WSS Android carrier transports with
+- [x] Add OkHttp-backed live HTTPS/WSS Android carrier probe transports with
   Java-socket protection, resolved-endpoint DNS and JVM MockWebServer tests.
 - [x] Add first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start/stop, lease-triggered `VpnService.Builder` establishment and
   idempotent fd close.
+- [x] Add first JNI native runtime handle/snapshot boundary with native-owned
+  duplicate TUN fd attachment.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: implement native auth/TUN pump wiring, Android
-  lifecycle resilience/status and the native/Kotlin async facade.
+  `dev/ANDROID_APP_PLAN.md`: implement native raw TLS/TCP auth/TUN pump wiring,
+  Android lifecycle resilience/status and the native/Kotlin async facade.
 
 ## Phase 7: Fuzzing And Soak
 

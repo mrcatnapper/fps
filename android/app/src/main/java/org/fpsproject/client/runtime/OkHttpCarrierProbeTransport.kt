@@ -17,27 +17,27 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 
-class OkHttpCarrierTransportFactory(
+class OkHttpCarrierProbeTransportFactory(
     private val hooks: AndroidPlatformHooks,
     clientBuilder: OkHttpClient.Builder = OkHttpClient.Builder(),
     private val connectTimeoutMs: Long = 5000,
-) : CarrierTransportFactory {
+) : CarrierProbeTransportFactory {
     private val templateClient = clientBuilder.build()
 
-    override fun create(plan: CarrierRuntimePlan): CarrierTransport {
+    override fun create(plan: CarrierProbeRuntimePlan): CarrierProbeTransport {
         return when (plan.probe.mode) {
-            CarrierProbeMode.HTTPS_GET -> OkHttpHttpsGetCarrierTransport(plan, hooks, templateClient, connectTimeoutMs)
-            CarrierProbeMode.WSS -> OkHttpWssCarrierTransport(plan, hooks, templateClient, connectTimeoutMs)
+            CarrierProbeMode.HTTPS_GET -> OkHttpHttpsGetCarrierProbeTransport(plan, hooks, templateClient, connectTimeoutMs)
+            CarrierProbeMode.WSS -> OkHttpWssCarrierProbeTransport(plan, hooks, templateClient, connectTimeoutMs)
         }
     }
 }
 
-private abstract class BaseOkHttpCarrierTransport(
-    protected val plan: CarrierRuntimePlan,
+private abstract class BaseOkHttpCarrierProbeTransport(
+    protected val plan: CarrierProbeRuntimePlan,
     private val hooks: AndroidPlatformHooks,
     private val templateClient: OkHttpClient,
     protected val connectTimeoutMs: Long,
-) : CarrierTransport {
+) : CarrierProbeTransport {
     override val socketFd: Int = -1
     override val protectsSocketsInternally: Boolean = true
 
@@ -79,47 +79,47 @@ private abstract class BaseOkHttpCarrierTransport(
     }
 }
 
-private class OkHttpHttpsGetCarrierTransport(
-    plan: CarrierRuntimePlan,
+private class OkHttpHttpsGetCarrierProbeTransport(
+    plan: CarrierProbeRuntimePlan,
     hooks: AndroidPlatformHooks,
     templateClient: OkHttpClient,
     connectTimeoutMs: Long,
-) : BaseOkHttpCarrierTransport(plan, hooks, templateClient, connectTimeoutMs) {
+) : BaseOkHttpCarrierProbeTransport(plan, hooks, templateClient, connectTimeoutMs) {
     private var activeClient: OkHttpClient? = null
 
-    override fun connect(endpoint: ResolvedEndpoint): CarrierTransportResult {
+    override fun connect(endpoint: ResolvedEndpoint): CarrierProbeResult {
         activeClient = buildClient(endpoint)
         return getOnce()
     }
 
-    override fun probe(nowMs: Long): CarrierTransportResult = getOnce()
+    override fun probe(nowMs: Long): CarrierProbeResult = getOnce()
 
-    private fun getOnce(): CarrierTransportResult {
-        val current = activeClient ?: return CarrierTransportResult.failure("transport_not_connected")
+    private fun getOnce(): CarrierProbeResult {
+        val current = activeClient ?: return CarrierProbeResult.failure("transport_not_connected")
         return try {
             current.newCall(request("https")).execute().use { response ->
                 response.toResult()
             }
         } catch (error: IOException) {
-            CarrierTransportResult.failure(errorName(error))
+            CarrierProbeResult.failure(errorName(error))
         }
     }
 
-    private fun Response.toResult(): CarrierTransportResult {
+    private fun Response.toResult(): CarrierProbeResult {
         return if (code in 200..399) {
-            CarrierTransportResult.success()
+            CarrierProbeResult.success()
         } else {
-            CarrierTransportResult.failure("http_status_$code")
+            CarrierProbeResult.failure("http_status_$code")
         }
     }
 }
 
-private class OkHttpWssCarrierTransport(
-    plan: CarrierRuntimePlan,
+private class OkHttpWssCarrierProbeTransport(
+    plan: CarrierProbeRuntimePlan,
     hooks: AndroidPlatformHooks,
     templateClient: OkHttpClient,
     connectTimeoutMs: Long,
-) : BaseOkHttpCarrierTransport(plan, hooks, templateClient, connectTimeoutMs) {
+) : BaseOkHttpCarrierProbeTransport(plan, hooks, templateClient, connectTimeoutMs) {
     @Volatile
     private var webSocket: WebSocket? = null
 
@@ -128,13 +128,13 @@ private class OkHttpWssCarrierTransport(
 
     private val probeSequence = AtomicInteger(0)
 
-    override fun connect(endpoint: ResolvedEndpoint): CarrierTransportResult {
+    override fun connect(endpoint: ResolvedEndpoint): CarrierProbeResult {
         val current = buildClient(endpoint)
         val opened = CountDownLatch(1)
         val failed = CountDownLatch(1)
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                this@OkHttpWssCarrierTransport.webSocket = webSocket
+                this@OkHttpWssCarrierProbeTransport.webSocket = webSocket
                 opened.countDown()
             }
 
@@ -160,22 +160,22 @@ private class OkHttpWssCarrierTransport(
         current.newWebSocket(request("https"), listener)
         val openedOk = opened.await(connectTimeoutMs, TimeUnit.MILLISECONDS)
         if (openedOk) {
-            return CarrierTransportResult.success()
+            return CarrierProbeResult.success()
         }
         if (failed.count == 0L) {
-            return CarrierTransportResult.failure(closedError ?: "websocket_connect_failed")
+            return CarrierProbeResult.failure(closedError ?: "websocket_connect_failed")
         }
-        return CarrierTransportResult.failure("websocket_connect_timeout")
+        return CarrierProbeResult.failure("websocket_connect_timeout")
     }
 
-    override fun probe(nowMs: Long): CarrierTransportResult {
-        closedError?.let { return CarrierTransportResult.failure(it) }
-        val active = webSocket ?: return CarrierTransportResult.failure("transport_not_connected")
+    override fun probe(nowMs: Long): CarrierProbeResult {
+        closedError?.let { return CarrierProbeResult.failure(it) }
+        val active = webSocket ?: return CarrierProbeResult.failure("transport_not_connected")
         val message = "fps-probe:${plan.id}:$nowMs:${probeSequence.incrementAndGet()}"
         return if (active.send(message)) {
-            closedError?.let { CarrierTransportResult.failure(it) } ?: CarrierTransportResult.success()
+            closedError?.let { CarrierProbeResult.failure(it) } ?: CarrierProbeResult.success()
         } else {
-            CarrierTransportResult.failure("websocket_send_failed")
+            CarrierProbeResult.failure("websocket_send_failed")
         }
     }
 

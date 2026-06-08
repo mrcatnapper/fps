@@ -58,21 +58,37 @@ starts. It is a developer handoff document, not user/operator documentation.
   JNI library that reuses `parse_ipv4_flow_tuple(...)` for `arm64-v8a` and
   `x86_64`.
 - Added a headless Android profile/runtime layer that parses carrier probe
-  metadata and split-tunnel UID allowlists, exposes carrier runtime plans,
+  metadata and split-tunnel UID allowlists, exposes carrier probe runtime plans,
   resolves carrier endpoints through platform hooks and evaluates fail-closed
   UID policy decisions without opening real sockets.
-- Added a deterministic headless carrier manager that drives those carrier
-  plans with fake-friendly transports, enforces resolve/protect/connect order,
-  handles probe failures through bounded reconnect/backoff and exposes
-  non-secret carrier status counters.
-- Added an OkHttp-backed live carrier transport factory for Android HTTPS GET
-  and WSS probes. It keeps the manager contract intact, uses the
-  already-resolved underlying-network endpoint for DNS and protects each Java
-  `Socket` before connect through the platform hook.
+- Added a deterministic headless carrier probe manager that drives those
+  carrier probe plans with fake-friendly transports, enforces
+  resolve/protect/connect order, handles probe failures through bounded
+  reconnect/backoff and exposes non-secret carrier probe status counters.
+- Added an OkHttp-backed live carrier probe transport factory for Android HTTPS
+  GET and WSS keepalive probes. It keeps the probe-manager contract intact,
+  uses the already-resolved underlying-network endpoint for DNS and protects
+  each Java `Socket` before connect through the platform hook.
+- Clarified that OkHttp probes are not FPS wire carriers. OkHttp terminates TLS;
+  the actual FPS path must use native `TlsTcpCarrierSession` over raw TCP/TLS
+  streams so the core can parse carrier TLS records and insert classified FPS
+  TLS records.
 - Added the first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start, stop action, lease-triggered `VpnService.Builder`
   establishment, leased IPv4 address/route planning and idempotent
   `ParcelFileDescriptor` close through `HeadlessVpnController.stop()`.
+- Added the first `FpsNativeRuntime` JNI handle facade. It creates/owns native
+  runtime state behind an opaque handle, exposes non-secret snapshots and can
+  duplicate an Android TUN fd into native-owned RAII state without taking
+  ownership of the Java/Kotlin `ParcelFileDescriptor`. The JNI implementation
+  is split into entrypoints, runtime registry/state and object-conversion
+  helpers so future native auth/pump wiring does not accumulate in a single
+  monolithic binding file.
+- Added `HeadlessNativeVpnRuntime` as the first Kotlin lifecycle bridge between
+  `HeadlessVpnController` and `FpsNativeRuntime`. It validates profile text,
+  owns both layers, performs lease-triggered TUN establishment and attaches the
+  resulting fd to native as an owned duplicate. It intentionally does not start
+  native auth, carrier I/O or the TUN packet pump.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -88,9 +104,12 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
-- Wire the established `VpnService` fd into the native FPS TUN pump through a
-  JNI/async facade, then add lifecycle/reconnect and status reporting around
-  that pump.
+- Wire the established `VpnService` fd into the native FPS auth/TUN pump through
+  the JNI handle facade. Current `HeadlessNativeVpnRuntime` duplicates the fd
+  into native-owned RAII state and snapshots report
+  `tunFdOwnership=owned_duplicate`; the next step is to start the native auth
+  path and packet pump on that descriptor, then add lifecycle/reconnect and
+  status reporting around the pump.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 
@@ -99,11 +118,12 @@ starts. It is a developer handoff document, not user/operator documentation.
 - First Android beta should use app-owned carrier sessions. The Android app
   opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
-- Carrier behavior is app-configurable at the Android profile/runtime layer.
-  The current headless model supports HTTPS GET and WSS probe metadata plus a
-  fake-transport runner and a live OkHttp-backed HTTPS/WSS carrier transport
-  factory plus first `VpnService` TUN fd ownership. The next step is native
-  auth/pump wiring and Android lifecycle resilience, not changing protocol core.
+- Carrier probe behavior is app-configurable at the Android profile/runtime
+  layer. The current headless model supports HTTPS GET and WSS probe metadata
+  plus a fake-transport runner and a live OkHttp-backed HTTPS/WSS probe
+  transport factory plus first `VpnService` TUN fd ownership. The next step is
+  native raw TLS/TCP auth/pump wiring and Android lifecycle resilience, not
+  changing protocol core.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets use the fd hook and OkHttp-owned
   sockets use the Java `Socket` hook before the socket can be captured by the
@@ -114,8 +134,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Use two-phase TUN startup: authenticate and receive server lease first, then
   create/configure the Android `VpnService` fd for profiles with
   `tun.enabled=true` and start the native TUN pump. Current code implements fd
-  creation/ownership and non-secret runtime snapshots; native pump startup is
-  next.
+  creation/ownership, native-owned duplicate attachment
+  (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
+  non-secret runtime snapshots; native pump startup is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

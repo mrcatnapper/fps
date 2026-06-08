@@ -185,16 +185,20 @@ tools/run_android_checks.sh --host
 `tools/run_android_checks.sh --host` runs JVM unit tests, assembles the debug APK
 and assembles the instrumented test APK. It does not require an emulator. The
 JVM tests cover Android client-profile parsing, fail-closed split-tunnel policy,
-the headless VPN runtime state machine and the headless carrier runner with fake
-platform hooks/transports. They also cover profile-driven carrier planning,
+the headless VPN runtime state machine and the headless carrier probe runner
+with fake platform hooks/transports. They also cover profile-driven carrier
+probe planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
-HTTPS/WSS carrier transport factory through MockWebServer. They also cover
-Android TUN plan generation, `VpnService.Builder` call sequencing and idempotent
-TUN fd close ownership through fake builders. They also assert that
-lease-triggered TUN startup requires `tun.enabled=true` and that the headless
-runtime snapshot reports only non-secret state/TUN/carrier metadata. These
-checks still do not require an emulator or a real Android `VpnService` instance.
+HTTPS/WSS carrier probe transport factory through MockWebServer. They also
+cover Android TUN plan generation, `VpnService.Builder` call sequencing,
+idempotent TUN fd close ownership through fake builders and the Kotlin
+`FpsNativeRuntime` wrapper with a fake native backend. They also cover the
+headless Kotlin/native lifecycle bridge that establishes TUN after lease
+delivery and duplicates the descriptor into native-owned runtime state. They assert
+that lease-triggered TUN startup requires `tun.enabled=true` and that snapshots
+report only non-secret state/TUN/carrier-probe/native metadata. These checks
+still do not require an emulator or a real Android `VpnService` instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 
@@ -205,16 +209,19 @@ tools/run_android_checks.sh --connected
 
 The connected check runs `:android:app:connectedDebugAndroidTest`, loads
 `libfps_android_native.so` on the target, calls the JNI `nativeVersion()` and
-`nativeCoreSmoke()` paths, and verifies a native IPv4 TCP tuple parse fixture.
+`nativeCoreSmoke()` paths, verifies a native IPv4 TCP tuple parse fixture and
+checks the JNI native runtime handle/snapshot/native-owned duplicate TUN fd API.
 It is opt-in because it requires a real Android runtime.
 
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
-transport factory for app-owned carrier sockets. It also has a first
-lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with fake
-builders and guarded by explicit `tun.enabled=true` profile intent. The native
-smoke reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
+probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
+wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
+handling. The scaffold also has a first lease-triggered `VpnService.Builder`
+TUN fd ownership layer, tested with fake builders and guarded by explicit
+`tun.enabled=true` profile intent. The native smoke reuses the FPS IPv4 TCP/UDP
+5-tuple parser and links
 a reusable native core smoke library built from protocol codec/crypto, generic
 covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
 excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and

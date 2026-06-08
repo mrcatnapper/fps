@@ -54,6 +54,9 @@ if(NOT EXISTS "${FPS_ANDROID_CRYPTO_LIBRARY}")
     "Android libcrypto not found: ${FPS_ANDROID_CRYPTO_LIBRARY}")
 endif()
 
+# Explicit Android-safe native source boundary. Keep Linux relay/config/CLI,
+# Linux TUN device code and Boost.Log/Boost.JSON-heavy operator paths out of
+# this list; app-level Android code reaches core behavior through JNI facades.
 set(FPS_ANDROID_CORE_SMOKE_SOURCES
   "${FPS_REPO_ROOT}/src/core/cover_session_pipeline.cpp"
   "${FPS_REPO_ROOT}/src/core/covert_codec.cpp"
@@ -102,6 +105,8 @@ target_link_libraries(fps_android_core_smoke PUBLIC
   "${FPS_ANDROID_CRYPTO_LIBRARY}")
 
 add_library(fps_android_native SHARED
+  android_jni_helpers.cpp
+  android_native_runtime.cpp
   fps_android_native.cpp)
 
 target_include_directories(fps_android_native
