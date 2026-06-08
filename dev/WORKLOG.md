@@ -27,6 +27,15 @@ Verification:
 - `python3 tests/integration/docker_artifacts.py --repo /workspaces`
 - `git diff --check`
 
+CI follow-up:
+
+- First PR CI exposed that `fps_docker_artifacts` runs inside the Linux CI
+  Docker image, while `.dockerignore` excluded `.github`; the test could not
+  read `.github/workflows/android-emulator.yml`.
+- Fixed by allowing only `.github/workflows/*.yml` into the Docker build
+  context, keeping the DevOps artifact check active in CI without copying the
+  whole `.github` directory.
+
 ### Android Docker image cache split
 
 Goal:
