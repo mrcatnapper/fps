@@ -124,10 +124,11 @@ devices and future Gradle-managed emulators.
   starts the `io_context` worker thread and starts a non-protocol read/parse
   pump. The next step is to connect pump decisions to Android split-tunnel
   policy and then to native raw TLS/TCP auth/carrier I/O.
-- Add the opt-in Gradle Managed Device lane described in
+- Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
-  emulator behavior for PR gating. The first managed-device tests should stay
-  small: native smoke, real `VpnService` consent/establish lifecycle and
+  emulator behavior for PR gating. The lane is launched through
+  `Dockerfile.android-emulator` plus `/dev/kvm`; first tests should stay small:
+  native smoke, real `VpnService` consent/establish lifecycle and
   protect-before-connect checks.
 
 ## Accepted Android Direction

@@ -4,6 +4,52 @@
 
 ## 2026-06-08
 
+### Android Docker-managed emulator lane
+
+Goal:
+
+- Add the first post-JVM Android test harness that can run instrumented tests in
+  an emulator without relying on host SDK paths.
+- Keep the ordinary Android CI image lightweight; put emulator packages and
+  system images into a separate child image.
+
+Planned steps:
+
+- Add Gradle Managed Device config for an API 30 AOSP ATD x86_64 device named
+  `fpsApi30Atd`.
+- Add `Dockerfile.android-emulator` as a child of `Dockerfile.android`.
+- Extend `tools/run_android_checks.sh` with `--managed-device` and
+  `--docker-managed-device`.
+- Update Android testing docs and verify the existing instrumented native smoke
+  through the new lane when possible.
+
+Completed:
+
+- Added the `fpsApi30Atd` Gradle Managed Device configuration.
+- Added `Dockerfile.android-emulator`, a child of `Dockerfile.android` that
+  installs emulator runtime libraries, Android's `emulator`, API 30 platform
+  files and the AOSP ATD x86_64 system image.
+- Extended `tools/run_android_checks.sh` with `--managed-device` and
+  `--docker-managed-device`.
+- Updated Android testing docs, Android app plan, boundary notes and the public
+  testing/specification docs.
+
+Notes:
+
+- The managed-device smoke currently emits AGP's experimental GPU property
+  warning and still prints the `testedAbi` recommendation even with
+  `testedAbi = "x86_64"` set on the managed device. The lane runs and passes;
+  keep watching this after AGP upgrades.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local bash -lc './gradlew --no-daemon :android:app:tasks --all | grep -F fpsApi30Atd'`
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
 ### Android emulator testing methodology
 
 Goal:

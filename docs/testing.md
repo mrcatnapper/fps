@@ -130,8 +130,8 @@ Android verification independent from host SDK/NDK/vcpkg paths.
 `Dockerfile.android` installs JDK 21, Android command-line tools, platform 36,
 build-tools 36.0.0, NDK 28.2, SDK CMake and Android OpenSSL through vcpkg. This
 image is a build/test image, not the FPS product runtime image. It deliberately
-does not include an emulator; connected tests run against an external device or
-emulator through the host `adb` server.
+does not include an emulator. Emulator execution uses the separate
+`Dockerfile.android-emulator` child image.
 
 Host SDK checks remain available for developers who already have a local SDK.
 Install the Android SDK under `/opt/android-sdk` and export:
@@ -219,6 +219,23 @@ and native-owned duplicate TUN fd API. It also starts the native TUN pump
 skeleton against a pipe fd, writes one valid IPv4 UDP packet plus one malformed
 byte sequence, and verifies read/parse/drop counters. It is opt-in because it
 requires a real Android runtime.
+
+For reproducible post-JVM checks without relying on host SDK paths, use the
+Docker-managed emulator lane:
+
+```sh
+ls -l /dev/kvm
+tools/run_android_checks.sh --docker-managed-device
+```
+
+This builds `Dockerfile.android`, then builds `Dockerfile.android-emulator`
+from that local image. The emulator image adds Android's `emulator` package,
+`platforms;android-30` and `system-images;android-30;aosp_atd;x86_64`, then
+runs the Gradle Managed Device task
+`:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm` passed
+through. The managed-device lane currently runs the same instrumented native
+smoke as `--connected`; it is opt-in and is not part of ordinary PR CI until
+repeated local runs prove it stable.
 
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models

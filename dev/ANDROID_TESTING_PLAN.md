@@ -33,6 +33,9 @@ documentation.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
   image. It installs SDK/NDK/vcpkg Android OpenSSL and prewarms Gradle
   dependencies, but it does not contain system images or an emulator.
+- `Dockerfile.android-emulator` extends the Android build image with the
+  Android emulator and the API 30 x86_64 AOSP ATD system image. It is opt-in
+  and requires host `/dev/kvm` passthrough.
 - Current instrumented smoke validates native library loading, crypto/core
   smoke, IPv4 5-tuple parsing, native runtime handle lifecycle, executor
   start/stop, native-owned duplicate TUN fd attachment and the first native
@@ -117,26 +120,30 @@ lane is stable.
 
 ## Docker And Emulator Boundary
 
-Do not immediately put the emulator into `Dockerfile.android`.
+Keep two Android images:
 
-Reasons:
+- `Dockerfile.android`: the normal SDK/NDK/vcpkg/Gradle build image used by
+  ordinary Android CI and host/JVM checks.
+- `Dockerfile.android-emulator`: a heavier child image that adds emulator
+  runtime dependencies plus `emulator`, `platforms;android-30` and
+  `system-images;android-30;aosp_atd;x86_64`.
 
-- emulator images make the current Android CI image much larger;
-- reliable emulator acceleration usually needs host `/dev/kvm` passthrough;
-- software-emulated fallback is slow and can hide real performance/lifecycle
-  issues;
-- the existing Android image is useful because it is a stable SDK/NDK build
-  image independent from emulator state.
+This keeps ordinary Android CI fast and cacheable while still making
+post-JVM/runtime validation reproducible without depending on host SDK paths.
+The emulator image must be launched with `/dev/kvm`; software emulation is not a
+supported FPS test baseline because it is too slow and can hide lifecycle and
+timing issues.
 
-Preferred staged approach:
+Use the repository helper:
 
-1. Keep `Dockerfile.android` as the reproducible build/JVM/native-assemble
-   image.
-2. Add host-managed Gradle Managed Device support first.
-3. If local and CI experiments show that containerized emulators are reliable,
-   add a separate `Dockerfile.android-emulator` or documented `docker run`
-   invocation with explicit `/dev/kvm`, not an implicit change to the existing
-   image.
+```sh
+tools/run_android_checks.sh --docker-managed-device
+```
+
+The helper builds the base image first, builds the emulator image from that
+local tag, then runs the managed-device task in a container with `/dev/kvm`
+passed through. Keep this lane opt-in until repeated local/agent runs show it is
+stable enough for scheduled CI.
 
 ## VPN-Specific Test Scenarios
 
@@ -202,8 +209,9 @@ Prioritize these emulator/device scenarios in order:
 ## Near-Term Implementation Plan
 
 1. Add Gradle Managed Device config for `fpsApi30Atd`.
-2. Add `tools/run_android_checks.sh --managed-device`.
-3. Add docs for required SDK system image and expected runtime.
+2. Add `tools/run_android_checks.sh --managed-device` and
+   `--docker-managed-device`.
+3. Add `Dockerfile.android-emulator` as a child of `Dockerfile.android`.
 4. Run the current instrumented smoke on the managed device manually.
 5. If stable, add a small real `VpnService` consent/establish smoke with a
    test-only lease injection path.

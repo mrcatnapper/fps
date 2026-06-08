@@ -130,6 +130,11 @@ OpenSSL triplets, then runs the host Android checks inside the container.
 Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
 SDK use must be requested explicitly with `--host`.
 
+Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
+that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
+it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
+hosts where `/dev/kvm` can be passed through to Docker.
+
 ## Accepted Runtime Direction
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
@@ -189,12 +194,15 @@ tools/run_android_checks.sh
 tools/run_android_checks.sh --docker
 tools/run_android_checks.sh --host
 tools/run_android_checks.sh --connected
+tools/run_android_checks.sh --managed-device
+tools/run_android_checks.sh --docker-managed-device
 ```
 
 `--connected` requires `adb devices` to show a device or emulator in the
 `device` state. It installs and runs the instrumented native smoke on that
 runtime; it is not part of ordinary CI.
 
-The next testing infrastructure increment should add the opt-in managed-device
-lane described in [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md), not a
-custom emulator script embedded into the ordinary build image.
+`--managed-device` runs the Gradle Managed Device task with the current SDK and
+emulator environment. `--docker-managed-device` builds the emulator child image
+and runs the same task inside Docker with `/dev/kvm`. Keep these lanes opt-in
+until repeated runs prove them stable enough for scheduled CI.
