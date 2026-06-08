@@ -1,5 +1,6 @@
 package org.fpsproject.client.test
 
+import org.fpsproject.client.nativebridge.NativeVpnRuntimeSnapshot
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -14,23 +15,41 @@ data class TestVpnEstablishResult(
     val error: String?,
 )
 
+data class TestNativeRuntimeResult(
+    val success: Boolean,
+    val error: String?,
+    val snapshot: NativeVpnRuntimeSnapshot?,
+)
+
 object TestVpnServiceProbe {
     private val lock = Any()
     private var permissionLatch = CountDownLatch(1)
     private var establishLatch = CountDownLatch(1)
     private var closedLatch = CountDownLatch(1)
+    private var nativeRuntimeStartedLatch = CountDownLatch(1)
+    private var nativeRuntimeStoppedLatch = CountDownLatch(1)
+    private var revokedLatch = CountDownLatch(1)
     private var permissionResult: TestVpnPermissionResult? = null
     private var establishResult: TestVpnEstablishResult? = null
+    private var nativeRuntimeStartedResult: TestNativeRuntimeResult? = null
+    private var nativeRuntimeStoppedSnapshot: NativeVpnRuntimeSnapshot? = null
     private var closed = false
+    private var revoked = false
 
     fun reset() {
         synchronized(lock) {
             permissionLatch = CountDownLatch(1)
             establishLatch = CountDownLatch(1)
             closedLatch = CountDownLatch(1)
+            nativeRuntimeStartedLatch = CountDownLatch(1)
+            nativeRuntimeStoppedLatch = CountDownLatch(1)
+            revokedLatch = CountDownLatch(1)
             permissionResult = null
             establishResult = null
+            nativeRuntimeStartedResult = null
+            nativeRuntimeStoppedSnapshot = null
             closed = false
+            revoked = false
         }
     }
 
@@ -66,6 +85,38 @@ object TestVpnServiceProbe {
         latch.countDown()
     }
 
+    fun reportNativeRuntimeStarted(snapshot: NativeVpnRuntimeSnapshot) {
+        val latch = synchronized(lock) {
+            nativeRuntimeStartedResult = TestNativeRuntimeResult(success = true, error = null, snapshot = snapshot)
+            nativeRuntimeStartedLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportNativeRuntimeFailure(error: String, snapshot: NativeVpnRuntimeSnapshot?) {
+        val latch = synchronized(lock) {
+            nativeRuntimeStartedResult = TestNativeRuntimeResult(success = false, error = error, snapshot = snapshot)
+            nativeRuntimeStartedLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportNativeRuntimeStopped(snapshot: NativeVpnRuntimeSnapshot) {
+        val latch = synchronized(lock) {
+            nativeRuntimeStoppedSnapshot = snapshot
+            nativeRuntimeStoppedLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportRevoked() {
+        val latch = synchronized(lock) {
+            revoked = true
+            revokedLatch
+        }
+        latch.countDown()
+    }
+
     fun awaitPermission(timeoutMs: Long): TestVpnPermissionResult? {
         val latch = synchronized(lock) { permissionLatch }
         latch.await(timeoutMs, TimeUnit.MILLISECONDS)
@@ -82,5 +133,23 @@ object TestVpnServiceProbe {
         val latch = synchronized(lock) { closedLatch }
         latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         return synchronized(lock) { closed }
+    }
+
+    fun awaitNativeRuntimeStarted(timeoutMs: Long): TestNativeRuntimeResult? {
+        val latch = synchronized(lock) { nativeRuntimeStartedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { nativeRuntimeStartedResult }
+    }
+
+    fun awaitNativeRuntimeStopped(timeoutMs: Long): NativeVpnRuntimeSnapshot? {
+        val latch = synchronized(lock) { nativeRuntimeStoppedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { nativeRuntimeStoppedSnapshot }
+    }
+
+    fun awaitRevoked(timeoutMs: Long): Boolean {
+        val latch = synchronized(lock) { revokedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { revoked }
     }
 }

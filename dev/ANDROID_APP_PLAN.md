@@ -75,10 +75,12 @@ Delivered:
   headless VPN controller and the JNI runtime handle. It creates the native
   runtime, starts its executor after VPN permission is available, waits for the
   lease, establishes the Android TUN fd and attaches that fd to native as an
-  owned duplicate. It then starts the native TUN pump skeleton. The pump reads
-  from the duplicated fd, parses IPv4 TCP/UDP 5-tuples with shared native code
-  and records non-secret counters/drop reasons, but it does not start native
-  auth, carrier I/O or covert enqueue yet.
+  owned duplicate. It then starts the native TUN pump skeleton. The managed
+  emulator smoke verifies this path with a real `VpnService` fd and exercises
+  explicit stop plus a debug revoke path. The pump reads from the duplicated fd,
+  parses IPv4 TCP/UDP 5-tuples with shared native code and records non-secret
+  counters/drop reasons, but it does not start native auth, carrier I/O or
+  covert enqueue yet.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -164,9 +166,10 @@ emulator/system-image layers to rebuild.
   create/configure the `VpnService` fd only for an Android profile with
   `tun.enabled=true`. Current native runtime wiring duplicates the fd through
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
-  the runtime executor lifecycle is explicit and the first native TUN read/parse
-  pump starts after fd attachment. Starting the native auth path, carrier I/O
-  and covert enqueue remains the next native/JNI step.
+  the runtime executor lifecycle is explicit, the first native TUN read/parse
+  pump starts after fd attachment and emulator coverage exercises real fd
+  attach/pump/stop/revoke. Starting the native auth path, carrier I/O and covert
+  enqueue remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed
@@ -218,5 +221,6 @@ until repeated runs prove them stable enough for scheduled CI. GitHub Actions
 has a manual-only `Android Emulator` workflow for this lane; it is not a
 required PR check. The lane currently runs both the native/JNI smoke and a
 debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
-smoke that requests VPN consent when needed, verifies a real TUN fd/MTU and
-closes it.
+smoke that requests VPN consent when needed, verifies a real TUN fd/MTU, routes
+the fd through `HeadlessNativeVpnRuntime`, starts the native pump and closes it
+through explicit stop/revoke paths.

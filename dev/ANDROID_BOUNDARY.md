@@ -93,8 +93,10 @@ devices and future Gradle-managed emulators.
 - Added `HeadlessNativeVpnRuntime` as the first Kotlin lifecycle bridge between
   `HeadlessVpnController` and `FpsNativeRuntime`. It validates profile text,
   owns both layers, performs lease-triggered TUN establishment and attaches the
-  resulting fd to native as an owned duplicate. It intentionally does not start
-  native auth, carrier I/O or the TUN packet pump.
+  resulting fd to native as an owned duplicate. It starts the native TUN pump
+  after attachment, and the managed emulator smoke verifies that path with a
+  real `VpnService` fd plus explicit stop/debug-revoke cleanup. It intentionally
+  does not start native auth, carrier I/O or covert datagram enqueue yet.
 - Added the first native runtime executor lifecycle. The JNI runtime can start
   and stop one Boost.Asio `io_context` worker thread, exposes non-secret
   lifecycle/counter snapshots and has a deterministic no-op posted-command
@@ -127,9 +129,10 @@ devices and future Gradle-managed emulators.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through
-  `Dockerfile.android-emulator` plus `/dev/kvm`; first tests should stay small:
-  native smoke, real `VpnService` consent/establish lifecycle and
-  protect-before-connect checks.
+  `Dockerfile.android-emulator` plus `/dev/kvm`; current tests cover native
+  smoke and real `VpnService` full-runtime fd attach/pump/stop/revoke. Next
+  emulator tests should stay small and focus on protect-before-connect,
+  underlying-network DNS and policy integration.
 
 ## Accepted Android Direction
 
@@ -155,7 +158,8 @@ devices and future Gradle-managed emulators.
   creation/ownership, native-owned duplicate attachment
   (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
   explicit native `io_context` executor lifecycle plus a non-protocol native
-  TUN read/parse pump with non-secret runtime snapshots; native auth/carrier
+  TUN read/parse pump with non-secret runtime snapshots. Managed-device
+  coverage exercises that path with a real Android TUN fd; native auth/carrier
   enqueue wiring is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.

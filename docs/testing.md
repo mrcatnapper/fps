@@ -232,8 +232,11 @@ The connected check runs `:android:app:connectedDebugAndroidTest`, loads
 checks the JNI native runtime handle/snapshot, executor start/stop/no-op command
 and native-owned duplicate TUN fd API. It also starts the native TUN pump
 skeleton against a pipe fd, writes one valid IPv4 UDP packet plus one malformed
-byte sequence, and verifies read/parse/drop counters. It is opt-in because it
-requires a real Android runtime.
+byte sequence, and verifies read/parse/drop counters. The debug VPN harness
+also drives a real `VpnService` fd through `HeadlessNativeVpnRuntime`, verifies
+native `owned_duplicate` attachment plus pump startup and covers explicit
+stop/debug-revoke cleanup. It is opt-in because it requires a real Android
+runtime.
 
 For reproducible post-JVM checks without relying on host SDK paths, use the
 Docker-managed emulator lane:
@@ -255,8 +258,10 @@ emulator/system-image layers. The managed-device lane runs the same
 instrumented native smoke as `--connected` and also exercises a debug-only real
 `VpnService.prepare(...)` / `VpnService.Builder.establish()` smoke. The VPN
 smoke requests consent through the system dialog when needed, verifies a real
-TUN fd and closes it. This lane is opt-in and is not part of ordinary PR CI
-until repeated local runs prove it stable.
+TUN fd, routes that fd through `HeadlessNativeVpnRuntime`, starts the native TUN
+pump and closes it through explicit stop/debug-revoke paths. This lane is
+opt-in and is not part of ordinary PR CI until repeated local runs prove it
+stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a
@@ -268,8 +273,9 @@ The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
 probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
 wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
-handling. The scaffold also has a first lease-triggered `VpnService.Builder`
-TUN fd ownership layer, tested with fake builders and guarded by explicit
+handling. The scaffold also has a lease-triggered `VpnService.Builder` TUN fd
+ownership layer, tested with fake builders and a real debug `VpnService` fd
+routed through the Kotlin/native runtime bridge. It remains guarded by explicit
 `tun.enabled=true` profile intent. The native smoke reuses the FPS IPv4 TCP/UDP
 5-tuple parser and links
 a reusable native core smoke library built from protocol codec/crypto, generic
