@@ -46,7 +46,17 @@ Completed:
   `HeadlessNativeVpnRuntime` policy application.
 - Extended the native Android instrumented smoke so a pipe-backed TUN packet is
   drained as metadata and completed with both allow and drop decisions.
+- Added policy-bridge edge coverage: non-positive drain limits, unknown packet
+  completion, bounded-queue saturation through the pipe-backed native pump and
+  pending/in-flight cleanup after TUN reattach.
+- Kept synthetic test hooks out of the production JNI facade. Queue saturation
+  is now tested through the real pipe-backed native pump path, with sequential
+  packet-sized writes to avoid pipe byte-stream coalescing.
 - Updated Android boundary, app plan, testing and specification docs.
+- Documented the current invariant: policy `allow` only releases a packet from
+  native in-flight accounting until native carrier enqueue exists. Production
+  Android code must not run a background drain loop that silently consumes
+  allowed packets before that transport step is implemented.
 
 Verification:
 

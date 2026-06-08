@@ -413,6 +413,7 @@ private class FakeCoordinatorNativeBackend(
         snapshots[handle] = snapshot
         return snapshot
     }
+
 }
 
 private class FakeAndroidHooks(

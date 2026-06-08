@@ -106,9 +106,14 @@ devices and future Gradle-managed emulators.
   a non-blocking executor loop, parses IPv4 TCP/UDP 5-tuples with shared core
   code, queues bounded metadata for Kotlin split-tunnel policy decisions and
   records non-secret packet/drop counters. Packet bytes stay in native state;
-  Kotlin completes each drained metadata item as allow/drop. The pump
-  intentionally does not run FPS auth, raw carrier I/O or covert datagram
-  enqueue yet.
+  Kotlin completes each drained metadata item as allow/drop. In the current
+  bridge, `allow` means "policy accepted and the native in-flight packet was
+  released", not "packet was sent through FPS". Production code must not run a
+  background drain/apply loop that silently consumes allowed packets until
+  native carrier enqueue exists. Reattaching or clearing the TUN fd clears
+  pending and in-flight policy packets so stale decisions from an old fd cannot
+  affect a new runtime state. The pump intentionally does not run FPS auth, raw
+  carrier I/O or covert datagram enqueue yet.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -127,9 +132,9 @@ devices and future Gradle-managed emulators.
 - Wire allowed native pump packets into transport. Current
   `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
   starts the `io_context` worker thread, drains native pump metadata through
-  Kotlin split-tunnel policy and completes packets as allow/drop. The next step
-  is native raw TLS/TCP auth/carrier I/O and covert datagram enqueue for
-  allowed packets.
+  Kotlin split-tunnel policy and completes packets as allow/drop for testable
+  fail-closed accounting. The next step is native raw TLS/TCP auth/carrier I/O
+  and covert datagram enqueue for allowed packets.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through

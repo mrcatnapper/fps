@@ -219,6 +219,37 @@ class FpsNativeRuntimeTest {
         assertEquals(0L, afterDrop.tunPolicyInFlight)
         assertEquals(listOf(41L to SplitTunnelDecision.ALLOW, 42L to SplitTunnelDecision.DROP), backend.completedPolicy)
     }
+
+    @Test
+    fun tunPolicyDrainRejectsNonPositiveLimitsBeforeCallingNativeBackend() {
+        val backend = FakeNativeBackend(
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 41,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+            ),
+        )
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        assertEquals(emptyList<NativeTunPolicyPacket>(), runtime.drainTunPolicyPackets(maxPackets = 0))
+        assertEquals(emptyList<NativeTunPolicyPacket>(), runtime.drainTunPolicyPackets(maxPackets = -1))
+        assertEquals(0, backend.drainCalls)
+        assertEquals(1, runtime.drainTunPolicyPackets(maxPackets = 1).size)
+    }
+
+    @Test
+    fun tunPolicyCompletionRejectsUnknownPacketId() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val snapshot = runtime.completeTunPolicyPacket(999, SplitTunnelDecision.ALLOW)
+
+        assertEquals("unknown_tun_policy_packet_id", snapshot.lastError)
+        assertEquals(0L, snapshot.tunPolicyAllowed)
+        assertEquals(0L, snapshot.tunPolicyDropped)
+    }
 }
 
 private fun nativeSnapshot(
@@ -278,6 +309,7 @@ private class FakeNativeBackend(
     val startedTunPumps = mutableListOf<Long>()
     val stoppedTunPumps = mutableListOf<Long>()
     val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
+    var drainCalls = 0
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
     private val pendingPolicy = ArrayDeque(initialPolicyPackets)
     private val inFlightPolicy = mutableSetOf<Long>()
@@ -391,6 +423,7 @@ private class FakeNativeBackend(
     }
 
     override fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket> {
+        drainCalls += 1
         val current = snapshots[handle] ?: return emptyList()
         val out = mutableListOf<NativeTunPolicyPacket>()
         repeat(maxPackets.coerceAtLeast(0)) {
@@ -421,6 +454,7 @@ private class FakeNativeBackend(
         snapshots[handle] = snapshot
         return snapshot
     }
+
 }
 
 private class FakeTunHandle(override val fd: Int) : TunHandle {
