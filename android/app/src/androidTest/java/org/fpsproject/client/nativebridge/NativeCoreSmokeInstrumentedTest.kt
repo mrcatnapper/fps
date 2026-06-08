@@ -62,9 +62,21 @@ class NativeCoreSmokeInstrumentedTest {
 
         val initial = FpsNative.runtimeSnapshot(handle)
         assertTrue(initial.alive)
+        assertFalse(initial.started)
+        assertFalse(initial.workerThreadRunning)
         assertFalse(initial.tunAttached)
         assertEquals(null, initial.tunFdOwnership)
         assertEquals(null, initial.lastError)
+
+        val started = FpsNative.startRuntime(handle)
+        assertTrue(started.started)
+        assertTrue(started.workerThreadRunning)
+        assertEquals(0L, started.commandsPosted)
+        assertEquals(0L, started.commandsCompleted)
+
+        val posted = FpsNative.postNoopCommand(handle)
+        assertEquals(1L, posted.commandsPosted)
+        assertEquals(1L, posted.commandsCompleted)
 
         val pipe = ParcelFileDescriptor.createPipe()
         val readEnd = pipe[0]
@@ -87,6 +99,14 @@ class NativeCoreSmokeInstrumentedTest {
         assertFalse(badMtu.tunAttached)
         assertEquals(null, badMtu.tunFdOwnership)
         assertEquals("invalid_tun_mtu", badMtu.lastError)
+
+        val stopped = FpsNative.stopRuntime(handle)
+        assertFalse(stopped.started)
+        assertFalse(stopped.workerThreadRunning)
+        val rejected = FpsNative.postNoopCommand(handle)
+        assertEquals("runtime_stopped", rejected.lastError)
+        assertEquals(1L, rejected.commandsPosted)
+        assertEquals(1L, rejected.commandsCompleted)
 
         FpsNative.closeRuntime(handle)
         readEnd.close()

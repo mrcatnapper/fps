@@ -661,8 +661,9 @@ Linux-specific runtime is separate:
   operations with `VpnService`;
 - unit tests use fake runtime/configurator objects and MockWebServer for live
   OkHttp carrier-probe checks. Android now has a first `VpnService.Builder`
-  fd ownership adapter and JNI runtime handle; native auth/pump wiring and
-  richer Android network configuration remain follow-up work;
+  fd ownership adapter and JNI runtime handle with explicit native `io_context`
+  executor lifecycle; native auth/pump wiring and richer Android network
+  configuration remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -686,8 +687,9 @@ Linux-specific runtime is separate:
   requires `tun.enabled=true` before lease-triggered TUN establishment, exposes
   non-secret runtime snapshots, and has a headless Kotlin/native lifecycle
   bridge that duplicates the TUN fd into a native runtime handle with explicit
-  `tunFdOwnership=owned_duplicate` metadata. It does not yet start the native
-  auth path or TUN pump.
+  `tunFdOwnership=owned_duplicate` metadata. The native runtime can start/stop
+  its Boost.Asio executor and post deterministic test commands, but it does not
+  yet start the native auth path or TUN pump.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

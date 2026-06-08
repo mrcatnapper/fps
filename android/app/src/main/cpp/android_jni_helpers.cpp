@@ -122,7 +122,7 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZIILjava/lang/String;Ljava/lang/String;)V");
+    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZIILjava/lang/String;JJLjava/lang/String;)V");
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -138,8 +138,10 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     }
 
     return env->NewObject(
-        snapshot_class.get(), constructor, static_cast<jboolean>(snapshot.alive), static_cast<jboolean>(snapshot.tun_attached), static_cast<jint>(snapshot.tun_fd),
-        static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), error_string.get()
+        snapshot_class.get(), constructor, static_cast<jboolean>(snapshot.alive), static_cast<jboolean>(snapshot.started),
+        static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jint>(snapshot.tun_fd),
+        static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.commands_posted),
+        static_cast<jlong>(snapshot.commands_completed), error_string.get()
     );
 }
 

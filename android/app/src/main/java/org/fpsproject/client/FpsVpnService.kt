@@ -58,7 +58,7 @@ class FpsVpnService : VpnService() {
 
     internal fun startProfile(profileText: String): VpnRuntimeState {
         val next = HeadlessNativeVpnRuntime.create(profileText, ServicePlatformHooks(this))
-        runtime?.stop()
+        runtime?.close()
         runtime = next
         return next.start()
     }
@@ -68,7 +68,9 @@ class FpsVpnService : VpnService() {
     }
 
     internal fun stopRuntime(): VpnRuntimeState {
-        val stopped = runtime?.stop() ?: VpnRuntimeState.STOPPED
+        val activeRuntime = runtime ?: return VpnRuntimeState.STOPPED
+        val stopped = activeRuntime.stop()
+        activeRuntime.close()
         runtime = null
         return stopped
     }

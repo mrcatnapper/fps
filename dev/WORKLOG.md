@@ -4,6 +4,50 @@
 
 ## 2026-06-08
 
+### Android native executor lifecycle
+
+Goal:
+
+- Add the first explicit native runtime execution model before Android auth,
+  raw carrier I/O or TUN packet pumping.
+- Ensure JNI/Kotlin-facing native operations have a safe same-executor posting
+  path instead of relying on arbitrary caller threads.
+
+Planned steps:
+
+- Extend native snapshots with executor lifecycle metadata:
+  `started`, `workerThreadRunning`, `commandsPosted`, `commandsCompleted`.
+- Add Kotlin/JNI runtime methods for `startRuntime`, `stopRuntime` and a
+  test-only `postNoopCommand`.
+- Implement one Boost.Asio `io_context` worker thread per native runtime with
+  idempotent start/stop/close semantics.
+- Update `HeadlessNativeVpnRuntime` to start native before entering the lease
+  wait state and stop native together with the controller.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Added native runtime `startRuntime`, `stopRuntime` and test-only
+  `postNoopCommand` JNI/Kotlin APIs.
+- Added one Boost.Asio `io_context` worker thread per native runtime with
+  idempotent start/stop and close-stops-before-erase behavior.
+- Extended non-secret native snapshots with executor lifecycle flags and posted
+  command counters.
+- Updated `HeadlessNativeVpnRuntime` so native starts after VPN permission is
+  available and before lease wait is returned; service shutdown now closes the
+  native handle after stopping.
+- Updated JVM tests, connected JNI smoke coverage and Android boundary docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ### Android native TUN fd ownership
 
 Goal:

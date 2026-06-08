@@ -1,9 +1,15 @@
 #include "android_native_runtime.hpp"
 
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/post.hpp>
 
+#include <atomic>
+#include <future>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -50,15 +56,84 @@ class AndroidNativeRuntime {
 public:
     explicit AndroidNativeRuntime(std::string profile_text) : profile_text_{std::move(profile_text)} {}
 
+    ~AndroidNativeRuntime() { static_cast<void>(stop()); }
+
     [[nodiscard]] auto snapshot() const -> NativeRuntimeSnapshotFields {
         return NativeRuntimeSnapshotFields{
             .alive = true,
+            .started = started_,
+            .worker_thread_running = worker_thread_running_.load(),
             .tun_attached = tun_attached_,
             .tun_fd = tun_attached_ ? tun_fd_.get() : -1,
             .tun_mtu = tun_attached_ ? tun_mtu_ : 0,
             .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
+            .commands_posted = commands_posted_.load(),
+            .commands_completed = commands_completed_.load(),
             .last_error = last_error_,
         };
+    }
+
+    [[nodiscard]] auto start() -> NativeRuntimeSnapshotFields {
+        if(started_) {
+            last_error_.clear();
+            return snapshot();
+        }
+
+        io_context_.restart();
+        work_guard_.emplace(io_context_.get_executor());
+        started_ = true;
+        worker_thread_running_.store(true);
+        try {
+            worker_thread_ = std::thread{[this] {
+                io_context_.run();
+                worker_thread_running_.store(false);
+            }};
+        } catch(...) {
+            started_ = false;
+            worker_thread_running_.store(false);
+            work_guard_.reset();
+            last_error_ = "runtime_thread_start_failed";
+            return snapshot();
+        }
+
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto stop() -> NativeRuntimeSnapshotFields {
+        if(!started_) {
+            last_error_.clear();
+            worker_thread_running_.store(false);
+            return snapshot();
+        }
+
+        started_ = false;
+        work_guard_.reset();
+        io_context_.stop();
+        if(worker_thread_.joinable()) {
+            worker_thread_.join();
+        }
+        worker_thread_running_.store(false);
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto post_noop_command() -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            return snapshot();
+        }
+
+        commands_posted_.fetch_add(1);
+        auto done = std::make_shared<std::promise<void>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, done] {
+            commands_completed_.fetch_add(1);
+            done->set_value();
+        });
+        finished.wait();
+        last_error_.clear();
+        return snapshot();
     }
 
     [[nodiscard]] auto attach_tun_fd_owned_duplicate(int fd, int mtu) -> NativeRuntimeSnapshotFields {
@@ -100,10 +175,17 @@ private:
     // ever exposing it through snapshots or logs.
     std::string profile_text_;
     boost::asio::io_context io_context_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+    std::optional<WorkGuard> work_guard_;
+    std::thread worker_thread_;
+    bool started_ = false;
+    std::atomic_bool worker_thread_running_ = false;
     bool tun_attached_ = false;
     UniqueFd tun_fd_;
     int tun_mtu_ = 0;
     TunFdOwnership tun_fd_ownership_ = TunFdOwnership::none;
+    std::atomic<std::uint64_t> commands_posted_ = 0;
+    std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
 };
 
@@ -118,7 +200,30 @@ public:
 
     void close(NativeRuntimeHandle handle) {
         std::lock_guard lock{mutex_};
-        runtimes_.erase(handle);
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return;
+        }
+        static_cast<void>(found->second->stop());
+        runtimes_.erase(found);
+    }
+
+    [[nodiscard]] auto start(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->start();
+    }
+
+    [[nodiscard]] auto stop(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->stop();
     }
 
     [[nodiscard]] auto snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
@@ -128,6 +233,15 @@ public:
             return invalid_runtime_snapshot("invalid_handle");
         }
         return found->second->snapshot();
+    }
+
+    [[nodiscard]] auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->post_noop_command();
     }
 
     [[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
@@ -170,8 +284,20 @@ void close_runtime(NativeRuntimeHandle handle) {
     runtime_registry().close(handle);
 }
 
+auto start_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().start(handle);
+}
+
+auto stop_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().stop(handle);
+}
+
 auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
     return runtime_registry().snapshot(handle);
+}
+
+auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().post_noop_command(handle);
 }
 
 auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {

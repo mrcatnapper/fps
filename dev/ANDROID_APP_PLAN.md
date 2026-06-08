@@ -61,13 +61,17 @@ Delivered:
   It validates Android profile text in Kotlin, creates an opaque native runtime
   handle, exposes non-secret native snapshots and duplicates a TUN fd into
   native-owned RAII state without taking ownership from the Kotlin
-  `ParcelFileDescriptor` holder. The native binding is split into thin JNI
-  entrypoints, runtime registry/state and object-conversion helpers.
+  `ParcelFileDescriptor` holder. It also owns the first explicit native
+  Boost.Asio `io_context` executor lifecycle with idempotent start/stop and
+  deterministic no-op posted-command smoke coverage. The native binding is split
+  into thin JNI entrypoints, runtime registry/state and object-conversion
+  helpers.
 - `HeadlessNativeVpnRuntime` is the current Kotlin lifecycle bridge between the
   headless VPN controller and the JNI runtime handle. It creates the native
-  runtime, waits for the lease, establishes the Android TUN fd and attaches that
-  fd to native as an owned duplicate. It does not start native auth, carrier I/O
-  or a TUN packet pump.
+  runtime, starts its executor after VPN permission is available, waits for the
+  lease, establishes the Android TUN fd and attaches that fd to native as an
+  owned duplicate. It does not start native auth, carrier I/O or a TUN packet
+  pump.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -139,13 +143,14 @@ SDK use must be requested explicitly with `--host`.
   create/configure the `VpnService` fd only for an Android profile with
   `tun.enabled=true`. Current native runtime wiring duplicates the fd through
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
-  starting the native auth path and TUN pump remains the next native/JNI step.
+  the runtime executor lifecycle is already explicit. Starting the native auth
+  path and TUN pump remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed
   packets, unsupported protocols, unknown fragments and invalid UIDs.
-- JNI/Kotlin entry points must post native operations onto the FPS `io_context`.
-  Direct cross-thread carrier enqueue remains forbidden.
+- JNI/Kotlin entry points must post native operations onto the runtime
+  `io_context`. Direct cross-thread carrier enqueue remains forbidden.
 
 ## Native Dependency Boundary
 

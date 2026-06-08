@@ -27,10 +27,14 @@ data class NativeVpnRuntimeSnapshot(
             ),
             native = NativeRuntimeSnapshot(
                 alive = false,
+                started = false,
+                workerThreadRunning = false,
                 tunAttached = false,
                 tunFd = -1,
                 tunMtu = 0,
                 tunFdOwnership = null,
+                commandsPosted = 0,
+                commandsCompleted = 0,
                 lastError = "runtime_stopped",
             ),
         )
@@ -62,7 +66,18 @@ class HeadlessNativeVpnRuntime private constructor(
     val lastError: String?
         get() = controller.lastError
 
-    fun start(): VpnRuntimeState = controller.start()
+    fun start(): VpnRuntimeState {
+        val next = controller.start()
+        if (next != VpnRuntimeState.WAITING_FOR_LEASE) {
+            return next
+        }
+        val nativeSnapshot = nativeRuntime.start()
+        if (!nativeSnapshot.alive || !nativeSnapshot.started || !nativeSnapshot.workerThreadRunning) {
+            controller.fail("native_runtime_start_failed")
+            return controller.state
+        }
+        return controller.state
+    }
 
     fun onLeaseReceived(lease: TunLease): VpnRuntimeState {
         val next = controller.onLeaseReceived(lease)
@@ -104,11 +119,12 @@ class HeadlessNativeVpnRuntime private constructor(
     }
 
     fun stop(): VpnRuntimeState {
-        nativeRuntime.close()
+        nativeRuntime.stop()
         return controller.stop()
     }
 
     override fun close() {
         stop()
+        nativeRuntime.close()
     }
 }
