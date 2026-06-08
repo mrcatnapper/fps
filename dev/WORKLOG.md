@@ -4,6 +4,29 @@
 
 ## 2026-06-08
 
+### Android testing plan status cleanup
+
+Goal:
+
+- Remove stale "future helper" wording before opening the Android PR.
+- Keep Android testing docs aligned with the implemented managed-device,
+  Docker-managed-device and VpnService smoke baseline.
+
+Completed:
+
+- Replaced the old near-term implementation checklist in
+  `dev/ANDROID_TESTING_PLAN.md` with completed baseline and current next
+  runtime steps.
+- Clarified that `tools/run_android_checks.sh --managed-device` and
+  `--docker-managed-device` are already implemented paths.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
 ### Android Docker image cache split
 
 Goal:

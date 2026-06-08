@@ -110,17 +110,16 @@ Future compatibility target:
 - system image: `aosp`
 - purpose: target-SDK compatibility smoke after the API 30 ATD lane is stable
 
-Recommended command shape:
-
-```sh
-./gradlew :android:app:fpsApi30AtdDebugAndroidTest \
-  -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
-```
-
-Add a repository helper mode later:
+The implemented managed-device command shape is:
 
 ```sh
 tools/run_android_checks.sh --managed-device
+```
+
+For Docker-isolated runs with the emulator image:
+
+```sh
+tools/run_android_checks.sh --docker-managed-device
 ```
 
 Do not include this mode in ordinary PR CI immediately. Start with
@@ -227,16 +226,30 @@ Prioritize these emulator/device scenarios in order:
 - All Android test snapshots/logs must remain metadata-only: no UUIDs, keys,
   ClientID, raw packets or payload bytes.
 
-## Near-Term Implementation Plan
+## Completed Baseline
 
-1. Add Gradle Managed Device config for `fpsApi30Atd`.
-2. Add `tools/run_android_checks.sh --managed-device` and
-   `--docker-managed-device`.
-3. Add `Dockerfile.android-emulator` as a child of `Dockerfile.android`.
-4. Run the current instrumented smoke on the managed device manually.
-5. Add a manual-only GitHub Actions entrypoint and image-reuse mode for local
-   reruns.
-6. Add a small real `VpnService` consent/establish smoke with a test-only lease
-   injection path.
-7. Keep managed-device CI manual/scheduled until repeated local runs show it is
+- Gradle Managed Device config exists for `fpsApi30Atd`.
+- `tools/run_android_checks.sh` supports `--managed-device` and
+  `--docker-managed-device`.
+- `Dockerfile.android-emulator` extends the source-free
+  `android-gradle-base` stage from `Dockerfile.android`, so ordinary source
+  edits do not invalidate the emulator/system-image layers.
+- A manual-only GitHub Actions workflow can run the Docker-managed emulator
+  lane.
+- The managed-device lane has been run locally with `/dev/kvm` and covers both
+  the native/JNI smoke and debug-only real `VpnService` consent/establish
+  smoke.
+
+## Next Android Runtime Steps
+
+1. Route a real `VpnService` fd through the full `HeadlessNativeVpnRuntime`
+   attach path, instead of only proving standalone framework establishment.
+2. Add service revoke/stop lifecycle coverage: `onRevoke()`, explicit stop,
+   Kotlin fd close, native pump stop and native executor stop.
+3. Add socket loop-prevention coverage for app-owned Java sockets first, then
+   native carrier sockets.
+4. Add underlying-network DNS coverage before enabling native carrier connect.
+5. Add split-tunnel UID policy integration over emulator VPN traffic once the
+   real-fd runtime path is stable.
+6. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.
