@@ -35,10 +35,13 @@ documentation.
   for fast reruns after the base/emulator images have already been built.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
   image. It installs SDK/NDK/vcpkg Android OpenSSL and prewarms Gradle
-  dependencies, but it does not contain system images or an emulator.
+  dependencies in the source-free `android-gradle-base` stage, before the full
+  source `COPY`.
 - `Dockerfile.android-emulator` extends the Android build image with the
   Android emulator and the API 30 x86_64 AOSP ATD system image. It is opt-in
-  and requires host `/dev/kvm` passthrough.
+  and requires host `/dev/kvm` passthrough. It must inherit from the
+  source-free base image, not from the final source-copied Android CI image, so
+  ordinary source edits do not invalidate emulator/system-image layers.
 - Current instrumented smoke validates native library loading, crypto/core
   smoke, IPv4 5-tuple parsing, native runtime handle lifecycle, executor
   start/stop, native-owned duplicate TUN fd attachment and the first native
@@ -149,9 +152,11 @@ FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-de
 
 The helper builds the base image first, builds the emulator image from that
 local tag, then runs the managed-device task in a container with `/dev/kvm`
-passed through. With `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing image tags are
-used directly and only missing images are built. Keep this lane opt-in until
-repeated local/agent runs show it is stable enough for scheduled CI.
+passed through and the current workspace bind-mounted. The base image is built
+from the source-free `android-gradle-base` target. With
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing image tags are used directly and
+only missing images are built. Keep this lane opt-in until repeated local/agent
+runs show it is stable enough for scheduled CI.
 
 The repository has a manual-only GitHub Actions workflow named
 `Android Emulator` for the same lane. It is not a required PR check; it exists

@@ -28,6 +28,12 @@ Environment:
                             fps:android-ci.
   FPS_ANDROID_DOCKERFILE    Dockerfile for --docker, default:
                             Dockerfile.android.
+  FPS_ANDROID_BASE_IMAGE    Source-free Android base image tag for
+                            --docker-managed-device, default:
+                            ${FPS_ANDROID_DOCKER_IMAGE}-base.
+  FPS_ANDROID_BASE_TARGET   Dockerfile.android target used for
+                            FPS_ANDROID_BASE_IMAGE, default:
+                            android-gradle-base.
   FPS_ANDROID_EMULATOR_IMAGE
                             Docker image tag for --docker-managed-device,
                             default: fps:android-emulator-ci.
@@ -241,6 +247,8 @@ run_docker_checks() {
 
 run_docker_managed_device_checks() {
   local base_image="${FPS_ANDROID_DOCKER_IMAGE:-fps:android-ci}"
+  local android_base_image="${FPS_ANDROID_BASE_IMAGE:-${base_image}-base}"
+  local android_base_target="${FPS_ANDROID_BASE_TARGET:-android-gradle-base}"
   local base_dockerfile="${FPS_ANDROID_DOCKERFILE:-Dockerfile.android}"
   local emulator_image="${FPS_ANDROID_EMULATOR_IMAGE:-fps:android-emulator-ci}"
   local emulator_dockerfile="${FPS_ANDROID_EMULATOR_DOCKERFILE:-Dockerfile.android-emulator}"
@@ -283,11 +291,12 @@ run_docker_managed_device_checks() {
   if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
     log "Reuse existing Android emulator Docker image: $emulator_image"
   else
-    log "Build Android base Docker image"
-    ensure_docker_image "$base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
+    log "Build Android source-free base Docker image"
+    docker_build_args=(--target "$android_base_target")
+    ensure_docker_image "$android_base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
 
     log "Build Android emulator Docker image"
-    docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$base_image")
+    docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$android_base_image")
     ensure_docker_image "$emulator_image" "$emulator_dockerfile_path" "${docker_cmd[@]}"
   fi
 

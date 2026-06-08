@@ -4,6 +4,53 @@
 
 ## 2026-06-08
 
+### Android Docker image cache split
+
+Goal:
+
+- Avoid rebuilding heavy Android emulator/system-image layers on ordinary
+  source edits.
+- Clean stale local Android test images before rebuilding to avoid disk
+  exhaustion.
+
+Plan:
+
+- Split `Dockerfile.android` into a source-free Gradle/cache base stage and the
+  final source-copied `ci` stage.
+- Make `Dockerfile.android-emulator` inherit from the source-free base image,
+  not from the final Android CI image.
+- Teach `tools/run_android_checks.sh --docker-managed-device` to build that
+  source-free base target and pass it to the emulator Dockerfile.
+- Update docs and static artifact checks.
+
+Completed:
+
+- Added `android-gradle-base` to `Dockerfile.android`.
+- Changed `Dockerfile.android-emulator` default base to
+  `fps:android-gradle-base` and kept the full repository source out of the
+  emulator image.
+- Added `FPS_ANDROID_BASE_IMAGE` and `FPS_ANDROID_BASE_TARGET` to the Android
+  check helper.
+- Removed stale local Android image tags and pruned dangling images; root
+  filesystem usage dropped from 86% to 38%.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+
+Notes:
+
+- The second managed-device run reused `fps:android-emulator-cache-split`
+  directly and did not rebuild either the source-free base image or the
+  emulator image.
+- After rebuilding the new split images, `/` is at 62% used with 22 GB free.
+
 ### Android real VpnService establish smoke
 
 Goal:

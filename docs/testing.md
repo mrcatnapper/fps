@@ -179,12 +179,12 @@ Android Kotlin code should use Android/Kotlin/JVM libraries for common parsing
 and encoding tasks. Client profile parsing uses Android's `org.json`; JVM unit
 tests get the same API through a test-only dependency so they stay headless.
 
-`Dockerfile.android` prewarms Gradle before the full source `COPY`: it copies
-only the Gradle wrapper, build files and minimal Android project metadata, sets
-a stable `GRADLE_USER_HOME`, runs a dependency-resolution task, and only then
-copies the full source tree. This keeps Android SDK/NDK/vcpkg layers separate
-from source changes and caches the Gradle distribution/dependency graph in an
-image layer used by later one-shot `docker run` checks.
+`Dockerfile.android` prewarms Gradle in the source-free `android-gradle-base`
+stage before the full source `COPY`: it copies only the Gradle wrapper, build
+files and minimal Android project metadata, sets a stable `GRADLE_USER_HOME`,
+runs a dependency-resolution task, and only then copies the full source tree in
+the final `ci` stage. This keeps Android SDK/NDK/vcpkg and Gradle dependency
+layers separate from source changes.
 
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
@@ -244,16 +244,19 @@ tools/run_android_checks.sh --docker-managed-device
 ```
 
 This builds `Dockerfile.android`, then builds `Dockerfile.android-emulator`
-from that local image. The emulator image adds Android's `emulator` package,
-`platforms;android-30` and `system-images;android-30;aosp_atd;x86_64`, then
-runs the Gradle Managed Device task
-`:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm` passed
-through. The managed-device lane runs the same instrumented native smoke as
-`--connected` and also exercises a debug-only real `VpnService.prepare(...)` /
-`VpnService.Builder.establish()` smoke. The VPN smoke requests consent through
-the system dialog when needed, verifies a real TUN fd and closes it. This lane
-is opt-in and is not part of ordinary PR CI until repeated local runs prove it
-stable.
+to the source-free `android-gradle-base` target, then builds
+`Dockerfile.android-emulator` from that local base image. The emulator image
+adds Android's `emulator` package, `platforms;android-30` and
+`system-images;android-30;aosp_atd;x86_64`, then runs the Gradle Managed Device
+task `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm`
+passed through and the current workspace bind-mounted at `/workspaces`. The
+bind mount is intentional: source edits do not invalidate the heavy
+emulator/system-image layers. The managed-device lane runs the same
+instrumented native smoke as `--connected` and also exercises a debug-only real
+`VpnService.prepare(...)` / `VpnService.Builder.establish()` smoke. The VPN
+smoke requests consent through the system dialog when needed, verifies a real
+TUN fd and closes it. This lane is opt-in and is not part of ordinary PR CI
+until repeated local runs prove it stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

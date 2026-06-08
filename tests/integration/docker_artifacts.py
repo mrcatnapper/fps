@@ -286,6 +286,9 @@ def main():
         [
             "--managed-device",
             "--docker-managed-device",
+            "FPS_ANDROID_BASE_IMAGE",
+            "FPS_ANDROID_BASE_TARGET",
+            "android-gradle-base",
             "FPS_ANDROID_REUSE_DOCKER_IMAGE",
             "FPS_ANDROID_EMULATOR_IMAGE",
             "FPS_ANDROID_EMULATOR_DOCKERFILE",
@@ -299,14 +302,31 @@ def main():
     )
     reject_secrets(android_checks, "Android check helper")
 
-    require(
-        (repo / "Dockerfile.android").exists(),
-        "Android build Dockerfile must exist",
+    android_dockerfile = read(repo / "Dockerfile.android")
+    require_all(
+        android_dockerfile,
+        [
+            "AS android-gradle-base",
+            "RUN ./gradlew --no-daemon :android:app:dependencies",
+            "FROM android-gradle-base AS ci",
+            "COPY . ./",
+        ],
+        "Android build Dockerfile",
     )
-    require(
-        (repo / "Dockerfile.android-emulator").exists(),
-        "Android emulator Dockerfile must exist",
+    reject_secrets(android_dockerfile, "Android build Dockerfile")
+
+    android_emulator_dockerfile = read(repo / "Dockerfile.android-emulator")
+    require_all(
+        android_emulator_dockerfile,
+        [
+            "ARG FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base",
+            "FROM ${FPS_ANDROID_BASE_IMAGE}",
+            "system-images;android-30;aosp_atd;x86_64",
+        ],
+        "Android emulator Dockerfile",
     )
+    require("COPY . ./" not in android_emulator_dockerfile, "Android emulator Dockerfile must not copy full source")
+    reject_secrets(android_emulator_dockerfile, "Android emulator Dockerfile")
 
     android_gradle = read(repo / "android/app/build.gradle.kts")
     require_all(

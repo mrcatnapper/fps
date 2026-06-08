@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG FPS_ANDROID_BASE_IMAGE=fps:android-ci
+ARG FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base
 
 FROM ${FPS_ANDROID_BASE_IMAGE}
 
@@ -35,7 +35,5 @@ RUN yes | sdkmanager --licenses >/dev/null \
       "emulator" \
       "platforms;android-30" \
       "system-images;android-30;aosp_atd;x86_64"
-
-ENV FPS_ANDROID_DOCKER=1
 
 CMD ["tools/run_android_checks.sh", "--managed-device"]

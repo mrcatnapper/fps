@@ -128,7 +128,10 @@ tools/run_android_checks.sh --docker
 the Linux product runtime image. It installs the Android SDK/NDK and Android
 OpenSSL triplets, then runs the host Android checks inside the container.
 Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
-SDK use must be requested explicitly with `--host`.
+SDK use must be requested explicitly with `--host`. The source-free
+`android-gradle-base` stage owns SDK/NDK/vcpkg plus Gradle dependency cache;
+the final `ci` stage is the only Android stage that copies the whole
+repository.
 
 Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
 that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
@@ -136,7 +139,10 @@ it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
 hosts where `/dev/kvm` can be passed through to Docker. For repeated local
 runs after the images have already been built, set
 `FPS_ANDROID_REUSE_DOCKER_IMAGE=1` to rerun the checks without rebuilding the
-base/emulator images.
+base/emulator images. The emulator image inherits from the source-free
+`android-gradle-base` image and receives the current source tree through the
+test container bind mount, so ordinary source edits do not force the
+emulator/system-image layers to rebuild.
 
 ## Accepted Runtime Direction
 
