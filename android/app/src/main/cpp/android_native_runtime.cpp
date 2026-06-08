@@ -3,20 +3,37 @@
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include <atomic>
+#include <array>
+#include <cerrno>
+#include <chrono>
+#include <cstddef>
+#include <cstring>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 
+#include <fcntl.h>
 #include <unistd.h>
+
+#include "fps/core/enum.hpp"
+#include "fps/net/tun_packet.hpp"
 
 namespace fps::android_native {
 namespace {
+
+using namespace std::chrono_literals;
+
+constexpr auto kTunPumpPollInterval = 10ms;
+constexpr std::size_t kTunPumpMaxPacketSize = 65536;
+constexpr int kTunPumpMaxReadsPerTick = 16;
 
 class UniqueFd {
 public:
@@ -54,19 +71,26 @@ private:
 
 class AndroidNativeRuntime {
 public:
-    explicit AndroidNativeRuntime(std::string profile_text) : profile_text_{std::move(profile_text)} {}
+    explicit AndroidNativeRuntime(std::string profile_text) : profile_text_{std::move(profile_text)}, tun_poll_timer_{io_context_} {}
 
     ~AndroidNativeRuntime() { static_cast<void>(stop()); }
 
     [[nodiscard]] auto snapshot() const -> NativeRuntimeSnapshotFields {
+        std::lock_guard tun_lock{tun_mutex_};
         return NativeRuntimeSnapshotFields{
             .alive = true,
             .started = started_,
             .worker_thread_running = worker_thread_running_.load(),
             .tun_attached = tun_attached_,
+            .tun_pump_running = tun_pump_running_.load(),
             .tun_fd = tun_attached_ ? tun_fd_.get() : -1,
             .tun_mtu = tun_attached_ ? tun_mtu_ : 0,
             .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
+            .tun_packets_read = tun_packets_read_.load(),
+            .tun_bytes_read = tun_bytes_read_.load(),
+            .tun_packets_parsed = tun_packets_parsed_.load(),
+            .tun_packets_dropped = tun_packets_dropped_.load(),
+            .tun_last_drop_reason = tun_last_drop_reason_,
             .commands_posted = commands_posted_.load(),
             .commands_completed = commands_completed_.load(),
             .last_error = last_error_,
@@ -104,16 +128,50 @@ public:
         if(!started_) {
             last_error_.clear();
             worker_thread_running_.store(false);
+            stop_tun_pump_no_error();
             return snapshot();
         }
 
         started_ = false;
+        stop_tun_pump_no_error();
         work_guard_.reset();
         io_context_.stop();
         if(worker_thread_.joinable()) {
             worker_thread_.join();
         }
         worker_thread_running_.store(false);
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto start_tun_pump() -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            tun_pump_running_.store(false);
+            return snapshot();
+        }
+        bool has_tun = false;
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            has_tun = tun_attached_ && tun_fd_.get() >= 0;
+        }
+        if(!has_tun) {
+            last_error_ = "tun_not_attached";
+            tun_pump_running_.store(false);
+            return snapshot();
+        }
+        if(tun_pump_running_.exchange(true)) {
+            last_error_.clear();
+            return snapshot();
+        }
+
+        boost::asio::post(io_context_, [this] { tun_pump_tick(); });
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto stop_tun_pump() -> NativeRuntimeSnapshotFields {
+        stop_tun_pump_no_error();
         last_error_.clear();
         return snapshot();
     }
@@ -154,36 +212,154 @@ public:
             clear_tun();
             return snapshot();
         }
+        if(!set_nonblocking(duplicated)) {
+            static_cast<void>(::close(duplicated));
+            last_error_ = "tun_fd_nonblocking_failed";
+            clear_tun();
+            return snapshot();
+        }
 
         last_error_.clear();
-        tun_fd_.reset(duplicated);
-        tun_attached_ = true;
-        tun_mtu_ = mtu;
-        tun_fd_ownership_ = TunFdOwnership::owned_duplicate;
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            tun_fd_.reset(duplicated);
+            tun_attached_ = true;
+            tun_mtu_ = mtu;
+            tun_fd_ownership_ = TunFdOwnership::owned_duplicate;
+            tun_last_drop_reason_.clear();
+        }
         return snapshot();
     }
 
 private:
+    [[nodiscard]] static auto set_nonblocking(int fd) noexcept -> bool {
+        const auto flags = ::fcntl(fd, F_GETFL, 0);
+        if(flags < 0) {
+            return false;
+        }
+        return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+    }
+
+    void stop_tun_pump_no_error() {
+        tun_pump_running_.store(false);
+        if(started_) {
+            boost::asio::post(io_context_, [this] {
+                boost::system::error_code ignored;
+                tun_poll_timer_.cancel(ignored);
+            });
+        }
+    }
+
     void clear_tun() noexcept {
+        tun_pump_running_.store(false);
+        std::lock_guard tun_lock{tun_mutex_};
         tun_attached_ = false;
         tun_fd_.reset();
         tun_mtu_ = 0;
         tun_fd_ownership_ = TunFdOwnership::none;
+        tun_last_drop_reason_.clear();
     }
+
+    void tun_pump_tick() {
+        if(!tun_pump_running_.load()) {
+            return;
+        }
+
+        for(int read_index = 0; read_index < kTunPumpMaxReadsPerTick && tun_pump_running_.load(); ++read_index) {
+            const auto read_result = read_one_tun_packet();
+            if(read_result == TunReadResult::would_block) {
+                break;
+            }
+            if(read_result == TunReadResult::closed_or_error) {
+                tun_pump_running_.store(false);
+                return;
+            }
+        }
+
+        if(!tun_pump_running_.load()) {
+            return;
+        }
+        tun_poll_timer_.expires_after(kTunPumpPollInterval);
+        tun_poll_timer_.async_wait([this](const boost::system::error_code& error) {
+            if(!error && tun_pump_running_.load()) {
+                tun_pump_tick();
+            }
+        });
+    }
+
+    enum class TunReadResult {
+        packet,
+        would_block,
+        closed_or_error,
+    };
+
+    [[nodiscard]] auto read_one_tun_packet() -> TunReadResult {
+        std::array<std::byte, kTunPumpMaxPacketSize> packet{};
+        ssize_t read_size = -1;
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            if(!tun_attached_ || tun_fd_.get() < 0) {
+                set_tun_last_drop_reason_locked("tun_not_attached");
+                return TunReadResult::closed_or_error;
+            }
+            read_size = ::read(tun_fd_.get(), packet.data(), packet.size());
+        }
+        if(read_size > 0) {
+            account_tun_packet(std::span<const std::byte>{packet.data(), static_cast<std::size_t>(read_size)});
+            return TunReadResult::packet;
+        }
+        if(read_size == 0) {
+            set_tun_last_drop_reason("tun_eof");
+            return TunReadResult::closed_or_error;
+        }
+        if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return TunReadResult::would_block;
+        }
+        set_tun_last_drop_reason("tun_read_failed");
+        return TunReadResult::closed_or_error;
+    }
+
+    void account_tun_packet(std::span<const std::byte> packet) {
+        tun_packets_read_.fetch_add(1);
+        tun_bytes_read_.fetch_add(static_cast<std::uint64_t>(packet.size()));
+        const auto parsed = fps::net::parse_ipv4_flow_tuple(packet);
+        if(parsed) {
+            tun_packets_parsed_.fetch_add(1);
+            set_tun_last_drop_reason("");
+            return;
+        }
+        tun_packets_dropped_.fetch_add(1);
+        set_tun_last_drop_reason(fps::enum_name_or(parsed.error()));
+    }
+
+    void set_tun_last_drop_reason(std::string_view reason) {
+        std::lock_guard tun_lock{tun_mutex_};
+        set_tun_last_drop_reason_locked(reason);
+    }
+
+    void set_tun_last_drop_reason_locked(std::string_view reason) { tun_last_drop_reason_ = std::string{reason}; }
 
     // Keep the normalized profile available for the future native pump without
     // ever exposing it through snapshots or logs.
     std::string profile_text_;
     boost::asio::io_context io_context_;
+    boost::asio::steady_timer tun_poll_timer_;
     using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
     std::optional<WorkGuard> work_guard_;
     std::thread worker_thread_;
     bool started_ = false;
     std::atomic_bool worker_thread_running_ = false;
+    mutable std::mutex tun_mutex_;
     bool tun_attached_ = false;
     UniqueFd tun_fd_;
     int tun_mtu_ = 0;
     TunFdOwnership tun_fd_ownership_ = TunFdOwnership::none;
+    std::atomic_bool tun_pump_running_ = false;
+    std::atomic<std::uint64_t> tun_packets_read_ = 0;
+    std::atomic<std::uint64_t> tun_bytes_read_ = 0;
+    std::atomic<std::uint64_t> tun_packets_parsed_ = 0;
+    std::atomic<std::uint64_t> tun_packets_dropped_ = 0;
+    std::string tun_last_drop_reason_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -233,6 +409,24 @@ public:
             return invalid_runtime_snapshot("invalid_handle");
         }
         return found->second->snapshot();
+    }
+
+    [[nodiscard]] auto start_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->start_tun_pump();
+    }
+
+    [[nodiscard]] auto stop_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->stop_tun_pump();
     }
 
     [[nodiscard]] auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
@@ -296,6 +490,14 @@ auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields
     return runtime_registry().snapshot(handle);
 }
 
+auto start_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().start_tun_pump(handle);
+}
+
+auto stop_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().stop_tun_pump(handle);
+}
+
 auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
     return runtime_registry().post_noop_command(handle);
 }
@@ -311,6 +513,7 @@ auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFi
         .tun_fd = -1,
         .tun_mtu = 0,
         .tun_fd_ownership = TunFdOwnership::none,
+        .tun_last_drop_reason = {},
         .last_error = std::string{error},
     };
 }

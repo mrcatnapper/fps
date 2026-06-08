@@ -30,9 +30,15 @@ data class NativeVpnRuntimeSnapshot(
                 started = false,
                 workerThreadRunning = false,
                 tunAttached = false,
+                tunPumpRunning = false,
                 tunFd = -1,
                 tunMtu = 0,
                 tunFdOwnership = null,
+                tunPacketsRead = 0,
+                tunBytesRead = 0,
+                tunPacketsParsed = 0,
+                tunPacketsDropped = 0,
+                tunLastDropReason = null,
                 commandsPosted = 0,
                 commandsCompleted = 0,
                 lastError = "runtime_stopped",
@@ -94,6 +100,11 @@ class HeadlessNativeVpnRuntime private constructor(
             controller.fail("native_tun_attach_failed", closeTun = true)
             return controller.state
         }
+        val pumpSnapshot = nativeRuntime.startTunPump()
+        if (!pumpSnapshot.alive || !pumpSnapshot.tunPumpRunning) {
+            controller.fail("native_tun_pump_start_failed", closeTun = true)
+            return controller.state
+        }
         return controller.state
     }
 
@@ -119,6 +130,7 @@ class HeadlessNativeVpnRuntime private constructor(
     }
 
     fun stop(): VpnRuntimeState {
+        nativeRuntime.stopTunPump()
         nativeRuntime.stop()
         return controller.stop()
     }

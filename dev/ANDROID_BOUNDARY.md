@@ -93,6 +93,11 @@ starts. It is a developer handoff document, not user/operator documentation.
   and stop one Boost.Asio `io_context` worker thread, exposes non-secret
   lifecycle/counter snapshots and has a deterministic no-op posted-command
   smoke path for future native work.
+- Added the first native Android TUN pump skeleton. It starts after
+  lease-triggered TUN fd attachment, reads the native-owned duplicate fd through
+  a non-blocking executor loop, parses IPv4 TCP/UDP 5-tuples with shared core
+  code and records non-secret packet/drop counters. It intentionally does not
+  run FPS auth, raw carrier I/O or covert datagram enqueue yet.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -108,13 +113,11 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
-- Wire the established `VpnService` fd into the native FPS auth/TUN pump through
-  the JNI handle facade. Current `HeadlessNativeVpnRuntime` duplicates the fd
-  into native-owned RAII state and snapshots report
-  `tunFdOwnership=owned_duplicate`; native runtime start/stop already owns an
-  `io_context` worker thread. The next step is to start the native auth path and
-  packet pump on that descriptor, then add reconnect and richer status reporting
-  around the pump.
+- Wire the native pump output into policy and transport. Current
+  `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
+  starts the `io_context` worker thread and starts a non-protocol read/parse
+  pump. The next step is to connect pump decisions to Android split-tunnel
+  policy and then to native raw TLS/TCP auth/carrier I/O.
 
 ## Accepted Android Direction
 
@@ -139,8 +142,9 @@ starts. It is a developer handoff document, not user/operator documentation.
   `tun.enabled=true` and start the native TUN pump. Current code implements fd
   creation/ownership, native-owned duplicate attachment
   (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
-  explicit native `io_context` executor lifecycle with non-secret runtime
-  snapshots; native pump startup is next.
+  explicit native `io_context` executor lifecycle plus a non-protocol native
+  TUN read/parse pump with non-secret runtime snapshots; native auth/carrier
+  enqueue wiring is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

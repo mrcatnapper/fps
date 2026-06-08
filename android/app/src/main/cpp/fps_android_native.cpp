@@ -143,6 +143,16 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_startTunPump(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::start_tun_pump(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_stopTunPump(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::stop_tun_pump(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_postNoopCommand(JNIEnv* env, jobject /* self */, jlong handle) {
     const auto snapshot = fps::android_native::post_noop_command(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
     return fps::android_jni::runtime_snapshot_object(env, snapshot);

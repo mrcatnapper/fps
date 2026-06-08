@@ -15,9 +15,10 @@ handoff artifact, not operator documentation.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI and no production native auth/TUN
-  pump yet. A connected instrumented smoke exists, but it is opt-in and runs
-  only when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI and no production native auth or
+  carrier I/O yet. A native TUN pump skeleton exists for fd read/parse/counter
+  validation, and connected instrumented smoke remains opt-in when an external
+  Android device or emulator is attached.
 
 ## Implemented Headless Core Slice
 
@@ -70,8 +71,10 @@ Delivered:
   headless VPN controller and the JNI runtime handle. It creates the native
   runtime, starts its executor after VPN permission is available, waits for the
   lease, establishes the Android TUN fd and attaches that fd to native as an
-  owned duplicate. It does not start native auth, carrier I/O or a TUN packet
-  pump.
+  owned duplicate. It then starts the native TUN pump skeleton. The pump reads
+  from the duplicated fd, parses IPv4 TCP/UDP 5-tuples with shared native code
+  and records non-secret counters/drop reasons, but it does not start native
+  auth, carrier I/O or covert enqueue yet.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -143,8 +146,9 @@ SDK use must be requested explicitly with `--host`.
   create/configure the `VpnService` fd only for an Android profile with
   `tun.enabled=true`. Current native runtime wiring duplicates the fd through
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
-  the runtime executor lifecycle is already explicit. Starting the native auth
-  path and TUN pump remains the next native/JNI step.
+  the runtime executor lifecycle is explicit and the first native TUN read/parse
+  pump starts after fd attachment. Starting the native auth path, carrier I/O
+  and covert enqueue remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

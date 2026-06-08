@@ -122,7 +122,7 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZIILjava/lang/String;JJLjava/lang/String;)V");
+    auto* constructor = env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJLjava/lang/String;)V");
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -136,11 +136,17 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     if(!snapshot.last_error.empty() && error_string.get() == nullptr) {
         return nullptr;
     }
+    auto tun_drop_reason_string = new_optional_string(env, snapshot.tun_last_drop_reason);
+    if(!snapshot.tun_last_drop_reason.empty() && tun_drop_reason_string.get() == nullptr) {
+        return nullptr;
+    }
 
     return env->NewObject(
         snapshot_class.get(), constructor, static_cast<jboolean>(snapshot.alive), static_cast<jboolean>(snapshot.started),
-        static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jint>(snapshot.tun_fd),
-        static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.commands_posted),
+        static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jboolean>(snapshot.tun_pump_running),
+        static_cast<jint>(snapshot.tun_fd), static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.tun_packets_read),
+        static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
+        tun_drop_reason_string.get(), static_cast<jlong>(snapshot.commands_posted),
         static_cast<jlong>(snapshot.commands_completed), error_string.get()
     );
 }

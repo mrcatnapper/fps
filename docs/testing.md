@@ -196,8 +196,11 @@ idempotent TUN fd close ownership through fake builders and the Kotlin
 `FpsNativeRuntime` wrapper with a fake native backend. They also cover the
 headless Kotlin/native lifecycle bridge that establishes TUN after lease
 delivery, starts the native executor lifecycle and duplicates the descriptor
-into native-owned runtime state. They assert that lease-triggered TUN startup
-requires `tun.enabled=true` and that snapshots report only non-secret
+into native-owned runtime state. They also exercise the Kotlin/JNI-facing TUN
+pump lifecycle through fake backends: pump startup requires a started runtime
+and attached TUN fd, lease-triggered attach starts the pump, and stop/close are
+idempotent. They assert that lease-triggered TUN startup requires
+`tun.enabled=true` and that snapshots report only non-secret
 state/TUN/carrier-probe/native metadata. These checks still do not require an
 emulator or a real Android `VpnService` instance.
 
@@ -212,8 +215,10 @@ The connected check runs `:android:app:connectedDebugAndroidTest`, loads
 `libfps_android_native.so` on the target, calls the JNI `nativeVersion()` and
 `nativeCoreSmoke()` paths, verifies a native IPv4 TCP tuple parse fixture and
 checks the JNI native runtime handle/snapshot, executor start/stop/no-op command
-and native-owned duplicate TUN fd API. It is opt-in because it requires a real
-Android runtime.
+and native-owned duplicate TUN fd API. It also starts the native TUN pump
+skeleton against a pipe fd, writes one valid IPv4 UDP packet plus one malformed
+byte sequence, and verifies read/parse/drop counters. It is opt-in because it
+requires a real Android runtime.
 
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models

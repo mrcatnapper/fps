@@ -49,6 +49,7 @@ class FpsNativeRuntimeTest {
         assertFalse(snapshot.started)
         assertFalse(snapshot.workerThreadRunning)
         assertFalse(snapshot.tunAttached)
+        assertFalse(snapshot.tunPumpRunning)
         assertEquals(null, snapshot.tunFdOwnership)
         assertEquals(1L, backend.createdProfiles.single().first)
         assertEquals(profileJson, backend.createdProfiles.single().second)
@@ -102,6 +103,41 @@ class FpsNativeRuntimeTest {
     }
 
     @Test
+    fun tunPumpRequiresStartedRuntimeAndAttachedTun() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val stopped = runtime.startTunPump()
+        runtime.start()
+        val missingTun = runtime.startTunPump()
+
+        assertFalse(stopped.tunPumpRunning)
+        assertEquals("runtime_stopped", stopped.lastError)
+        assertFalse(missingTun.tunPumpRunning)
+        assertEquals("tun_not_attached", missingTun.lastError)
+    }
+
+    @Test
+    fun tunPumpStartStopIsIdempotent() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        runtime.start()
+        runtime.attachTunFdOwnedDuplicate(77, 1280)
+        val started = runtime.startTunPump()
+        val startedAgain = runtime.startTunPump()
+        val stopped = runtime.stopTunPump()
+        val stoppedAgain = runtime.stopTunPump()
+
+        assertTrue(started.tunPumpRunning)
+        assertTrue(startedAgain.tunPumpRunning)
+        assertFalse(stopped.tunPumpRunning)
+        assertFalse(stoppedAgain.tunPumpRunning)
+        assertEquals(listOf(1L, 1L), backend.startedTunPumps)
+        assertEquals(listOf(1L, 1L), backend.stoppedTunPumps)
+    }
+
+    @Test
     fun attachTunDuplicatesFdWithoutOwningKotlinHandle() {
         val backend = FakeNativeBackend()
         val handle = FakeTunHandle(fd = 77)
@@ -151,9 +187,15 @@ private fun nativeSnapshot(
     started: Boolean = false,
     workerThreadRunning: Boolean = false,
     tunAttached: Boolean = false,
+    tunPumpRunning: Boolean = false,
     tunFd: Int = -1,
     tunMtu: Int = 0,
     tunFdOwnership: String? = null,
+    tunPacketsRead: Long = 0,
+    tunBytesRead: Long = 0,
+    tunPacketsParsed: Long = 0,
+    tunPacketsDropped: Long = 0,
+    tunLastDropReason: String? = null,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
     lastError: String? = null,
@@ -162,9 +204,15 @@ private fun nativeSnapshot(
     started = started,
     workerThreadRunning = workerThreadRunning,
     tunAttached = tunAttached,
+    tunPumpRunning = tunPumpRunning,
     tunFd = tunFd,
     tunMtu = tunMtu,
     tunFdOwnership = tunFdOwnership,
+    tunPacketsRead = tunPacketsRead,
+    tunBytesRead = tunBytesRead,
+    tunPacketsParsed = tunPacketsParsed,
+    tunPacketsDropped = tunPacketsDropped,
+    tunLastDropReason = tunLastDropReason,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
     lastError = lastError,
@@ -175,6 +223,8 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
     val createdProfiles = mutableListOf<Pair<Long, String>>()
     val closedHandles = mutableListOf<Long>()
     val attachedTun = mutableListOf<Triple<Long, Int, Int>>()
+    val startedTunPumps = mutableListOf<Long>()
+    val stoppedTunPumps = mutableListOf<Long>()
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
 
     override fun createRuntime(profileText: String): Long {
@@ -197,6 +247,30 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
             alive = false,
             lastError = "invalid_handle",
         )
+    }
+
+    override fun startTunPump(handle: Long): NativeRuntimeSnapshot {
+        startedTunPumps += handle
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(tunPumpRunning = false, lastError = "runtime_stopped").also { snapshots[handle] = it }
+        }
+        if (!current.tunAttached) {
+            return current.copy(tunPumpRunning = false, lastError = "tun_not_attached").also { snapshots[handle] = it }
+        }
+        return current.copy(
+            tunPumpRunning = true,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun stopTunPump(handle: Long): NativeRuntimeSnapshot {
+        stoppedTunPumps += handle
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            tunPumpRunning = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
     }
 
     override fun startRuntime(handle: Long): NativeRuntimeSnapshot {
@@ -238,12 +312,14 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
         if (fd < 0) {
             return nativeSnapshot(
                 tunAttached = false,
+                tunPumpRunning = false,
                 lastError = "invalid_tun_fd",
             ).also { snapshots[handle] = it }
         }
         if (mtu <= 0) {
             return nativeSnapshot(
                 tunAttached = false,
+                tunPumpRunning = false,
                 lastError = "invalid_tun_mtu",
             ).also { snapshots[handle] = it }
         }

@@ -4,6 +4,58 @@
 
 ## 2026-06-08
 
+### Android native TUN pump skeleton
+
+Goal:
+
+- Add the first native Android TUN fd pump skeleton on top of the existing
+  native-owned duplicate fd and runtime executor lifecycle.
+- Keep this increment intentionally non-protocol: no FPS auth, raw carrier I/O
+  or covert datagram enqueue yet. The pump only reads packets, parses
+  TCP/UDP IPv4 5-tuples through shared core code and records non-secret
+  counters/drop reasons.
+
+Planned steps:
+
+- Extend native runtime snapshots with TUN pump state and packet counters.
+- Add Kotlin/JNI APIs for `startTunPump` and `stopTunPump`.
+- Implement a native non-blocking read loop scheduled on the runtime
+  `io_context`; start/stop must be idempotent and stop must not depend on a
+  blocking TUN read returning.
+- Wire `HeadlessNativeVpnRuntime` to start the pump after lease-triggered TUN
+  fd attachment and stop it before native executor shutdown.
+- Add JVM fake-backend tests and connected native smoke coverage using a pipe
+  fd to validate valid IPv4 parsing, malformed packet drops and lifecycle
+  counters.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Extended `NativeRuntimeSnapshot` with TUN pump state, packet read/byte
+  counters, parsed/drop counters and a metadata-only last drop reason.
+- Added `startTunPump`/`stopTunPump` Kotlin, JNI and native runtime APIs.
+- Implemented a non-blocking native read loop scheduled on the runtime
+  `io_context`. The loop reads the native-owned duplicate fd, parses IPv4
+  TCP/UDP 5-tuples through `parse_ipv4_flow_tuple(...)`, records counters and
+  drops malformed/unsupported packets without logging payload bytes.
+- Wired `HeadlessNativeVpnRuntime` so lease-triggered TUN fd attachment starts
+  the pump and stop/close stops it before native executor shutdown.
+- Added JVM fake-backend coverage for pump lifecycle and coordinator failure
+  paths.
+- Extended connected Android native smoke so a pipe fd validates real JNI/native
+  pump start, valid IPv4 UDP parsing, malformed packet drop counters and stop.
+- Updated Android boundary, app plan, roadmap, specification and testing docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -L local --output-on-failure`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check`
+
 ### Android native executor lifecycle
 
 Goal:
