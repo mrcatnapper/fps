@@ -33,6 +33,9 @@ data class NativeRuntimeSnapshot(
     val tunPolicyAllowed: Long,
     val tunPolicyDropped: Long,
     val tunPolicyQueueFull: Long,
+    val tunCovertEnqueueAttempted: Long,
+    val tunCovertEnqueueAccepted: Long,
+    val tunCovertEnqueueRejected: Long,
     val commandsPosted: Long,
     val commandsCompleted: Long,
     val lastError: String?,
@@ -105,6 +108,9 @@ class FpsNativeRuntime private constructor(
                 tunPolicyAllowed = 0,
                 tunPolicyDropped = 0,
                 tunPolicyQueueFull = 0,
+                tunCovertEnqueueAttempted = 0,
+                tunCovertEnqueueAccepted = 0,
+                tunCovertEnqueueRejected = 0,
                 commandsPosted = 0,
                 commandsCompleted = 0,
                 lastError = "runtime_closed",
@@ -229,4 +235,5 @@ object FpsNative : FpsNativeBackend {
     override fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
         return nativeCompleteTunPolicyPacket(handle, packetId, decision == SplitTunnelDecision.ALLOW)
     }
+
 }

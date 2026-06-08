@@ -26,8 +26,10 @@ documentation.
 - Default Android verification is still Docker/JVM-first:
   `tools/run_android_checks.sh` builds the Android CI image and runs host
   Gradle checks inside it.
-- `tools/run_android_checks.sh --host` runs JVM tests plus debug APK and
-  instrumented-test APK assembly. It requires an Android SDK but no emulator.
+- `tools/run_android_checks.sh --host` runs JVM tests plus debug APK, release
+  APK and instrumented-test APK assembly. It requires an Android SDK but no
+  emulator. The release APK smoke guards the production variant after
+  debug-only test hooks are added.
 - `tools/run_android_checks.sh --connected` runs the current instrumented native
   smoke on an already attached Android device or emulator.
 - `tools/run_android_checks.sh --docker-managed-device` can now reuse existing
@@ -46,7 +48,9 @@ documentation.
   smoke, IPv4 5-tuple parsing, native runtime handle lifecycle, executor
   start/stop, native-owned duplicate TUN fd attachment and the first native
   TUN pump skeleton against a pipe fd, including policy metadata drain and
-  allow/drop completion. The managed-device lane also includes a
+  allow/drop completion, default no-carrier enqueue rejection and a capture
+  sink check proving exact native-owned packet bytes reach the outbound seam.
+  The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
   TUN fd/MTU, routes the fd through `HeadlessNativeVpnRuntime`, verifies native
@@ -178,7 +182,8 @@ Prioritize these emulator/device scenarios in order:
    - Current managed-device coverage also routes that real fd through the full
      `HeadlessNativeVpnRuntime` attach path, starts the native TUN pump and
      verifies clean cleanup. Pipe-fd native smoke separately verifies metadata
-     drain and allow/drop completion.
+     drain, allow/drop completion, no-carrier enqueue rejection and exact packet
+     delivery into a test capture sink.
 
 2. **Service revoke/stop lifecycle**
    - Current managed-device coverage exercises explicit stop and a debug
@@ -252,6 +257,6 @@ Prioritize these emulator/device scenarios in order:
 2. Add underlying-network DNS coverage before enabling native carrier connect.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
-4. Wire policy-allowed native TUN pump packets into native carrier enqueue.
+4. Wire the native outbound packet seam into real native carrier enqueue.
 5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

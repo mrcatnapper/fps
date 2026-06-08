@@ -9,6 +9,7 @@ import org.junit.Test
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.Base64
 
 class NativeCoreSmokeInstrumentedTest {
@@ -128,7 +129,12 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(0L, allowed.tunPolicyInFlight)
         assertEquals(1L, allowed.tunPolicyAllowed)
         assertEquals(0L, allowed.tunPolicyDropped)
-        assertEquals(0L, allowed.tunPacketsDropped)
+        assertEquals(1L, allowed.tunPacketsDropped)
+        assertEquals(1L, allowed.tunCovertEnqueueAttempted)
+        assertEquals(0L, allowed.tunCovertEnqueueAccepted)
+        assertEquals(1L, allowed.tunCovertEnqueueRejected)
+        assertEquals("no_carrier_transport", allowed.tunLastDropReason)
+        assertEquals("no_carrier_transport", allowed.lastError)
 
         output.write(validUdpPacket())
         output.flush()
@@ -139,16 +145,16 @@ class NativeCoreSmokeInstrumentedTest {
         val policyDropped = FpsNative.completeTunPolicyPacket(handle, pendingDrop.single().packetId, SplitTunnelDecision.DROP)
         assertEquals(1L, policyDropped.tunPolicyAllowed)
         assertEquals(1L, policyDropped.tunPolicyDropped)
-        assertEquals(1L, policyDropped.tunPacketsDropped)
+        assertEquals(2L, policyDropped.tunPacketsDropped)
         assertEquals("tun_policy_drop", policyDropped.tunLastDropReason)
 
         output.write(byteArrayOf(0x60))
         output.flush()
-        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 2L }
+        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 3L }
         assertEquals(3L, dropped.tunPacketsRead)
         assertEquals(57L, dropped.tunBytesRead)
         assertEquals(2L, dropped.tunPacketsParsed)
-        assertEquals(2L, dropped.tunPacketsDropped)
+        assertEquals(3L, dropped.tunPacketsDropped)
         assertEquals("non_ipv4_packet", dropped.tunLastDropReason)
 
         val pumpStopped = FpsNative.stopTunPump(handle)
@@ -256,6 +262,77 @@ class NativeCoreSmokeInstrumentedTest {
         secondWriteEnd.close()
     }
 
+    @Test
+    fun nativeTunPolicyAllowHandsExactPacketToCaptureSink() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+        FpsNativeTestHooks.installTunPacketCaptureSink(handle, rejectPackets = false)
+
+        val packet = validUdpPacket()
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+        output.write(packet)
+        output.flush()
+        awaitSnapshot(handle) { it.tunPolicyPending == 1L }
+        val pending = FpsNative.drainTunPolicyPackets(handle, 1).single()
+        val allowed = FpsNative.completeTunPolicyPacket(handle, pending.packetId, SplitTunnelDecision.ALLOW)
+        val digests = FpsNativeTestHooks.capturedTunPacketDigests(handle)
+
+        assertEquals(1L, allowed.tunPolicyAllowed)
+        assertEquals(0L, allowed.tunPacketsDropped)
+        assertEquals(1L, allowed.tunCovertEnqueueAttempted)
+        assertEquals(1L, allowed.tunCovertEnqueueAccepted)
+        assertEquals(0L, allowed.tunCovertEnqueueRejected)
+        assertEquals(null, allowed.lastError)
+        assertEquals(listOf(sha256Hex(packet)), digests.toList())
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeTunPolicyAllowReportsCaptureSinkReject() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+        FpsNativeTestHooks.installTunPacketCaptureSink(handle, rejectPackets = true)
+
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+        output.write(validUdpPacket())
+        output.flush()
+        awaitSnapshot(handle) { it.tunPolicyPending == 1L }
+        val pending = FpsNative.drainTunPolicyPackets(handle, 1).single()
+        val rejected = FpsNative.completeTunPolicyPacket(handle, pending.packetId, SplitTunnelDecision.ALLOW)
+
+        assertEquals(0L, rejected.tunPolicyPending)
+        assertEquals(0L, rejected.tunPolicyInFlight)
+        assertEquals(1L, rejected.tunPolicyAllowed)
+        assertEquals(1L, rejected.tunPacketsDropped)
+        assertEquals(1L, rejected.tunCovertEnqueueAttempted)
+        assertEquals(0L, rejected.tunCovertEnqueueAccepted)
+        assertEquals(1L, rejected.tunCovertEnqueueRejected)
+        assertEquals("carrier_enqueue_rejected", rejected.tunLastDropReason)
+        assertEquals("carrier_enqueue_rejected", rejected.lastError)
+        assertEquals(emptyList<String>(), FpsNativeTestHooks.capturedTunPacketDigests(handle))
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
     private fun awaitSnapshot(handle: Long, predicate: (NativeRuntimeSnapshot) -> Boolean): NativeRuntimeSnapshot {
         var snapshot = FpsNative.runtimeSnapshot(handle)
         repeat(100) {
@@ -277,4 +354,10 @@ class NativeCoreSmokeInstrumentedTest {
         0xcf.toByte(), 0x08, 0x01, 0xbb.toByte(),
         0x00, 0x08, 0x00, 0x00,
     )
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        return MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString(separator = "") { "%02x".format(it.toInt() and 0xff) }
+    }
 }

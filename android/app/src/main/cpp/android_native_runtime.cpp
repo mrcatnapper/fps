@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "fps/core/crypto.hpp"
 #include "fps/core/enum.hpp"
 #include "fps/net/tun_packet.hpp"
 
@@ -37,6 +38,12 @@ constexpr auto kTunPumpPollInterval = 10ms;
 constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
+
+enum class TunPacketSinkMode {
+    none,
+    capture_accept,
+    capture_reject,
+};
 
 class UniqueFd {
 public:
@@ -250,18 +257,33 @@ public:
                 last_error_ = "unknown_tun_policy_packet_id";
                 return snapshot_locked();
             }
+            auto packet = std::move(found->second.packet);
             tun_policy_in_flight_.erase(found);
             if(allow) {
                 tun_policy_allowed_.fetch_add(1);
-                tun_last_drop_reason_.clear();
-            } else {
-                tun_policy_dropped_.fetch_add(1);
-                tun_packets_dropped_.fetch_add(1);
-                tun_last_drop_reason_ = "tun_policy_drop";
+                enqueue_allowed_tun_packet_locked(std::span<const std::byte>{packet.data(), packet.size()});
+                return snapshot_locked();
             }
+            tun_policy_dropped_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "tun_policy_drop";
             last_error_.clear();
             return snapshot_locked();
         }
+    }
+
+    [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
+        std::lock_guard tun_lock{tun_mutex_};
+        tun_packet_sink_mode_ = reject_packets ? TunPacketSinkMode::capture_reject : TunPacketSinkMode::capture_accept;
+        captured_tun_packet_digests_.clear();
+        tun_last_drop_reason_.clear();
+        last_error_.clear();
+        return snapshot_locked();
+    }
+
+    [[nodiscard]] auto captured_tun_packet_digests_for_test() const -> std::vector<std::string> {
+        std::lock_guard tun_lock{tun_mutex_};
+        return captured_tun_packet_digests_;
     }
 
 private:
@@ -270,6 +292,18 @@ private:
         std::vector<std::byte> packet;
         fps::net::TunFlowTuple flow{};
     };
+
+    [[nodiscard]] static auto hex_digest(const fps::HmacSha256& digest) -> std::string {
+        constexpr char alphabet[] = "0123456789abcdef";
+        std::string out;
+        out.resize(digest.size() * 2U);
+        for(std::size_t index = 0; index < digest.size(); ++index) {
+            const auto value = std::to_integer<unsigned int>(digest[index]);
+            out[2U * index] = alphabet[(value >> 4U) & 0x0fU];
+            out[(2U * index) + 1U] = alphabet[value & 0x0fU];
+        }
+        return out;
+    }
 
     [[nodiscard]] static auto set_nonblocking(int fd) noexcept -> bool {
         const auto flags = ::fcntl(fd, F_GETFL, 0);
@@ -392,6 +426,37 @@ private:
         tun_last_drop_reason_.clear();
     }
 
+    void enqueue_allowed_tun_packet_locked(std::span<const std::byte> packet) {
+        tun_covert_enqueue_attempted_.fetch_add(1);
+        if(tun_packet_sink_mode_ == TunPacketSinkMode::none) {
+            tun_covert_enqueue_rejected_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "no_carrier_transport";
+            last_error_ = "no_carrier_transport";
+            return;
+        }
+        if(tun_packet_sink_mode_ == TunPacketSinkMode::capture_reject) {
+            tun_covert_enqueue_rejected_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "carrier_enqueue_rejected";
+            last_error_ = "carrier_enqueue_rejected";
+            return;
+        }
+
+        auto digest = fps::sha256(packet);
+        if(!digest) {
+            tun_covert_enqueue_rejected_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "carrier_enqueue_digest_failed";
+            last_error_ = "carrier_enqueue_digest_failed";
+            return;
+        }
+        captured_tun_packet_digests_.push_back(hex_digest(digest.value()));
+        tun_covert_enqueue_accepted_.fetch_add(1);
+        tun_last_drop_reason_.clear();
+        last_error_.clear();
+    }
+
     void set_tun_last_drop_reason(std::string_view reason) {
         std::lock_guard tun_lock{tun_mutex_};
         set_tun_last_drop_reason_locked(reason);
@@ -419,6 +484,9 @@ private:
             .tun_policy_allowed = tun_policy_allowed_.load(),
             .tun_policy_dropped = tun_policy_dropped_.load(),
             .tun_policy_queue_full = tun_policy_queue_full_.load(),
+            .tun_covert_enqueue_attempted = tun_covert_enqueue_attempted_.load(),
+            .tun_covert_enqueue_accepted = tun_covert_enqueue_accepted_.load(),
+            .tun_covert_enqueue_rejected = tun_covert_enqueue_rejected_.load(),
             .commands_posted = commands_posted_.load(),
             .commands_completed = commands_completed_.load(),
             .last_error = last_error_,
@@ -452,6 +520,11 @@ private:
     std::atomic<std::uint64_t> tun_policy_allowed_ = 0;
     std::atomic<std::uint64_t> tun_policy_dropped_ = 0;
     std::atomic<std::uint64_t> tun_policy_queue_full_ = 0;
+    std::atomic<std::uint64_t> tun_covert_enqueue_attempted_ = 0;
+    std::atomic<std::uint64_t> tun_covert_enqueue_accepted_ = 0;
+    std::atomic<std::uint64_t> tun_covert_enqueue_rejected_ = 0;
+    TunPacketSinkMode tun_packet_sink_mode_ = TunPacketSinkMode::none;
+    std::vector<std::string> captured_tun_packet_digests_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -557,6 +630,24 @@ public:
         return found->second->complete_tun_policy_packet(packet_id, allow);
     }
 
+    [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->install_tun_packet_capture_sink_for_test(reject_packets);
+    }
+
+    [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second->captured_tun_packet_digests_for_test();
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
@@ -622,6 +713,14 @@ auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> st
 
 auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
     return runtime_registry().complete_tun_policy_packet(handle, packet_id, allow);
+}
+
+auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().install_tun_packet_capture_sink_for_test(handle, reject_packets);
+}
+
+auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
+    return runtime_registry().captured_tun_packet_digests_for_test(handle);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

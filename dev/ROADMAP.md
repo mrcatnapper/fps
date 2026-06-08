@@ -184,10 +184,14 @@ without claiming resistance to advanced timing/size traffic analysis.
   start/stop and posted-command smoke coverage.
 - [x] Add first Android native TUN pump skeleton: native-owned duplicate fd
   non-blocking read loop, IPv4 TCP/UDP parse counters and lifecycle smoke.
+- [x] Add first Android native TUN outbound seam: policy-allowed packets attempt
+  native outbound enqueue, no-carrier/reject paths are explicit counters, and
+  instrumented tests verify exact packet bytes reach a capture sink.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: wire policy-allowed native TUN pump packets into
-  carrier enqueue, implement native raw TLS/TCP auth/carrier I/O, Android
-  lifecycle resilience/status and richer native/Kotlin async commands.
+  `dev/ANDROID_APP_PLAN.md`: replace the Android capture/default outbound seam
+  with real native carrier enqueue, implement native raw TLS/TCP auth/carrier
+  I/O, Android lifecycle resilience/status and richer native/Kotlin async
+  commands.
 
 ## Phase 7: Fuzzing And Soak
 

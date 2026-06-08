@@ -174,6 +174,7 @@ run_host_checks() {
     --project-dir "$repo_root" \
     :android:app:testDebugUnitTest \
     :android:app:assembleDebug \
+    :android:app:assembleRelease \
     :android:app:assembleDebugAndroidTest
 }
 

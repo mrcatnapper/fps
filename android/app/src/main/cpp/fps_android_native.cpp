@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "android_jni_helpers.hpp"
 #include "android_native_runtime.hpp"
@@ -24,6 +25,35 @@
 namespace {
 
 [[nodiscard]] auto ignored_trace_value() noexcept -> int { return 42; }
+
+[[nodiscard]] auto string_array(JNIEnv* env, const std::vector<std::string>& values) -> jobjectArray {
+    auto* string_class = env->FindClass("java/lang/String");
+    if(string_class == nullptr) {
+        return nullptr;
+    }
+    auto* array = env->NewObjectArray(static_cast<jsize>(values.size()), string_class, nullptr);
+    if(array == nullptr) {
+        env->DeleteLocalRef(string_class);
+        return nullptr;
+    }
+    for(std::size_t index = 0; index < values.size(); ++index) {
+        auto* value = env->NewStringUTF(values[index].c_str());
+        if(value == nullptr) {
+            env->DeleteLocalRef(array);
+            env->DeleteLocalRef(string_class);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(array, static_cast<jsize>(index), value);
+        env->DeleteLocalRef(value);
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            env->DeleteLocalRef(array);
+            env->DeleteLocalRef(string_class);
+            return nullptr;
+        }
+    }
+    env->DeleteLocalRef(string_class);
+    return array;
+}
 
 [[nodiscard]] auto core_smoke() -> std::string {
     auto random = fps::random_bytes(32);
@@ -179,4 +209,19 @@ Java_org_fpsproject_client_nativebridge_FpsNative_nativeCompleteTunPolicyPacket(
         static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<std::uint64_t>(packet_id), allow == JNI_TRUE
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeInstallTunPacketCaptureSinkForTest(
+    JNIEnv* env, jobject /* self */, jlong handle, jboolean reject_packets
+) {
+    const auto snapshot = fps::android_native::install_tun_packet_capture_sink_for_test(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), reject_packets == JNI_TRUE
+    );
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeCapturedTunPacketDigestsForTest(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto digests = fps::android_native::captured_tun_packet_digests_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return string_array(env, digests);
 }

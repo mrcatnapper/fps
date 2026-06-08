@@ -107,13 +107,13 @@ devices and future Gradle-managed emulators.
   code, queues bounded metadata for Kotlin split-tunnel policy decisions and
   records non-secret packet/drop counters. Packet bytes stay in native state;
   Kotlin completes each drained metadata item as allow/drop. In the current
-  bridge, `allow` means "policy accepted and the native in-flight packet was
-  released", not "packet was sent through FPS". Production code must not run a
-  background drain/apply loop that silently consumes allowed packets until
-  native carrier enqueue exists. Reattaching or clearing the TUN fd clears
+  bridge, `allow` means "policy accepted and native attempted outbound
+  enqueue"; it is not proof that the packet reached the remote peer. Without a
+  carrier transport, `ALLOW` returns `no_carrier_transport` and the packet is
+  dropped with explicit counters. Reattaching or clearing the TUN fd clears
   pending and in-flight policy packets so stale decisions from an old fd cannot
   affect a new runtime state. The pump intentionally does not run FPS auth, raw
-  carrier I/O or covert datagram enqueue yet.
+  carrier I/O or real covert datagram enqueue yet.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -133,8 +133,12 @@ devices and future Gradle-managed emulators.
   `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
   starts the `io_context` worker thread, drains native pump metadata through
   Kotlin split-tunnel policy and completes packets as allow/drop for testable
-  fail-closed accounting. The next step is native raw TLS/TCP auth/carrier I/O
-  and covert datagram enqueue for allowed packets.
+  fail-closed accounting. Allowed packets now reach a native outbound packet
+  seam. The default runtime has no real carrier transport yet, so it reports
+  `no_carrier_transport` and increments enqueue rejected counters; a capture
+  sink is used by instrumented tests to prove exact native-owned packet bytes
+  reach the seam. The next step is native raw TLS/TCP auth/carrier I/O and
+  replacing the capture/default seam with real covert datagram enqueue.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through
