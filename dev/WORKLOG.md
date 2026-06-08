@@ -4,6 +4,45 @@
 
 ## 2026-06-08
 
+### Android emulator test workflow polish
+
+Goal:
+
+- Make the new Docker-managed Android emulator lane easier to reuse during
+  local development and safe to trigger manually from GitHub Actions.
+- Add static contract coverage so the Android Docker/tooling pieces do not
+  silently drift apart.
+
+Planned steps:
+
+- Add an opt-in image reuse mode to `tools/run_android_checks.sh` so repeated
+  emulator checks can run without rebuilding the Android Docker images.
+- Add a manual-only GitHub Actions workflow for the emulator lane.
+- Extend `tests/integration/docker_artifacts.py` with Android tooling contract
+  checks.
+- Update Android testing docs and verify shell/Python/static checks plus the
+  Docker-managed emulator lane.
+
+Completed:
+
+- Added `FPS_ANDROID_REUSE_DOCKER_IMAGE=1` support to the Android check helper.
+  The helper now reuses existing base/emulator image tags when present and
+  builds only missing images.
+- Added `.github/workflows/android-emulator.yml`, a manual-only workflow for
+  the Docker-managed Gradle Managed Device smoke.
+- Added static artifact coverage for the Android workflow, helper modes,
+  Dockerfiles and `fpsApi30Atd` Gradle Managed Device contract.
+- Updated Android testing docs and developer Android plans.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local tools/run_android_checks.sh --docker-managed-device`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local tools/run_android_checks.sh --docker`
+- `git diff --check`
+
 ### Android Docker-managed emulator lane
 
 Goal:

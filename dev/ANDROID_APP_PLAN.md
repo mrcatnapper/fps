@@ -133,7 +133,10 @@ SDK use must be requested explicitly with `--host`.
 Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
 that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
 it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
-hosts where `/dev/kvm` can be passed through to Docker.
+hosts where `/dev/kvm` can be passed through to Docker. For repeated local
+runs after the images have already been built, set
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` to rerun the checks without rebuilding the
+base/emulator images.
 
 ## Accepted Runtime Direction
 
@@ -205,4 +208,6 @@ runtime; it is not part of ordinary CI.
 `--managed-device` runs the Gradle Managed Device task with the current SDK and
 emulator environment. `--docker-managed-device` builds the emulator child image
 and runs the same task inside Docker with `/dev/kvm`. Keep these lanes opt-in
-until repeated runs prove them stable enough for scheduled CI.
+until repeated runs prove them stable enough for scheduled CI. GitHub Actions
+has a manual-only `Android Emulator` workflow for this lane; it is not a
+required PR check.

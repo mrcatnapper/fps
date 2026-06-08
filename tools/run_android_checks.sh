@@ -34,6 +34,10 @@ Environment:
   FPS_ANDROID_EMULATOR_DOCKERFILE
                             Dockerfile for --docker-managed-device, default:
                             Dockerfile.android-emulator.
+  FPS_ANDROID_REUSE_DOCKER_IMAGE=1
+                            Reuse existing Android Docker images instead of
+                            rebuilding them. If a requested image is missing,
+                            it is built normally.
   FPS_ANDROID_MANAGED_DEVICE_TASK
                             Gradle task for --managed-device, default:
                             :android:app:fpsApi30AtdDebugAndroidTest.
@@ -106,6 +110,12 @@ remove_existing_docker_image() {
   fi
 }
 
+docker_image_exists() {
+  local image="$1"
+  shift
+  "$@" image inspect "$image" >/dev/null 2>&1
+}
+
 docker_build_image() {
   local image="$1"
   local dockerfile_path="$2"
@@ -116,6 +126,20 @@ docker_build_image() {
   else
     run "$@" build -f "$dockerfile_path" -t "$image" "${docker_build_args[@]}" "$repo_root"
   fi
+}
+
+ensure_docker_image() {
+  local image="$1"
+  local dockerfile_path="$2"
+  shift 2
+
+  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$image" "$@"; then
+    log "Reuse existing Android Docker image: $image"
+    return 0
+  fi
+
+  remove_existing_docker_image "$image" "$@"
+  docker_build_image "$image" "$dockerfile_path" "$@"
 }
 
 set_android_env() {
@@ -208,9 +232,8 @@ run_docker_checks() {
   fi
 
   log "Build Android Docker image"
-  remove_existing_docker_image "$image" "${docker_cmd[@]}"
   local docker_build_args=()
-  docker_build_image "$image" "$dockerfile_path" "${docker_cmd[@]}"
+  ensure_docker_image "$image" "$dockerfile_path" "${docker_cmd[@]}"
 
   log "Run Android checks in Docker"
   run "${docker_cmd[@]}" run --rm "$image"
@@ -256,15 +279,17 @@ run_docker_managed_device_checks() {
     docker_cmd=(sudo -n docker)
   fi
 
-  log "Build Android base Docker image"
-  remove_existing_docker_image "$base_image" "${docker_cmd[@]}"
   local docker_build_args=()
-  docker_build_image "$base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
+  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
+    log "Reuse existing Android emulator Docker image: $emulator_image"
+  else
+    log "Build Android base Docker image"
+    ensure_docker_image "$base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
 
-  log "Build Android emulator Docker image"
-  remove_existing_docker_image "$emulator_image" "${docker_cmd[@]}"
-  docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$base_image")
-  docker_build_image "$emulator_image" "$emulator_dockerfile_path" "${docker_cmd[@]}"
+    log "Build Android emulator Docker image"
+    docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$base_image")
+    ensure_docker_image "$emulator_image" "$emulator_dockerfile_path" "${docker_cmd[@]}"
+  fi
 
   log "Run Android managed-device checks in Docker"
   run "${docker_cmd[@]}" run \

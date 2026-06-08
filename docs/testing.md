@@ -112,6 +112,21 @@ from the image. This is useful for quick checks, but remember that generated
 build outputs will be written to the mounted workspace unless the command
 redirects them elsewhere.
 
+Android Docker checks have the same reuse path. Set
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` when the relevant Android image tags already
+exist and you only want to rerun Gradle/tests:
+
+```sh
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
+  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
+  tools/run_android_checks.sh --docker
+
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
+  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
+  FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local \
+  tools/run_android_checks.sh --docker-managed-device
+```
+
 ## Android Bootstrap Checks
 
 The Android client scaffold is command-line only; Android Studio is not
@@ -237,6 +252,11 @@ through. The managed-device lane currently runs the same instrumented native
 smoke as `--connected`; it is opt-in and is not part of ordinary PR CI until
 repeated local runs prove it stable.
 
+GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
+same `--docker-managed-device` command on demand. It is intentionally not a
+required PR check: emulator availability and startup latency are still treated
+as infrastructure variables until repeated scheduled/manual runs prove stable.
+
 The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 `x86_64`, while the Kotlin layer parses client JSON/`fps://v1` profiles, models
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
@@ -277,7 +297,7 @@ The output should reference Android runtime libraries such as `liblog.so`,
 
 ## GitHub Actions CI
 
-The repository defines three GitHub Actions workflow files:
+The repository defines four GitHub Actions workflow files:
 
 - `CI`: runs on pull requests, pushes to `main` and manual dispatch. It covers
   `ubuntu-24.04 x gcc/clang` local builds/tests through the repository
@@ -287,6 +307,9 @@ The repository defines three GitHub Actions workflow files:
   `tools/run_quality_checks.sh --all` inside the same `Dockerfile` `ci` stage,
   including clang-20, ASan/UBSan, Valgrind, llvm-cov and bounded libFuzzer
   smoke.
+- `Android Emulator`: runs on manual dispatch only. It executes the
+  Docker-managed Gradle Managed Device smoke through `/dev/kvm` and remains
+  outside the required PR checks.
 - `Publish Images`: runs on manual dispatch only. It first runs the same Docker
   runtime smoke, then can publish Ubuntu and Alpine images to GHCR when
   `publish=true`. With the default `publish=false`, it is a build-only

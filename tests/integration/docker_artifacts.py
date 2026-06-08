@@ -265,6 +265,62 @@ def main():
         )
         reject_secrets(publish_workflow, "image publish workflow")
 
+    android_emulator_workflow = read(repo / ".github/workflows/android-emulator.yml")
+    require_all(
+        android_emulator_workflow,
+        [
+            "Android Emulator",
+            "workflow_dispatch",
+            "ubuntu-24.04",
+            "docker/setup-buildx-action@v4",
+            "/dev/kvm",
+            "tools/run_android_checks.sh --docker-managed-device",
+        ],
+        "Android emulator workflow",
+    )
+    reject_secrets(android_emulator_workflow, "Android emulator workflow")
+
+    android_checks = read(repo / "tools/run_android_checks.sh")
+    require_all(
+        android_checks,
+        [
+            "--managed-device",
+            "--docker-managed-device",
+            "FPS_ANDROID_REUSE_DOCKER_IMAGE",
+            "FPS_ANDROID_EMULATOR_IMAGE",
+            "FPS_ANDROID_EMULATOR_DOCKERFILE",
+            "FPS_ANDROID_MANAGED_DEVICE_TASK",
+            "FPS_ANDROID_EMULATOR_GPU",
+            "fpsApi30AtdDebugAndroidTest",
+            "/dev/kvm",
+            "ensure_docker_image",
+        ],
+        "Android check helper",
+    )
+    reject_secrets(android_checks, "Android check helper")
+
+    require(
+        (repo / "Dockerfile.android").exists(),
+        "Android build Dockerfile must exist",
+    )
+    require(
+        (repo / "Dockerfile.android-emulator").exists(),
+        "Android emulator Dockerfile must exist",
+    )
+
+    android_gradle = read(repo / "android/app/build.gradle.kts")
+    require_all(
+        android_gradle,
+        [
+            "fpsApi30Atd",
+            "apiLevel = 30",
+            "systemImageSource = \"aosp-atd\"",
+            "testedAbi = \"x86_64\"",
+        ],
+        "Android Gradle managed-device config",
+    )
+    reject_secrets(android_gradle, "Android Gradle managed-device config")
+
     quality_checks = read(repo / "tools/run_quality_checks.sh")
     require_all(
         quality_checks,

@@ -30,6 +30,9 @@ documentation.
   instrumented-test APK assembly. It requires an Android SDK but no emulator.
 - `tools/run_android_checks.sh --connected` runs the current instrumented native
   smoke on an already attached Android device or emulator.
+- `tools/run_android_checks.sh --docker-managed-device` can now reuse existing
+  Android Docker image tags with `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`; use this
+  for fast reruns after the base/emulator images have already been built.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
   image. It installs SDK/NDK/vcpkg Android OpenSSL and prewarms Gradle
   dependencies, but it does not contain system images or an emulator.
@@ -138,12 +141,20 @@ Use the repository helper:
 
 ```sh
 tools/run_android_checks.sh --docker-managed-device
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
 The helper builds the base image first, builds the emulator image from that
 local tag, then runs the managed-device task in a container with `/dev/kvm`
-passed through. Keep this lane opt-in until repeated local/agent runs show it is
-stable enough for scheduled CI.
+passed through. With `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing image tags are
+used directly and only missing images are built. Keep this lane opt-in until
+repeated local/agent runs show it is stable enough for scheduled CI.
+
+The repository has a manual-only GitHub Actions workflow named
+`Android Emulator` for the same lane. It is not a required PR check; it exists
+to validate the Docker-managed emulator setup in GitHub-hosted infrastructure
+without putting emulator startup latency or KVM availability into the normal PR
+path.
 
 ## VPN-Specific Test Scenarios
 
@@ -213,7 +224,9 @@ Prioritize these emulator/device scenarios in order:
    `--docker-managed-device`.
 3. Add `Dockerfile.android-emulator` as a child of `Dockerfile.android`.
 4. Run the current instrumented smoke on the managed device manually.
-5. If stable, add a small real `VpnService` consent/establish smoke with a
+5. Add a manual-only GitHub Actions entrypoint and image-reuse mode for local
+   reruns.
+6. If stable, add a small real `VpnService` consent/establish smoke with a
    test-only lease injection path.
-6. Keep managed-device CI manual/scheduled until repeated local runs show it is
+7. Keep managed-device CI manual/scheduled until repeated local runs show it is
    stable enough for PR gating.
