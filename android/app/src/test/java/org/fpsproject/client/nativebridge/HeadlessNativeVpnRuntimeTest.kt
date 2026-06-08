@@ -7,7 +7,9 @@ import org.fpsproject.client.runtime.ResolvedEndpoint
 import org.fpsproject.client.runtime.TunHandle
 import org.fpsproject.client.runtime.TunLease
 import org.fpsproject.client.runtime.VpnRuntimeState
+import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunFlowTuple
+import org.fpsproject.client.policy.TunProtocol
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -169,6 +171,41 @@ class HeadlessNativeVpnRuntimeTest {
         assertFalse(text.contains(uuid))
         assertFalse(text.contains(key))
     }
+
+    @Test
+    fun applyPendingTunPolicyUsesKotlinUidPolicyAndCompletesNativePackets() {
+        val backend = FakeCoordinatorNativeBackend(
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 101,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+                NativeTunPolicyPacket(
+                    packetId = 102,
+                    packetSize = 40,
+                    flow = TunFlowTuple(TunProtocol.TCP, 0x0a420002, 53001, 0x5db8d822, 8443),
+                ),
+            ),
+        )
+        val hooks = FakeAndroidHooks(uidForFlow = { flow ->
+            if (flow.destinationPort == 443) {
+                10042
+            } else {
+                10043
+            }
+        })
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val snapshot = runtime.applyPendingTunPolicy(maxPackets = 8)
+
+        assertEquals(listOf(101L to SplitTunnelDecision.ALLOW, 102L to SplitTunnelDecision.DROP), backend.completedPolicy)
+        assertEquals(1L, snapshot.tunPolicyAllowed)
+        assertEquals(1L, snapshot.tunPolicyDropped)
+        assertEquals(0L, snapshot.tunPolicyPending)
+        assertEquals(0L, snapshot.tunPolicyInFlight)
+    }
 }
 
 private fun coordinatorSnapshot(
@@ -185,6 +222,11 @@ private fun coordinatorSnapshot(
     tunPacketsParsed: Long = 0,
     tunPacketsDropped: Long = 0,
     tunLastDropReason: String? = null,
+    tunPolicyPending: Long = 0,
+    tunPolicyInFlight: Long = 0,
+    tunPolicyAllowed: Long = 0,
+    tunPolicyDropped: Long = 0,
+    tunPolicyQueueFull: Long = 0,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
     lastError: String? = null,
@@ -202,6 +244,11 @@ private fun coordinatorSnapshot(
     tunPacketsParsed = tunPacketsParsed,
     tunPacketsDropped = tunPacketsDropped,
     tunLastDropReason = tunLastDropReason,
+    tunPolicyPending = tunPolicyPending,
+    tunPolicyInFlight = tunPolicyInFlight,
+    tunPolicyAllowed = tunPolicyAllowed,
+    tunPolicyDropped = tunPolicyDropped,
+    tunPolicyQueueFull = tunPolicyQueueFull,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
     lastError = lastError,
@@ -220,6 +267,7 @@ private enum class PumpResult {
 private class FakeCoordinatorNativeBackend(
     private val attachResult: AttachResult = AttachResult.SUCCESS,
     private val pumpResult: PumpResult = PumpResult.SUCCESS,
+    initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
 ) : FpsNativeBackend {
     private var nextHandle = 1L
     val createdProfiles = mutableListOf<Pair<Long, String>>()
@@ -229,7 +277,10 @@ private class FakeCoordinatorNativeBackend(
     val attachedTun = mutableListOf<Triple<Long, Int, Int>>()
     val startedTunPumps = mutableListOf<Long>()
     val stoppedTunPumps = mutableListOf<Long>()
+    val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
+    private val pendingPolicy = ArrayDeque(initialPolicyPackets)
+    private val inFlightPolicy = mutableSetOf<Long>()
 
     override fun createRuntime(profileText: String): Long {
         val handle = nextHandle++
@@ -330,11 +381,45 @@ private class FakeCoordinatorNativeBackend(
         snapshots[handle] = snapshot
         return snapshot
     }
+
+    override fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket> {
+        val current = snapshots[handle] ?: return emptyList()
+        val out = mutableListOf<NativeTunPolicyPacket>()
+        repeat(maxPackets.coerceAtLeast(0)) {
+            val packet = pendingPolicy.removeFirstOrNull() ?: return@repeat
+            out += packet
+            inFlightPolicy += packet.packetId
+        }
+        snapshots[handle] = current.copy(
+            tunPolicyPending = pendingPolicy.size.toLong(),
+            tunPolicyInFlight = inFlightPolicy.size.toLong(),
+        )
+        return out
+    }
+
+    override fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (!inFlightPolicy.remove(packetId)) {
+            return current.copy(lastError = "unknown_tun_policy_packet_id").also { snapshots[handle] = it }
+        }
+        completedPolicy += packetId to decision
+        val snapshot = current.copy(
+            tunPolicyPending = pendingPolicy.size.toLong(),
+            tunPolicyInFlight = inFlightPolicy.size.toLong(),
+            tunPolicyAllowed = current.tunPolicyAllowed + if (decision == SplitTunnelDecision.ALLOW) 1 else 0,
+            tunPolicyDropped = current.tunPolicyDropped + if (decision == SplitTunnelDecision.DROP) 1 else 0,
+            lastError = null,
+        )
+        snapshots[handle] = snapshot
+        return snapshot
+    }
+
 }
 
 private class FakeAndroidHooks(
     private val vpnPermissionGranted: Boolean = true,
     private val establishedTun: EstablishedTun? = EstablishedTun.borrowed(fd = 7, mtu = 1280),
+    private val uidForFlow: (TunFlowTuple) -> Int = { -1 },
 ) : AndroidPlatformHooks {
     var establishTunCalls = 0
 
@@ -351,7 +436,7 @@ private class FakeAndroidHooks(
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int) = listOf(ResolvedEndpoint("203.0.113.10", port))
 
-    override fun uidForFlow(flow: TunFlowTuple) = -1
+    override fun uidForFlow(flow: TunFlowTuple) = uidForFlow.invoke(flow)
 }
 
 private class CountingTunHandle(override val fd: Int) : TunHandle {

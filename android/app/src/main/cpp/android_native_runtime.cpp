@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -19,6 +20,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -34,6 +36,7 @@ using namespace std::chrono_literals;
 constexpr auto kTunPumpPollInterval = 10ms;
 constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
+constexpr std::size_t kTunPolicyQueueCapacity = 256;
 
 class UniqueFd {
 public:
@@ -77,24 +80,7 @@ public:
 
     [[nodiscard]] auto snapshot() const -> NativeRuntimeSnapshotFields {
         std::lock_guard tun_lock{tun_mutex_};
-        return NativeRuntimeSnapshotFields{
-            .alive = true,
-            .started = started_,
-            .worker_thread_running = worker_thread_running_.load(),
-            .tun_attached = tun_attached_,
-            .tun_pump_running = tun_pump_running_.load(),
-            .tun_fd = tun_attached_ ? tun_fd_.get() : -1,
-            .tun_mtu = tun_attached_ ? tun_mtu_ : 0,
-            .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
-            .tun_packets_read = tun_packets_read_.load(),
-            .tun_bytes_read = tun_bytes_read_.load(),
-            .tun_packets_parsed = tun_packets_parsed_.load(),
-            .tun_packets_dropped = tun_packets_dropped_.load(),
-            .tun_last_drop_reason = tun_last_drop_reason_,
-            .commands_posted = commands_posted_.load(),
-            .commands_completed = commands_completed_.load(),
-            .last_error = last_error_,
-        };
+        return snapshot_locked();
     }
 
     [[nodiscard]] auto start() -> NativeRuntimeSnapshotFields {
@@ -226,12 +212,65 @@ public:
             tun_attached_ = true;
             tun_mtu_ = mtu;
             tun_fd_ownership_ = TunFdOwnership::owned_duplicate;
+            tun_policy_pending_.clear();
+            tun_policy_in_flight_.clear();
             tun_last_drop_reason_.clear();
         }
         return snapshot();
     }
 
+    [[nodiscard]] auto drain_tun_policy_packets(int max_packets) -> std::vector<NativeTunPolicyPacketFields> {
+        if(max_packets <= 0) {
+            return {};
+        }
+
+        std::vector<NativeTunPolicyPacketFields> drained;
+        drained.reserve(static_cast<std::size_t>(max_packets));
+        std::lock_guard tun_lock{tun_mutex_};
+        for(int index = 0; index < max_packets && !tun_policy_pending_.empty(); ++index) {
+            auto packet = std::move(tun_policy_pending_.front());
+            tun_policy_pending_.pop_front();
+            drained.push_back(
+                NativeTunPolicyPacketFields{
+                    .packet_id = packet.packet_id,
+                    .packet_size = static_cast<std::uint32_t>(packet.packet.size()),
+                    .flow = packet.flow,
+                }
+            );
+            tun_policy_in_flight_.emplace(packet.packet_id, std::move(packet));
+        }
+        return drained;
+    }
+
+    [[nodiscard]] auto complete_tun_policy_packet(std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            const auto found = tun_policy_in_flight_.find(packet_id);
+            if(found == tun_policy_in_flight_.end()) {
+                last_error_ = "unknown_tun_policy_packet_id";
+                return snapshot_locked();
+            }
+            tun_policy_in_flight_.erase(found);
+            if(allow) {
+                tun_policy_allowed_.fetch_add(1);
+                tun_last_drop_reason_.clear();
+            } else {
+                tun_policy_dropped_.fetch_add(1);
+                tun_packets_dropped_.fetch_add(1);
+                tun_last_drop_reason_ = "tun_policy_drop";
+            }
+            last_error_.clear();
+            return snapshot_locked();
+        }
+    }
+
 private:
+    struct PendingTunPacket {
+        std::uint64_t packet_id = 0;
+        std::vector<std::byte> packet;
+        fps::net::TunFlowTuple flow{};
+    };
+
     [[nodiscard]] static auto set_nonblocking(int fd) noexcept -> bool {
         const auto flags = ::fcntl(fd, F_GETFL, 0);
         if(flags < 0) {
@@ -257,6 +296,8 @@ private:
         tun_fd_.reset();
         tun_mtu_ = 0;
         tun_fd_ownership_ = TunFdOwnership::none;
+        tun_policy_pending_.clear();
+        tun_policy_in_flight_.clear();
         tun_last_drop_reason_.clear();
     }
 
@@ -325,11 +366,30 @@ private:
         const auto parsed = fps::net::parse_ipv4_flow_tuple(packet);
         if(parsed) {
             tun_packets_parsed_.fetch_add(1);
-            set_tun_last_drop_reason("");
+            enqueue_tun_policy_packet(packet, parsed.value());
             return;
         }
         tun_packets_dropped_.fetch_add(1);
         set_tun_last_drop_reason(fps::enum_name_or(parsed.error()));
+    }
+
+    void enqueue_tun_policy_packet(std::span<const std::byte> packet, const fps::net::TunFlowTuple& flow) {
+        std::lock_guard tun_lock{tun_mutex_};
+        if(tun_policy_pending_.size() + tun_policy_in_flight_.size() >= kTunPolicyQueueCapacity) {
+            tun_packets_dropped_.fetch_add(1);
+            tun_policy_queue_full_.fetch_add(1);
+            tun_last_drop_reason_ = "tun_policy_queue_full";
+            return;
+        }
+        std::vector<std::byte> packet_copy(packet.begin(), packet.end());
+        tun_policy_pending_.push_back(
+            PendingTunPacket{
+                .packet_id = next_tun_policy_packet_id_++,
+                .packet = std::move(packet_copy),
+                .flow = flow,
+            }
+        );
+        tun_last_drop_reason_.clear();
     }
 
     void set_tun_last_drop_reason(std::string_view reason) {
@@ -338,6 +398,32 @@ private:
     }
 
     void set_tun_last_drop_reason_locked(std::string_view reason) { tun_last_drop_reason_ = std::string{reason}; }
+
+    [[nodiscard]] auto snapshot_locked() const -> NativeRuntimeSnapshotFields {
+        return NativeRuntimeSnapshotFields{
+            .alive = true,
+            .started = started_,
+            .worker_thread_running = worker_thread_running_.load(),
+            .tun_attached = tun_attached_,
+            .tun_pump_running = tun_pump_running_.load(),
+            .tun_fd = tun_attached_ ? tun_fd_.get() : -1,
+            .tun_mtu = tun_attached_ ? tun_mtu_ : 0,
+            .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
+            .tun_packets_read = tun_packets_read_.load(),
+            .tun_bytes_read = tun_bytes_read_.load(),
+            .tun_packets_parsed = tun_packets_parsed_.load(),
+            .tun_packets_dropped = tun_packets_dropped_.load(),
+            .tun_last_drop_reason = tun_last_drop_reason_,
+            .tun_policy_pending = static_cast<std::uint64_t>(tun_policy_pending_.size()),
+            .tun_policy_in_flight = static_cast<std::uint64_t>(tun_policy_in_flight_.size()),
+            .tun_policy_allowed = tun_policy_allowed_.load(),
+            .tun_policy_dropped = tun_policy_dropped_.load(),
+            .tun_policy_queue_full = tun_policy_queue_full_.load(),
+            .commands_posted = commands_posted_.load(),
+            .commands_completed = commands_completed_.load(),
+            .last_error = last_error_,
+        };
+    }
 
     // Keep the normalized profile available for the future native pump without
     // ever exposing it through snapshots or logs.
@@ -360,6 +446,12 @@ private:
     std::atomic<std::uint64_t> tun_packets_parsed_ = 0;
     std::atomic<std::uint64_t> tun_packets_dropped_ = 0;
     std::string tun_last_drop_reason_;
+    std::deque<PendingTunPacket> tun_policy_pending_;
+    std::unordered_map<std::uint64_t, PendingTunPacket> tun_policy_in_flight_;
+    std::uint64_t next_tun_policy_packet_id_ = 1;
+    std::atomic<std::uint64_t> tun_policy_allowed_ = 0;
+    std::atomic<std::uint64_t> tun_policy_dropped_ = 0;
+    std::atomic<std::uint64_t> tun_policy_queue_full_ = 0;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -447,6 +539,24 @@ public:
         return found->second->attach_tun_fd_owned_duplicate(fd, mtu);
     }
 
+    [[nodiscard]] auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> std::vector<NativeTunPolicyPacketFields> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second->drain_tun_policy_packets(max_packets);
+    }
+
+    [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->complete_tun_policy_packet(packet_id, allow);
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
@@ -504,6 +614,14 @@ auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotField
 
 auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
     return runtime_registry().attach_tun_fd_owned_duplicate(handle, fd, mtu);
+}
+
+auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> std::vector<NativeTunPolicyPacketFields> {
+    return runtime_registry().drain_tun_policy_packets(handle, max_packets);
+}
+
+auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().complete_tun_policy_packet(handle, packet_id, allow);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

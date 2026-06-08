@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
 import java.util.Base64
@@ -114,15 +115,40 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(28L, parsed.tunBytesRead)
         assertEquals(1L, parsed.tunPacketsParsed)
         assertEquals(0L, parsed.tunPacketsDropped)
+        assertEquals(1L, parsed.tunPolicyPending)
         assertEquals(null, parsed.tunLastDropReason)
+
+        val pendingAllow = FpsNative.drainTunPolicyPackets(handle, 8)
+        assertEquals(1, pendingAllow.size)
+        assertEquals(28, pendingAllow.single().packetSize)
+        assertEquals(TunProtocol.UDP, pendingAllow.single().flow.protocol)
+        assertEquals(0x0a420002L, pendingAllow.single().flow.sourceIpv4)
+        val allowed = FpsNative.completeTunPolicyPacket(handle, pendingAllow.single().packetId, SplitTunnelDecision.ALLOW)
+        assertEquals(0L, allowed.tunPolicyPending)
+        assertEquals(0L, allowed.tunPolicyInFlight)
+        assertEquals(1L, allowed.tunPolicyAllowed)
+        assertEquals(0L, allowed.tunPolicyDropped)
+        assertEquals(0L, allowed.tunPacketsDropped)
+
+        output.write(validUdpPacket())
+        output.flush()
+        val parsedForDrop = awaitSnapshot(handle) { it.tunPacketsParsed == 2L && it.tunPolicyPending == 1L }
+        assertEquals(2L, parsedForDrop.tunPacketsRead)
+        val pendingDrop = FpsNative.drainTunPolicyPackets(handle, 8)
+        assertEquals(1, pendingDrop.size)
+        val policyDropped = FpsNative.completeTunPolicyPacket(handle, pendingDrop.single().packetId, SplitTunnelDecision.DROP)
+        assertEquals(1L, policyDropped.tunPolicyAllowed)
+        assertEquals(1L, policyDropped.tunPolicyDropped)
+        assertEquals(1L, policyDropped.tunPacketsDropped)
+        assertEquals("tun_policy_drop", policyDropped.tunLastDropReason)
 
         output.write(byteArrayOf(0x60))
         output.flush()
-        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 1L }
-        assertEquals(2L, dropped.tunPacketsRead)
-        assertEquals(29L, dropped.tunBytesRead)
-        assertEquals(1L, dropped.tunPacketsParsed)
-        assertEquals(1L, dropped.tunPacketsDropped)
+        val dropped = awaitSnapshot(handle) { it.tunPacketsDropped == 2L }
+        assertEquals(3L, dropped.tunPacketsRead)
+        assertEquals(57L, dropped.tunBytesRead)
+        assertEquals(2L, dropped.tunPacketsParsed)
+        assertEquals(2L, dropped.tunPacketsDropped)
         assertEquals("non_ipv4_packet", dropped.tunLastDropReason)
 
         val pumpStopped = FpsNative.stopTunPump(handle)
@@ -143,6 +169,91 @@ class NativeCoreSmokeInstrumentedTest {
         assertFalse(closed.alive)
         assertEquals(null, closed.tunFdOwnership)
         assertEquals("invalid_handle", closed.lastError)
+    }
+
+    @Test
+    fun nativeTunPolicyBridgeRejectsUnknownAndBoundsQueue() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+
+        val unknown = FpsNative.completeTunPolicyPacket(handle, 999, SplitTunnelDecision.ALLOW)
+        assertEquals("unknown_tun_policy_packet_id", unknown.lastError)
+        assertEquals(0L, unknown.tunPolicyAllowed)
+        assertEquals(0L, unknown.tunPolicyDropped)
+
+        val nonPositiveDrain = FpsNative.drainTunPolicyPackets(handle, 0)
+        assertEquals(0, nonPositiveDrain.size)
+
+        repeat(257) { index ->
+            output.write(validUdpPacket())
+            output.flush()
+            awaitSnapshot(handle) { it.tunPacketsRead >= (index + 1).toLong() }
+        }
+        val saturated = FpsNative.runtimeSnapshot(handle)
+        assertEquals(256L, saturated.tunPolicyPending)
+        assertEquals(0L, saturated.tunPolicyInFlight)
+        assertEquals(1L, saturated.tunPolicyQueueFull)
+        assertEquals(1L, saturated.tunPacketsDropped)
+        assertEquals("tun_policy_queue_full", saturated.tunLastDropReason)
+
+        val drained = FpsNative.drainTunPolicyPackets(handle, 300)
+        assertEquals(256, drained.size)
+        val afterDrain = FpsNative.runtimeSnapshot(handle)
+        assertEquals(0L, afterDrain.tunPolicyPending)
+        assertEquals(256L, afterDrain.tunPolicyInFlight)
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeTunPolicyBridgeClearsPendingAndInflightPacketsOnTunReattach() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val firstPipe = ParcelFileDescriptor.createPipe()
+        val firstReadEnd = firstPipe[0]
+        val firstWriteEnd = firstPipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, firstReadEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+
+        val output = FileOutputStream(firstWriteEnd.fileDescriptor)
+        output.write(validUdpPacket())
+        output.flush()
+        val pending = awaitSnapshot(handle) { it.tunPolicyPending == 1L }
+        assertEquals(1L, pending.tunPolicyPending)
+
+        val drained = FpsNative.drainTunPolicyPackets(handle, 1)
+        assertEquals(1, drained.size)
+        assertEquals(1L, FpsNative.runtimeSnapshot(handle).tunPolicyInFlight)
+
+        val secondPipe = ParcelFileDescriptor.createPipe()
+        val secondReadEnd = secondPipe[0]
+        val secondWriteEnd = secondPipe[1]
+        val reattached = FpsNative.attachTunFdOwnedDuplicate(handle, secondReadEnd.fd, 1280)
+        assertTrue(reattached.tunAttached)
+        assertEquals(0L, reattached.tunPolicyPending)
+        assertEquals(0L, reattached.tunPolicyInFlight)
+
+        val oldCompletion = FpsNative.completeTunPolicyPacket(handle, drained.single().packetId, SplitTunnelDecision.ALLOW)
+        assertEquals("unknown_tun_policy_packet_id", oldCompletion.lastError)
+        assertEquals(0L, oldCompletion.tunPolicyAllowed)
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        firstReadEnd.close()
+        firstWriteEnd.close()
+        secondReadEnd.close()
+        secondWriteEnd.close()
     }
 
     private fun awaitSnapshot(handle: Long, predicate: (NativeRuntimeSnapshot) -> Boolean): NativeRuntimeSnapshot {

@@ -663,9 +663,14 @@ Linux-specific runtime is separate:
   OkHttp carrier-probe checks. Android now has a first `VpnService.Builder`
   fd ownership adapter and JNI runtime handle with explicit native `io_context`
   executor lifecycle. The native runtime can start a non-protocol TUN pump
-  skeleton that reads from the duplicated fd, parses IPv4 TCP/UDP 5-tuples and
-  records non-secret counters/drop reasons. Native FPS auth, carrier I/O and
-  covert enqueue remain follow-up work;
+  skeleton that reads from the duplicated fd, parses IPv4 TCP/UDP 5-tuples,
+  exposes bounded metadata for Kotlin split-tunnel policy decisions and records
+  non-secret counters/drop reasons. Packet bytes stay in native state. A
+  policy `allow` decision currently releases the packet from native in-flight
+  accounting only; it does not send the packet through FPS until native carrier
+  enqueue is added. TUN reattach/clear drops pending and in-flight policy
+  packets from the old fd. Native FPS auth, carrier I/O and covert enqueue
+  remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -691,9 +696,11 @@ Linux-specific runtime is separate:
   bridge that duplicates the TUN fd into a native runtime handle with explicit
   `tunFdOwnership=owned_duplicate` metadata. The native runtime can start/stop
   its Boost.Asio executor, post deterministic test commands and start/stop a
-  first TUN pump skeleton. That pump currently only reads, parses and counts
-  packets; it does not yet run native FPS auth, raw carrier I/O or covert
-  datagram enqueue.
+  first TUN pump skeleton. That pump currently reads packets, parses
+  TCP/UDP 5-tuples, exposes metadata to Kotlin policy and accepts allow/drop
+  completion decisions. It does not yet run native FPS auth, raw carrier I/O or
+  covert datagram enqueue, so production Android code must not interpret
+  `allow` as successful packet forwarding yet.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

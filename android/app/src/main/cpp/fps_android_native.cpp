@@ -165,3 +165,18 @@ Java_org_fpsproject_client_nativebridge_FpsNative_attachTunFdOwnedDuplicate(JNIE
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_nativeDrainTunPolicyPackets(JNIEnv* env, jobject /* self */, jlong handle, jint max_packets) {
+    const auto packets =
+        fps::android_native::drain_tun_policy_packets(static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(max_packets));
+    return fps::android_jni::tun_policy_packet_array(env, packets);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_nativeCompleteTunPolicyPacket(JNIEnv* env, jobject /* self */, jlong handle, jlong packet_id, jboolean allow) {
+    const auto snapshot = fps::android_native::complete_tun_policy_packet(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<std::uint64_t>(packet_id), allow == JNI_TRUE
+    );
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}

@@ -45,7 +45,8 @@ documentation.
 - Current instrumented smoke validates native library loading, crypto/core
   smoke, IPv4 5-tuple parsing, native runtime handle lifecycle, executor
   start/stop, native-owned duplicate TUN fd attachment and the first native
-  TUN pump skeleton against a pipe fd. The managed-device lane also includes a
+  TUN pump skeleton against a pipe fd, including policy metadata drain and
+  allow/drop completion. The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
   TUN fd/MTU, routes the fd through `HeadlessNativeVpnRuntime`, verifies native
@@ -176,7 +177,8 @@ Prioritize these emulator/device scenarios in order:
      close it.
    - Current managed-device coverage also routes that real fd through the full
      `HeadlessNativeVpnRuntime` attach path, starts the native TUN pump and
-     verifies clean cleanup.
+     verifies clean cleanup. Pipe-fd native smoke separately verifies metadata
+     drain and allow/drop completion.
 
 2. **Service revoke/stop lifecycle**
    - Current managed-device coverage exercises explicit stop and a debug
@@ -250,6 +252,6 @@ Prioritize these emulator/device scenarios in order:
 2. Add underlying-network DNS coverage before enabling native carrier connect.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
-4. Wire native TUN pump packets into policy/enqueue decisions.
+4. Wire policy-allowed native TUN pump packets into native carrier enqueue.
 5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.
