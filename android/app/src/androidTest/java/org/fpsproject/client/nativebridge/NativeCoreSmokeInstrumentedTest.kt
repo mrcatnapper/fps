@@ -1,7 +1,9 @@
 package org.fpsproject.client.nativebridge
 
+import android.os.ParcelFileDescriptor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.fpsproject.client.policy.TunProtocol
@@ -54,7 +56,7 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
-    fun nativeRuntimeHandleLifecycleAndBorrowedTunSnapshot() {
+    fun nativeRuntimeHandleLifecycleAndOwnedDuplicateTunSnapshot() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)
 
@@ -64,26 +66,31 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(null, initial.tunFdOwnership)
         assertEquals(null, initial.lastError)
 
-        val attached = FpsNative.attachTunFd(handle, 123, 1280)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        val attached = FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
         assertTrue(attached.alive)
         assertTrue(attached.tunAttached)
-        assertEquals(123, attached.tunFd)
+        assertNotEquals(readEnd.fd, attached.tunFd)
         assertEquals(1280, attached.tunMtu)
-        assertEquals(TUN_FD_OWNERSHIP_BORROWED, attached.tunFdOwnership)
+        assertEquals(TUN_FD_OWNERSHIP_OWNED_DUPLICATE, attached.tunFdOwnership)
 
-        val badFd = FpsNative.attachTunFd(handle, -1, 1280)
+        val badFd = FpsNative.attachTunFdOwnedDuplicate(handle, -1, 1280)
         assertTrue(badFd.alive)
         assertFalse(badFd.tunAttached)
         assertEquals(null, badFd.tunFdOwnership)
         assertEquals("invalid_tun_fd", badFd.lastError)
 
-        val badMtu = FpsNative.attachTunFd(handle, 123, 0)
+        val badMtu = FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 0)
         assertTrue(badMtu.alive)
         assertFalse(badMtu.tunAttached)
         assertEquals(null, badMtu.tunFdOwnership)
         assertEquals("invalid_tun_mtu", badMtu.lastError)
 
         FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
         val closed = FpsNative.runtimeSnapshot(handle)
         assertFalse(closed.alive)
         assertEquals(null, closed.tunFdOwnership)

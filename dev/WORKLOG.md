@@ -2,6 +2,45 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-08
+
+### Android native TUN fd ownership
+
+Goal:
+
+- Move the current Android native runtime boundary from borrowed TUN fd metadata
+  to native-owned duplicate fd ownership, without starting native auth, raw
+  carrier I/O or the TUN packet pump.
+
+Planned steps:
+
+- Update Kotlin/JNI tests so `FpsNativeRuntime` expects
+  `tunFdOwnership=owned_duplicate`.
+- Add C++ RAII ownership for `dup(fd)` in the Android native runtime registry.
+- Keep Kotlin/Android ownership of the original `ParcelFileDescriptor`; native
+  owns and closes only the duplicate.
+- Update Android boundary docs and run Android plus local regression checks.
+
+Completed:
+
+- Replaced the borrowed attach API with
+  `attachTunFdOwnedDuplicate(...)` in Kotlin/JNI.
+- Added a small C++ `UniqueFd` RAII wrapper and duplicated the Android TUN fd
+  before storing it in native runtime state.
+- Kept original Kotlin fd ownership unchanged; `HeadlessNativeVpnRuntime` now
+  treats anything except `owned_duplicate` as attach failure and fails closed.
+- Updated JVM tests, connected JNI smoke coverage and Android boundary docs.
+
+Verification:
+
+- `docker run --rm -v "$PWD:/workspaces" -w /workspaces fps:android-ci-local tools/run_android_checks.sh --host`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `git diff --check`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+
 ## 2026-06-07
 
 ### Android native runtime orchestration

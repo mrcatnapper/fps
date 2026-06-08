@@ -75,7 +75,7 @@ class HeadlessNativeVpnRuntime private constructor(
             return controller.state
         }
         val nativeSnapshot = nativeRuntime.attachTun(tun)
-        if (!nativeSnapshot.alive || !nativeSnapshot.tunAttached || nativeSnapshot.tunFdOwnership != TUN_FD_OWNERSHIP_BORROWED) {
+        if (!nativeSnapshot.alive || !nativeSnapshot.tunAttached || nativeSnapshot.tunFdOwnership != TUN_FD_OWNERSHIP_OWNED_DUPLICATE) {
             controller.fail("native_tun_attach_failed", closeTun = true)
             return controller.state
         }

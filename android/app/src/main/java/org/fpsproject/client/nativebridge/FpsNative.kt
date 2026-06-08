@@ -5,7 +5,7 @@ import org.fpsproject.client.config.AndroidClientProfile
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.policy.TunFlowTuple
 
-const val TUN_FD_OWNERSHIP_BORROWED = "borrowed"
+const val TUN_FD_OWNERSHIP_OWNED_DUPLICATE = "owned_duplicate"
 
 data class NativeRuntimeSnapshot(
     val alive: Boolean,
@@ -23,7 +23,7 @@ interface FpsNativeBackend {
 
     fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot
 
-    fun attachTunFd(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
+    fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
 }
 
 class FpsNativeRuntime private constructor(
@@ -62,14 +62,14 @@ class FpsNativeRuntime private constructor(
         return backend.runtimeSnapshot(activeHandle)
     }
 
-    fun attachTun(tun: EstablishedTun): NativeRuntimeSnapshot = attachTunFd(tun.fd, tun.mtu)
+    fun attachTun(tun: EstablishedTun): NativeRuntimeSnapshot = attachTunFdOwnedDuplicate(tun.fd, tun.mtu)
 
-    fun attachTunFd(fd: Int, mtu: Int): NativeRuntimeSnapshot {
+    fun attachTunFdOwnedDuplicate(fd: Int, mtu: Int): NativeRuntimeSnapshot {
         val activeHandle = handle
         if (activeHandle == 0L) {
             return snapshot()
         }
-        return backend.attachTunFd(activeHandle, fd, mtu)
+        return backend.attachTunFdOwnedDuplicate(activeHandle, fd, mtu)
     }
 
     override fun close() {
@@ -99,5 +99,5 @@ object FpsNative : FpsNativeBackend {
 
     external override fun runtimeSnapshot(handle: Long): NativeRuntimeSnapshot
 
-    external override fun attachTunFd(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
+    external override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot
 }

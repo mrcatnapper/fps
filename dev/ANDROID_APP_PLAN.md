@@ -59,14 +59,14 @@ Delivered:
   UI/status integration.
 - `FpsNativeRuntime` is the first JNI handle wrapper for native core ownership.
   It validates Android profile text in Kotlin, creates an opaque native runtime
-  handle, exposes non-secret native snapshots and can attach a borrowed TUN fd
-  without taking ownership from the Kotlin `ParcelFileDescriptor` holder. The
-  native binding is split into thin JNI entrypoints, runtime registry/state and
-  object-conversion helpers.
+  handle, exposes non-secret native snapshots and duplicates a TUN fd into
+  native-owned RAII state without taking ownership from the Kotlin
+  `ParcelFileDescriptor` holder. The native binding is split into thin JNI
+  entrypoints, runtime registry/state and object-conversion helpers.
 - `HeadlessNativeVpnRuntime` is the current Kotlin lifecycle bridge between the
   headless VPN controller and the JNI runtime handle. It creates the native
   runtime, waits for the lease, establishes the Android TUN fd and attaches that
-  fd to native as borrowed metadata. It does not start native auth, carrier I/O
+  fd to native as an owned duplicate. It does not start native auth, carrier I/O
   or a TUN packet pump.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
@@ -137,11 +137,9 @@ SDK use must be requested explicitly with `--host`.
   is not trusted.
 - Startup is two-phase: authenticate and receive the server lease first, then
   create/configure the `VpnService` fd only for an Android profile with
-  `tun.enabled=true`. Current native runtime wiring can accept the borrowed fd
-  through `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=borrowed`;
-  starting the native auth path and TUN pump remains the next native/JNI step
-  and must duplicate the fd or introduce a separate native-owned attach path
-  before native code closes it.
+  `tun.enabled=true`. Current native runtime wiring duplicates the fd through
+  `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
+  starting the native auth path and TUN pump remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

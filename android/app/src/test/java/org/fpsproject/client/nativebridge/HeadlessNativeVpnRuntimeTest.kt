@@ -48,7 +48,7 @@ class HeadlessNativeVpnRuntimeTest {
     }
 
     @Test
-    fun leaseEstablishesTunAndAttachesBorrowedFdToNativeRuntime() {
+    fun leaseEstablishesTunAndAttachesDuplicateFdToNativeRuntime() {
         val backend = FakeCoordinatorNativeBackend()
         val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
         val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
@@ -62,7 +62,7 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
         assertTrue(snapshot.vpn.tun.fdPresent)
         assertTrue(snapshot.native.tunAttached)
-        assertEquals(TUN_FD_OWNERSHIP_BORROWED, snapshot.native.tunFdOwnership)
+        assertEquals(TUN_FD_OWNERSHIP_OWNED_DUPLICATE, snapshot.native.tunFdOwnership)
     }
 
     @Test
@@ -159,7 +159,7 @@ private class FakeCoordinatorNativeBackend(
         )
     }
 
-    override fun attachTunFd(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
+    override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
         attachedTun += Triple(handle, fd, mtu)
         val snapshot = when (attachResult) {
             AttachResult.SUCCESS -> NativeRuntimeSnapshot(
@@ -167,7 +167,7 @@ private class FakeCoordinatorNativeBackend(
                 tunAttached = true,
                 tunFd = fd,
                 tunMtu = mtu,
-                tunFdOwnership = TUN_FD_OWNERSHIP_BORROWED,
+                tunFdOwnership = TUN_FD_OWNERSHIP_OWNED_DUPLICATE,
                 lastError = null,
             )
             AttachResult.FAIL_INVALID_FD -> NativeRuntimeSnapshot(

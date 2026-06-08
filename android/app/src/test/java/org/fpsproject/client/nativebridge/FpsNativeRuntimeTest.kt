@@ -75,7 +75,7 @@ class FpsNativeRuntimeTest {
     }
 
     @Test
-    fun attachTunPassesBorrowedFdWithoutOwningKotlinHandle() {
+    fun attachTunDuplicatesFdWithoutOwningKotlinHandle() {
         val backend = FakeNativeBackend()
         val handle = FakeTunHandle(fd = 77)
         val runtime = FpsNativeRuntime.create(profileJson, backend)
@@ -86,7 +86,7 @@ class FpsNativeRuntimeTest {
         assertTrue(snapshot.tunAttached)
         assertEquals(77, snapshot.tunFd)
         assertEquals(1280, snapshot.tunMtu)
-        assertEquals(TUN_FD_OWNERSHIP_BORROWED, snapshot.tunFdOwnership)
+        assertEquals(TUN_FD_OWNERSHIP_OWNED_DUPLICATE, snapshot.tunFdOwnership)
         assertEquals(0, handle.closeCount)
         assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
     }
@@ -96,8 +96,8 @@ class FpsNativeRuntimeTest {
         val backend = FakeNativeBackend()
         val runtime = FpsNativeRuntime.create(profileJson, backend)
 
-        val badFd = runtime.attachTunFd(-1, 1280)
-        val badMtu = runtime.attachTunFd(77, 0)
+        val badFd = runtime.attachTunFdOwnedDuplicate(-1, 1280)
+        val badMtu = runtime.attachTunFdOwnedDuplicate(77, 0)
 
         assertFalse(badFd.tunAttached)
         assertEquals(null, badFd.tunFdOwnership)
@@ -112,7 +112,7 @@ class FpsNativeRuntimeTest {
         val runtime = FpsNativeRuntime.create(profileJson, FakeNativeBackend())
 
         runtime.close()
-        val snapshot = runtime.attachTunFd(77, 1280)
+        val snapshot = runtime.attachTunFdOwnedDuplicate(77, 1280)
 
         assertFalse(snapshot.alive)
         assertEquals("runtime_closed", snapshot.lastError)
@@ -159,7 +159,7 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
         )
     }
 
-    override fun attachTunFd(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
+    override fun attachTunFdOwnedDuplicate(handle: Long, fd: Int, mtu: Int): NativeRuntimeSnapshot {
         attachedTun += Triple(handle, fd, mtu)
         snapshots[handle] ?: return NativeRuntimeSnapshot(
             alive = false,
@@ -194,7 +194,7 @@ private class FakeNativeBackend(private val returnZeroHandle: Boolean = false) :
             tunAttached = true,
             tunFd = fd,
             tunMtu = mtu,
-            tunFdOwnership = TUN_FD_OWNERSHIP_BORROWED,
+            tunFdOwnership = TUN_FD_OWNERSHIP_OWNED_DUPLICATE,
             lastError = null,
         )
         snapshots[handle] = snapshot

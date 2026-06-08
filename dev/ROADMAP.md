@@ -178,8 +178,8 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start/stop, lease-triggered `VpnService.Builder` establishment and
   idempotent fd close.
-- [x] Add first JNI native runtime handle/snapshot boundary with borrowed TUN fd
-  attachment.
+- [x] Add first JNI native runtime handle/snapshot boundary with native-owned
+  duplicate TUN fd attachment.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
   `dev/ANDROID_APP_PLAN.md`: implement native raw TLS/TCP auth/TUN pump wiring,
   Android lifecycle resilience/status and the native/Kotlin async facade.

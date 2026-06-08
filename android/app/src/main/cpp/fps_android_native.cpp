@@ -134,8 +134,8 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_org_fpsproject_client_nativebridge_FpsNative_attachTunFd(JNIEnv* env, jobject /* self */, jlong handle, jint fd, jint mtu) {
-    const auto snapshot = fps::android_native::attach_borrowed_tun_fd(
+Java_org_fpsproject_client_nativebridge_FpsNative_attachTunFdOwnedDuplicate(JNIEnv* env, jobject /* self */, jlong handle, jint fd, jint mtu) {
+    const auto snapshot = fps::android_native::attach_tun_fd_owned_duplicate(
         static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(fd), static_cast<int>(mtu)
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);

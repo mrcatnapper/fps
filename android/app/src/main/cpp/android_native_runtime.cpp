@@ -7,8 +7,44 @@
 #include <unordered_map>
 #include <utility>
 
+#include <unistd.h>
+
 namespace fps::android_native {
 namespace {
+
+class UniqueFd {
+public:
+    UniqueFd() noexcept = default;
+
+    explicit UniqueFd(int fd) noexcept : fd_{fd} {}
+
+    UniqueFd(const UniqueFd&) = delete;
+    auto operator=(const UniqueFd&) -> UniqueFd& = delete;
+
+    UniqueFd(UniqueFd&& other) noexcept : fd_{std::exchange(other.fd_, -1)} {}
+
+    auto operator=(UniqueFd&& other) noexcept -> UniqueFd& {
+        if(this != &other) {
+            reset();
+            fd_ = std::exchange(other.fd_, -1);
+        }
+        return *this;
+    }
+
+    ~UniqueFd() { reset(); }
+
+    [[nodiscard]] auto get() const noexcept -> int { return fd_; }
+
+    void reset(int fd = -1) noexcept {
+        if(fd_ >= 0) {
+            static_cast<void>(::close(fd_));
+        }
+        fd_ = fd;
+    }
+
+private:
+    int fd_ = -1;
+};
 
 class AndroidNativeRuntime {
 public:
@@ -18,46 +54,54 @@ public:
         return NativeRuntimeSnapshotFields{
             .alive = true,
             .tun_attached = tun_attached_,
-            .tun_fd = tun_attached_ ? tun_fd_ : -1,
+            .tun_fd = tun_attached_ ? tun_fd_.get() : -1,
             .tun_mtu = tun_attached_ ? tun_mtu_ : 0,
             .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
             .last_error = last_error_,
         };
     }
 
-    [[nodiscard]] auto attach_borrowed_tun_fd(int fd, int mtu) -> NativeRuntimeSnapshotFields {
+    [[nodiscard]] auto attach_tun_fd_owned_duplicate(int fd, int mtu) -> NativeRuntimeSnapshotFields {
         if(fd < 0) {
             last_error_ = "invalid_tun_fd";
-            tun_attached_ = false;
-            tun_fd_ = -1;
-            tun_mtu_ = 0;
-            tun_fd_ownership_ = TunFdOwnership::none;
+            clear_tun();
             return snapshot();
         }
         if(mtu <= 0) {
             last_error_ = "invalid_tun_mtu";
-            tun_attached_ = false;
-            tun_fd_ = -1;
-            tun_mtu_ = 0;
-            tun_fd_ownership_ = TunFdOwnership::none;
+            clear_tun();
+            return snapshot();
+        }
+
+        const auto duplicated = ::dup(fd);
+        if(duplicated < 0) {
+            last_error_ = "tun_fd_dup_failed";
+            clear_tun();
             return snapshot();
         }
 
         last_error_.clear();
+        tun_fd_.reset(duplicated);
         tun_attached_ = true;
-        tun_fd_ = fd;
         tun_mtu_ = mtu;
-        tun_fd_ownership_ = TunFdOwnership::borrowed;
+        tun_fd_ownership_ = TunFdOwnership::owned_duplicate;
         return snapshot();
     }
 
 private:
+    void clear_tun() noexcept {
+        tun_attached_ = false;
+        tun_fd_.reset();
+        tun_mtu_ = 0;
+        tun_fd_ownership_ = TunFdOwnership::none;
+    }
+
     // Keep the normalized profile available for the future native pump without
     // ever exposing it through snapshots or logs.
     std::string profile_text_;
     boost::asio::io_context io_context_;
     bool tun_attached_ = false;
-    int tun_fd_ = -1;
+    UniqueFd tun_fd_;
     int tun_mtu_ = 0;
     TunFdOwnership tun_fd_ownership_ = TunFdOwnership::none;
     std::string last_error_;
@@ -86,13 +130,13 @@ public:
         return found->second->snapshot();
     }
 
-    [[nodiscard]] auto attach_borrowed_tun_fd(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
+    [[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
         std::lock_guard lock{mutex_};
         const auto found = runtimes_.find(handle);
         if(found == runtimes_.end()) {
             return invalid_runtime_snapshot("invalid_handle");
         }
-        return found->second->attach_borrowed_tun_fd(fd, mtu);
+        return found->second->attach_tun_fd_owned_duplicate(fd, mtu);
     }
 
 private:
@@ -112,8 +156,8 @@ auto tun_fd_ownership_name(TunFdOwnership ownership) noexcept -> std::string_vie
     switch(ownership) {
         case TunFdOwnership::none:
             return "";
-        case TunFdOwnership::borrowed:
-            return "borrowed";
+        case TunFdOwnership::owned_duplicate:
+            return "owned_duplicate";
     }
     return "";
 }
@@ -130,8 +174,8 @@ auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields
     return runtime_registry().snapshot(handle);
 }
 
-auto attach_borrowed_tun_fd(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().attach_borrowed_tun_fd(handle, fd, mtu);
+auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().attach_tun_fd_owned_duplicate(handle, fd, mtu);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

@@ -79,14 +79,15 @@ starts. It is a developer handoff document, not user/operator documentation.
   `ParcelFileDescriptor` close through `HeadlessVpnController.stop()`.
 - Added the first `FpsNativeRuntime` JNI handle facade. It creates/owns native
   runtime state behind an opaque handle, exposes non-secret snapshots and can
-  attach a borrowed TUN fd without closing the Java-owned descriptor. The JNI
-  implementation is split into entrypoints, runtime registry/state and object
-  conversion helpers so future native auth/pump wiring does not accumulate in a
-  single monolithic binding file.
+  duplicate an Android TUN fd into native-owned RAII state without taking
+  ownership of the Java/Kotlin `ParcelFileDescriptor`. The JNI implementation
+  is split into entrypoints, runtime registry/state and object-conversion
+  helpers so future native auth/pump wiring does not accumulate in a single
+  monolithic binding file.
 - Added `HeadlessNativeVpnRuntime` as the first Kotlin lifecycle bridge between
   `HeadlessVpnController` and `FpsNativeRuntime`. It validates profile text,
   owns both layers, performs lease-triggered TUN establishment and attaches the
-  resulting fd to native as borrowed metadata. It intentionally does not start
+  resulting fd to native as an owned duplicate. It intentionally does not start
   native auth, carrier I/O or the TUN packet pump.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
@@ -104,11 +105,11 @@ starts. It is a developer handoff document, not user/operator documentation.
   and the current `fps://v1` client profile shape instead of dragging Linux
   daemon/Boost.JSON config paths into the app.
 - Wire the established `VpnService` fd into the native FPS auth/TUN pump through
-  the JNI handle facade. Current `HeadlessNativeVpnRuntime` passes the fd to
-  native as borrowed metadata and snapshots report `tunFdOwnership=borrowed`;
-  the future pump must duplicate the fd or introduce a separate native-owned
-  attach path before native code is allowed to close it. Then add
-  lifecycle/reconnect and status reporting around that pump.
+  the JNI handle facade. Current `HeadlessNativeVpnRuntime` duplicates the fd
+  into native-owned RAII state and snapshots report
+  `tunFdOwnership=owned_duplicate`; the next step is to start the native auth
+  path and packet pump on that descriptor, then add lifecycle/reconnect and
+  status reporting around the pump.
 - Decide whether Android should keep the same synchronous executor-only
   contract or introduce a separate async adapter for UI/JNI-facing calls.
 
@@ -133,9 +134,9 @@ starts. It is a developer handoff document, not user/operator documentation.
 - Use two-phase TUN startup: authenticate and receive server lease first, then
   create/configure the Android `VpnService` fd for profiles with
   `tun.enabled=true` and start the native TUN pump. Current code implements fd
-  creation/ownership, explicit borrowed-fd native attachment
-  (`tunFdOwnership=borrowed`), a Kotlin/native lifecycle bridge and non-secret
-  runtime snapshots; native pump startup is next.
+  creation/ownership, native-owned duplicate attachment
+  (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
+  non-secret runtime snapshots; native pump startup is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

@@ -8,7 +8,7 @@ namespace fps::android_native {
 
 enum class TunFdOwnership {
     none,
-    borrowed,
+    owned_duplicate,
 };
 
 [[nodiscard]] auto tun_fd_ownership_name(TunFdOwnership ownership) noexcept -> std::string_view;
@@ -27,7 +27,7 @@ using NativeRuntimeHandle = std::int64_t;
 [[nodiscard]] auto create_runtime(std::string profile_text) -> NativeRuntimeHandle;
 void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
-[[nodiscard]] auto attach_borrowed_tun_fd(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native
