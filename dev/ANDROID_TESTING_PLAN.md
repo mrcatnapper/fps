@@ -48,7 +48,9 @@ documentation.
   TUN pump skeleton against a pipe fd. The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
-  TUN fd/MTU and closes it.
+  TUN fd/MTU, routes the fd through `HeadlessNativeVpnRuntime`, verifies native
+  `owned_duplicate` attachment plus pump startup and closes it through explicit
+  stop/revoke paths.
 
 ## Testing Layers For FPS Android
 
@@ -172,14 +174,15 @@ Prioritize these emulator/device scenarios in order:
      to test `VpnService.prepare(...)` behavior, accept the system dialog with
      UI Automator when needed, establish a real TUN fd after a test lease and
      close it.
-   - Next coverage should route that real fd through the full
-     `HeadlessNativeVpnRuntime` attach path instead of only proving the Android
-     framework establishment contract.
+   - Current managed-device coverage also routes that real fd through the full
+     `HeadlessNativeVpnRuntime` attach path, starts the native TUN pump and
+     verifies clean cleanup.
 
 2. **Service revoke/stop lifecycle**
-   - Exercise `onRevoke()` and explicit stop.
-   - Assert the Kotlin controller closes the `ParcelFileDescriptor`, native
-     pump stops and native executor stops without leaking handles.
+   - Current managed-device coverage exercises explicit stop and a debug
+     `onRevoke()` path after full runtime startup.
+   - Future coverage should repeat this through the production service once
+     native carrier/auth startup is no longer test-lease injected.
 
 3. **Socket loop-prevention**
    - Verify app-owned Java sockets call `VpnService.protect(Socket)` before
@@ -237,19 +240,16 @@ Prioritize these emulator/device scenarios in order:
 - A manual-only GitHub Actions workflow can run the Docker-managed emulator
   lane.
 - The managed-device lane has been run locally with `/dev/kvm` and covers both
-  the native/JNI smoke and debug-only real `VpnService` consent/establish
-  smoke.
+  the native/JNI smoke and debug-only real `VpnService`
+  consent/establish/full-runtime fd attach/pump/stop/revoke smoke.
 
 ## Next Android Runtime Steps
 
-1. Route a real `VpnService` fd through the full `HeadlessNativeVpnRuntime`
-   attach path, instead of only proving standalone framework establishment.
-2. Add service revoke/stop lifecycle coverage: `onRevoke()`, explicit stop,
-   Kotlin fd close, native pump stop and native executor stop.
-3. Add socket loop-prevention coverage for app-owned Java sockets first, then
+1. Add socket loop-prevention coverage for app-owned Java sockets first, then
    native carrier sockets.
-4. Add underlying-network DNS coverage before enabling native carrier connect.
-5. Add split-tunnel UID policy integration over emulator VPN traffic once the
+2. Add underlying-network DNS coverage before enabling native carrier connect.
+3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
-6. Keep managed-device CI manual/scheduled until repeated runs show it is
+4. Wire native TUN pump packets into policy/enqueue decisions.
+5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

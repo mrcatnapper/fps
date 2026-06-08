@@ -32,9 +32,14 @@ class TestVpnHarnessActivity : Activity() {
 
     private fun onPrepared() {
         TestVpnServiceProbe.reportPermission(granted = true)
-        if (intent.action == ACTION_ESTABLISH) {
+        val serviceAction = when (intent.action) {
+            ACTION_ESTABLISH -> TestVpnEstablishService.ACTION_ESTABLISH
+            ACTION_NATIVE_RUNTIME -> TestVpnEstablishService.ACTION_NATIVE_RUNTIME_START
+            else -> null
+        }
+        if (serviceAction != null) {
             val serviceIntent = Intent(this, TestVpnEstablishService::class.java).apply {
-                action = TestVpnEstablishService.ACTION_ESTABLISH
+                action = serviceAction
                 putExtras(intent)
             }
             startService(serviceIntent)
@@ -44,6 +49,7 @@ class TestVpnHarnessActivity : Activity() {
 
     companion object {
         const val ACTION_ESTABLISH = "org.fpsproject.client.test.action.ESTABLISH"
+        const val ACTION_NATIVE_RUNTIME = "org.fpsproject.client.test.action.NATIVE_RUNTIME"
         const val EXTRA_PROFILE = "org.fpsproject.client.test.extra.PROFILE"
         const val EXTRA_CLIENT_IPV4 = "org.fpsproject.client.test.extra.CLIENT_IPV4"
         const val EXTRA_SERVER_IPV4 = "org.fpsproject.client.test.extra.SERVER_IPV4"

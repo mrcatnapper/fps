@@ -4,6 +4,58 @@
 
 ## 2026-06-08
 
+### Android native runtime VpnService lifecycle
+
+Goal:
+
+- Route a real emulator `VpnService` TUN fd through the full
+  `HeadlessNativeVpnRuntime` path, not only through the standalone
+  `VpnService.Builder.establish()` smoke.
+- Add explicit service stop/revoke lifecycle coverage before native carrier I/O
+  is implemented.
+
+Plan:
+
+- Add a debug-only test service path that starts `HeadlessNativeVpnRuntime`,
+  injects a test lease, attaches the real TUN fd to native and starts the
+  native TUN pump.
+- Extend the instrumented VPN smoke to verify the native snapshot:
+  `tunAttached`, `tunFdOwnership=owned_duplicate`, `tunPumpRunning` and clean
+  stop.
+- Add unit coverage for `FpsVpnService.onRevoke()`/stop behavior where possible
+  without requiring a real Android framework service instance.
+- Update Android developer docs so the completed baseline and next runtime
+  steps remain accurate after the increment.
+- Verify with Android Docker/JVM checks and, if local KVM remains available,
+  the Docker-managed-device lane.
+
+Completed:
+
+- Added `FpsVpnService.onRevoke()` cleanup so production service revocation
+  uses the same stop path as explicit stop/destroy.
+- Extracted shared `VpnServicePlatformHooks` so production `FpsVpnService` and
+  the debug VPN harness use the same platform hook implementation for TUN
+  establishment, socket protection, underlying-network DNS and UID lookup.
+- Extended the debug VPN harness with a full `HeadlessNativeVpnRuntime`
+  start/lease path. The harness now establishes a real `VpnService` fd,
+  attaches it to native as an owned duplicate and starts the native TUN pump.
+- Added managed-device instrumented coverage for real fd full-runtime startup,
+  explicit stop and a debug revoke path.
+- Added JVM coverage for stopping `HeadlessNativeVpnRuntime` while waiting for
+  a lease.
+- Updated Android developer notes so real fd runtime attach/pump/stop/revoke is
+  recorded as completed baseline, not a future step.
+- Updated public testing docs to describe the full-runtime Android VPN smoke.
+
+Verification:
+
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `git diff --check`
+
 ### Android testing plan status cleanup
 
 Goal:

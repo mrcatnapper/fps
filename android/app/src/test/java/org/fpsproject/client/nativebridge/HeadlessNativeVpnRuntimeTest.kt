@@ -61,6 +61,24 @@ class HeadlessNativeVpnRuntimeTest {
     }
 
     @Test
+    fun stopBeforeLeaseStopsNativeExecutorAndDoesNotRequireTun() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        runtime.start()
+        val state = runtime.stop()
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.STOPPED, state)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+        assertEquals(listOf(1L), backend.stoppedTunPumps)
+        assertFalse(snapshot.vpn.tun.fdPresent)
+        assertFalse(snapshot.native.started)
+        assertFalse(snapshot.native.workerThreadRunning)
+        assertFalse(snapshot.native.tunPumpRunning)
+    }
+
+    @Test
     fun leaseEstablishesTunAndAttachesDuplicateFdToNativeRuntime() {
         val backend = FakeCoordinatorNativeBackend()
         val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
