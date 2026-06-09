@@ -46,6 +46,12 @@ struct NativeRuntimeSnapshotFields {
     std::uint64_t carrier_frames_enqueued = 0;
     std::uint64_t carrier_frame_bytes_enqueued = 0;
     std::uint64_t carrier_enqueue_rejected = 0;
+    int raw_carrier_protect_fd = -1;
+    bool raw_carrier_connecting = false;
+    bool raw_carrier_active = false;
+    std::uint64_t raw_carrier_connect_attempted = 0;
+    std::uint64_t raw_carrier_connect_succeeded = 0;
+    std::uint64_t raw_carrier_connect_failed = 0;
     std::string last_error;
 };
 
@@ -68,6 +74,9 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> std::vector<NativeTunPolicyPacketFields>;
 [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;

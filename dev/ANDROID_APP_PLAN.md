@@ -164,7 +164,10 @@ emulator/system-image layers to rebuild.
   provides live HTTPS/WSS keepalive sockets without changing the FPS protocol.
 - Real FPS carrier traffic must use native raw TCP/TLS stream handling through
   `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
-  wire protocol.
+  wire protocol. The native runtime already exposes the first protected raw TCP
+  lifecycle: prepare socket, return fd for `VpnService.protect(fd)`, complete
+  connect or abort. The remaining work is to layer TLS/FPS auth and carrier
+  registration on that socket.
 - Carrier sockets must be protected before `connect`. Native/future sockets use
   the fd hook; OkHttp-owned sockets use the Java `Socket` hook.
 - Hostname resolution for FPS/carrier endpoints must use Android's underlying
@@ -176,8 +179,9 @@ emulator/system-image layers to rebuild.
   `HeadlessNativeVpnRuntime` and reports `tunFdOwnership=owned_duplicate`;
   the runtime executor lifecycle is explicit, the first native TUN read/parse
   pump starts after fd attachment, exposes a bounded policy metadata queue and
-  emulator coverage exercises real fd attach/pump/stop/revoke. Starting the
-  native auth path and real raw carrier I/O remain the next native/JNI step.
+  emulator coverage exercises real fd attach/pump/stop/revoke. The first raw
+  carrier socket lifecycle is covered through loopback TCP; starting the native
+  auth path and real carrier registration remain the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

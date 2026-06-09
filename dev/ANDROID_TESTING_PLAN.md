@@ -235,9 +235,12 @@ Prioritize these emulator/device scenarios in order:
      unsupported protocols and policy drops.
 
 7. **Controlled native carrier/auth smoke**
-   - Only after TUN and policy behavior is stable, add native raw TLS/TCP carrier
-     auth against a local test origin/server.
-   - Keep this as a small smoke first; full Android VPN E2E should come after
+   - Native raw TCP socket lifecycle now has a small managed-device smoke:
+     stopped-runtime and invalid endpoint rejection, protect-denied abort, and
+     loopback TCP connect/stop after fd protection.
+   - Next, add native raw TLS/FPS auth against a local test origin/server on top
+     of that protected socket lifecycle.
+   - Keep auth as a small smoke first; full Android VPN E2E should come after
      reconnect/status behavior is observable.
 
 ## Stability Rules
@@ -267,12 +270,15 @@ Prioritize these emulator/device scenarios in order:
 - The managed-device lane has been run locally with `/dev/kvm` and covers both
   the native/JNI smoke and debug-only real `VpnService`
   consent/establish/full-runtime fd attach/pump/stop/revoke smoke.
+- It also covers native raw TCP carrier socket lifecycle through a local
+  loopback server: native exposes the pre-connect fd, Kotlin has a chance to
+  call the protect hook, native connects only after positive protection and
+  closes the socket cleanly.
 
 ## Next Android Runtime Steps
 
-1. Add socket loop-prevention coverage for app-owned Java sockets first, then
-   native carrier sockets.
-2. Add underlying-network DNS coverage before enabling native carrier connect.
+1. Add underlying-network DNS coverage before enabling native carrier auth.
+2. Add native raw TLS/FPS auth over the protected socket lifecycle.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
 4. Wire the native outbound packet seam into real native raw TLS/TCP carrier

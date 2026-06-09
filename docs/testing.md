@@ -232,8 +232,12 @@ byte sequence, drains bounded policy metadata, completes allow/drop decisions
 and verifies read/parse/drop/policy counters. The debug VPN harness also drives
 a real `VpnService` fd through `HeadlessNativeVpnRuntime`, verifies native
 `owned_duplicate` attachment plus pump startup and covers explicit
-stop/debug-revoke cleanup. It is opt-in because it requires a real Android
-runtime.
+stop/debug-revoke cleanup. The native smoke also covers the first raw carrier
+socket lifecycle: native opens a TCP socket, exposes the pre-connect fd to
+Kotlin for `VpnService.protect(fd)`, aborts cleanly when protection is denied,
+connects to a loopback TCP server when protection succeeds and closes the socket
+without leaving carrier state active. It is opt-in because it requires a real
+Android runtime.
 
 For reproducible post-JVM checks without relying on host SDK paths, use the
 Docker-managed emulator lane:
@@ -270,11 +274,12 @@ The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
 probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
 wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
-handling. The scaffold also has a lease-triggered `VpnService.Builder` TUN fd
-ownership layer, tested with fake builders and a real debug `VpnService` fd
-routed through the Kotlin/native runtime bridge. It remains guarded by explicit
-`tun.enabled=true` profile intent. The native smoke reuses the FPS IPv4 TCP/UDP
-5-tuple parser and links
+handling. The first raw carrier socket lifecycle is present but intentionally
+stops below TLS/FPS authentication. The scaffold also has a lease-triggered
+`VpnService.Builder` TUN fd ownership layer, tested with fake builders and a
+real debug `VpnService` fd routed through the Kotlin/native runtime bridge. It
+remains guarded by explicit `tun.enabled=true` profile intent. The native smoke
+reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
 a reusable native core smoke library built from protocol codec/crypto, generic
 covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
 excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and

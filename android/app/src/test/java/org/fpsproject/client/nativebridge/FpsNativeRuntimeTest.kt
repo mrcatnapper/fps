@@ -301,6 +301,38 @@ class FpsNativeRuntimeTest {
         assertEquals(1L, snapshot.tunPolicyDropped)
         assertEquals(1L, snapshot.tunPacketsDropped)
     }
+
+    @Test
+    fun rawCarrierLifecycleDelegatesToNativeBackend() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        runtime.start()
+        val prepared = runtime.prepareRawCarrierSocket("127.0.0.1", 9443)
+        val connected = runtime.completeRawCarrierProtection(protectAllowed = true)
+        val stopped = runtime.stopRawCarrier()
+
+        assertEquals(listOf(Triple(1L, "127.0.0.1", 9443)), backend.preparedRawCarriers)
+        assertEquals(listOf(1L to true), backend.completedRawCarrierProtection)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(77, prepared.rawCarrierProtectFd)
+        assertTrue(connected.rawCarrierActive)
+        assertEquals(1L, connected.rawCarrierConnectAttempted)
+        assertEquals(1L, connected.rawCarrierConnectSucceeded)
+        assertFalse(stopped.rawCarrierActive)
+        assertEquals(-1, stopped.rawCarrierProtectFd)
+    }
+
+    @Test
+    fun rawCarrierAfterCloseReportsClosedRuntime() {
+        val runtime = FpsNativeRuntime.create(profileJson, FakeNativeBackend())
+
+        runtime.close()
+        val snapshot = runtime.prepareRawCarrierSocket("127.0.0.1", 9443)
+
+        assertFalse(snapshot.alive)
+        assertEquals("runtime_closed", snapshot.lastError)
+    }
 }
 
 private fun nativeSnapshot(
@@ -327,6 +359,12 @@ private fun nativeSnapshot(
     tunCovertEnqueueRejected: Long = 0,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
+    rawCarrierProtectFd: Int = -1,
+    rawCarrierConnecting: Boolean = false,
+    rawCarrierActive: Boolean = false,
+    rawCarrierConnectAttempted: Long = 0,
+    rawCarrierConnectSucceeded: Long = 0,
+    rawCarrierConnectFailed: Long = 0,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -352,6 +390,12 @@ private fun nativeSnapshot(
     tunCovertEnqueueRejected = tunCovertEnqueueRejected,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
+    rawCarrierProtectFd = rawCarrierProtectFd,
+    rawCarrierConnecting = rawCarrierConnecting,
+    rawCarrierActive = rawCarrierActive,
+    rawCarrierConnectAttempted = rawCarrierConnectAttempted,
+    rawCarrierConnectSucceeded = rawCarrierConnectSucceeded,
+    rawCarrierConnectFailed = rawCarrierConnectFailed,
     lastError = lastError,
 )
 
@@ -366,6 +410,9 @@ private class FakeNativeBackend(
     val startedTunPumps = mutableListOf<Long>()
     val stoppedTunPumps = mutableListOf<Long>()
     val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
+    val preparedRawCarriers = mutableListOf<Triple<Long, String, Int>>()
+    val completedRawCarrierProtection = mutableListOf<Pair<Long, Boolean>>()
+    val stoppedRawCarriers = mutableListOf<Long>()
     var drainCalls = 0
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
     private val pendingPolicy = ArrayDeque(initialPolicyPackets)
@@ -525,6 +572,53 @@ private class FakeNativeBackend(
         )
         snapshots[handle] = snapshot
         return snapshot
+    }
+
+    override fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot {
+        preparedRawCarriers += Triple(handle, address, port)
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(rawCarrierProtectFd = -1, lastError = "runtime_stopped").also { snapshots[handle] = it }
+        }
+        return current.copy(
+            rawCarrierProtectFd = 77,
+            rawCarrierConnecting = false,
+            rawCarrierActive = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot {
+        completedRawCarrierProtection += handle to protectAllowed
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (!protectAllowed) {
+            return current.copy(
+                rawCarrierProtectFd = -1,
+                rawCarrierConnecting = false,
+                rawCarrierActive = false,
+                rawCarrierConnectFailed = current.rawCarrierConnectFailed + 1,
+                lastError = "socket_protect_failed",
+            ).also { snapshots[handle] = it }
+        }
+        return current.copy(
+            rawCarrierProtectFd = -1,
+            rawCarrierConnecting = false,
+            rawCarrierActive = true,
+            rawCarrierConnectAttempted = current.rawCarrierConnectAttempted + 1,
+            rawCarrierConnectSucceeded = current.rawCarrierConnectSucceeded + 1,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot {
+        stoppedRawCarriers += handle
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            rawCarrierProtectFd = -1,
+            rawCarrierConnecting = false,
+            rawCarrierActive = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
     }
 
 }
