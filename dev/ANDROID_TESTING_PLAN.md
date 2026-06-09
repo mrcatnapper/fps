@@ -273,12 +273,15 @@ Prioritize these emulator/device scenarios in order:
 - It also covers native raw TCP carrier socket lifecycle through a local
   loopback server: native exposes the pre-connect fd, Kotlin has a chance to
   call the protect hook, native connects only after positive protection and
-  closes the socket cleanly.
+  closes the socket cleanly. Edge coverage includes complete-before-prepare and
+  idempotent stop before prepare, after prepare and after connect.
 
 ## Next Android Runtime Steps
 
 1. Add underlying-network DNS coverage before enabling native carrier auth.
-2. Add native raw TLS/FPS auth over the protected socket lifecycle.
+2. Add native raw TLS/FPS auth over the protected socket lifecycle. Start with
+   one local-origin smoke that proves auth/lease metadata can be exchanged
+   without adding a parallel Kotlin carrier protocol.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
 4. Wire the native outbound packet seam into real native raw TLS/TCP carrier

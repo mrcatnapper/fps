@@ -243,6 +243,21 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(VpnRuntimeState.FAILED, runtime.state)
         assertEquals("socket_protect_failed", runtime.lastError)
     }
+
+    @Test
+    fun startNativeCarrierFailsClosedWhenNativePrepareFails() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startNativeCarrier(ResolvedEndpoint("203.0.113.10", 443))
+
+        assertEquals(listOf(Triple(1L, "203.0.113.10", 443)), backend.preparedRawCarriers)
+        assertEquals(emptyList<Pair<Long, Boolean>>(), backend.completedRawCarrierProtection)
+        assertEquals(-1, snapshot.rawCarrierProtectFd)
+        assertEquals("runtime_stopped", snapshot.lastError)
+        assertEquals(VpnRuntimeState.FAILED, runtime.state)
+        assertEquals("runtime_stopped", runtime.lastError)
+    }
 }
 
 private fun coordinatorSnapshot(
@@ -504,6 +519,9 @@ private class FakeCoordinatorNativeBackend(
     override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot {
         completedRawCarrierProtection += handle to protectAllowed
         val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (current.rawCarrierProtectFd < 0) {
+            return current.copy(lastError = "raw_carrier_not_prepared").also { snapshots[handle] = it }
+        }
         if (!protectAllowed) {
             return current.copy(
                 rawCarrierProtectFd = -1,

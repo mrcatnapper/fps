@@ -70,6 +70,18 @@ Verification:
 - `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
 - `git diff --check`
 
+Follow-up hardening before PR:
+
+- Added raw-carrier edge coverage for `completeRawCarrierProtection(...)`
+  before prepare and idempotent `stopRawCarrier()` before prepare, after
+  prepare and after connect.
+- Updated fake native backends to model `raw_carrier_not_prepared` instead of
+  silently turning an unprepared connect into an active carrier.
+- Added a headless fail-closed test for native prepare failure before runtime
+  start.
+- Re-ran Android host checks and Docker-managed emulator checks after the
+  hardening tests; managed-device coverage now runs 17 instrumented tests.
+
 ### Android fake-carrier reject hang fix
 
 Goal:

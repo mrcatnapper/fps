@@ -352,6 +352,44 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
+    fun nativeRawCarrierCompleteBeforePrepareAndStopAreIdempotent() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        val stoppedBeforeStart = FpsNative.stopRawCarrier(handle)
+        assertEquals(-1, stoppedBeforeStart.rawCarrierProtectFd)
+        assertFalse(stoppedBeforeStart.rawCarrierActive)
+        assertEquals(null, stoppedBeforeStart.lastError)
+
+        FpsNative.startRuntime(handle)
+        val notPrepared = FpsNative.completeRawCarrierProtection(handle, protectAllowed = true)
+        val stoppedBeforePrepare = FpsNative.stopRawCarrier(handle)
+        val prepared = FpsNative.prepareRawCarrierSocket(handle, "127.0.0.1", 443)
+        val stoppedAfterPrepare = FpsNative.stopRawCarrier(handle)
+        val stoppedAgain = FpsNative.stopRawCarrier(handle)
+
+        assertEquals(-1, notPrepared.rawCarrierProtectFd)
+        assertFalse(notPrepared.rawCarrierActive)
+        assertEquals(0L, notPrepared.rawCarrierConnectAttempted)
+        assertEquals(0L, notPrepared.rawCarrierConnectSucceeded)
+        assertEquals(0L, notPrepared.rawCarrierConnectFailed)
+        assertEquals("raw_carrier_not_prepared", notPrepared.lastError)
+        assertEquals(-1, stoppedBeforePrepare.rawCarrierProtectFd)
+        assertFalse(stoppedBeforePrepare.rawCarrierActive)
+        assertEquals(null, stoppedBeforePrepare.lastError)
+        assertTrue(prepared.rawCarrierProtectFd >= 0)
+        assertEquals(null, prepared.lastError)
+        assertEquals(-1, stoppedAfterPrepare.rawCarrierProtectFd)
+        assertFalse(stoppedAfterPrepare.rawCarrierActive)
+        assertEquals(null, stoppedAfterPrepare.lastError)
+        assertEquals(-1, stoppedAgain.rawCarrierProtectFd)
+        assertFalse(stoppedAgain.rawCarrierActive)
+        assertEquals(null, stoppedAgain.lastError)
+
+        FpsNative.closeRuntime(handle)
+    }
+
+    @Test
     fun nativeRawCarrierProtectFailureAbortsBeforeConnect() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)
@@ -393,6 +431,7 @@ class NativeCoreSmokeInstrumentedTest {
             val prepared = FpsNative.prepareRawCarrierSocket(handle, "127.0.0.1", server.localPort)
             val connected = FpsNative.completeRawCarrierProtection(handle, protectAllowed = true)
             val stopped = FpsNative.stopRawCarrier(handle)
+            val stoppedAgain = FpsNative.stopRawCarrier(handle)
 
             assertTrue(prepared.rawCarrierProtectFd >= 0)
             assertFalse(prepared.rawCarrierConnecting)
@@ -408,6 +447,9 @@ class NativeCoreSmokeInstrumentedTest {
             assertEquals(-1, stopped.rawCarrierProtectFd)
             assertFalse(stopped.rawCarrierConnecting)
             assertFalse(stopped.rawCarrierActive)
+            assertEquals(-1, stoppedAgain.rawCarrierProtectFd)
+            assertFalse(stoppedAgain.rawCarrierConnecting)
+            assertFalse(stoppedAgain.rawCarrierActive)
         } finally {
             FpsNative.closeRuntime(handle)
             server.close()

@@ -308,19 +308,31 @@ class FpsNativeRuntimeTest {
         val runtime = FpsNativeRuntime.create(profileJson, backend)
 
         runtime.start()
+        val stoppedBeforePrepare = runtime.stopRawCarrier()
         val prepared = runtime.prepareRawCarrierSocket("127.0.0.1", 9443)
+        val stoppedAfterPrepare = runtime.stopRawCarrier()
+        val notPrepared = runtime.completeRawCarrierProtection(protectAllowed = true)
+        val preparedAgain = runtime.prepareRawCarrierSocket("127.0.0.1", 9443)
         val connected = runtime.completeRawCarrierProtection(protectAllowed = true)
-        val stopped = runtime.stopRawCarrier()
+        val stoppedAfterConnect = runtime.stopRawCarrier()
+        val stoppedAgain = runtime.stopRawCarrier()
 
-        assertEquals(listOf(Triple(1L, "127.0.0.1", 9443)), backend.preparedRawCarriers)
-        assertEquals(listOf(1L to true), backend.completedRawCarrierProtection)
-        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(Triple(1L, "127.0.0.1", 9443), Triple(1L, "127.0.0.1", 9443)), backend.preparedRawCarriers)
+        assertEquals(listOf(1L to true, 1L to true), backend.completedRawCarrierProtection)
+        assertEquals(listOf(1L, 1L, 1L, 1L), backend.stoppedRawCarriers)
+        assertEquals(-1, stoppedBeforePrepare.rawCarrierProtectFd)
         assertEquals(77, prepared.rawCarrierProtectFd)
+        assertEquals(-1, stoppedAfterPrepare.rawCarrierProtectFd)
+        assertFalse(stoppedAfterPrepare.rawCarrierActive)
+        assertEquals("raw_carrier_not_prepared", notPrepared.lastError)
+        assertEquals(77, preparedAgain.rawCarrierProtectFd)
         assertTrue(connected.rawCarrierActive)
         assertEquals(1L, connected.rawCarrierConnectAttempted)
         assertEquals(1L, connected.rawCarrierConnectSucceeded)
-        assertFalse(stopped.rawCarrierActive)
-        assertEquals(-1, stopped.rawCarrierProtectFd)
+        assertFalse(stoppedAfterConnect.rawCarrierActive)
+        assertEquals(-1, stoppedAfterConnect.rawCarrierProtectFd)
+        assertFalse(stoppedAgain.rawCarrierActive)
+        assertEquals(-1, stoppedAgain.rawCarrierProtectFd)
     }
 
     @Test
@@ -591,6 +603,9 @@ private class FakeNativeBackend(
     override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot {
         completedRawCarrierProtection += handle to protectAllowed
         val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (current.rawCarrierProtectFd < 0) {
+            return current.copy(lastError = "raw_carrier_not_prepared").also { snapshots[handle] = it }
+        }
         if (!protectAllowed) {
             return current.copy(
                 rawCarrierProtectFd = -1,
