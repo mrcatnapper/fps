@@ -203,8 +203,9 @@ Java_org_fpsproject_client_nativebridge_FpsNative_nativeDrainTunPolicyPackets(JN
     return fps::android_jni::tun_policy_packet_array(env, packets);
 }
 
-extern "C" JNIEXPORT jobject JNICALL
-Java_org_fpsproject_client_nativebridge_FpsNative_nativeCompleteTunPolicyPacket(JNIEnv* env, jobject /* self */, jlong handle, jlong packet_id, jboolean allow) {
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_nativeCompleteTunPolicyPacket(
+    JNIEnv* env, jobject /* self */, jlong handle, jlong packet_id, jboolean allow
+) {
     const auto snapshot = fps::android_native::complete_tun_policy_packet(
         static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<std::uint64_t>(packet_id), allow == JNI_TRUE
     );
@@ -223,5 +224,25 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeCapturedTunPacketDigestsForTest(JNIEnv* env, jobject /* self */, jlong handle) {
     const auto digests = fps::android_native::captured_tun_packet_digests_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return string_array(env, digests);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeStartFakeCarrierForTest(
+    JNIEnv* env, jobject /* self */, jlong handle, jboolean reject_frames
+) {
+    const auto snapshot =
+        fps::android_native::start_fake_carrier_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle), reject_frames == JNI_TRUE);
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeStopFakeCarrierForTest(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::stop_fake_carrier_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeCapturedFakeCarrierFrameDigestsForTest(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto digests = fps::android_native::captured_fake_carrier_frame_digests_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
     return string_array(env, digests);
 }

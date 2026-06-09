@@ -52,6 +52,17 @@ android {
     }
 }
 
+// AGP 9.0.1 exposes ManagedVirtualDevice.testedAbi in the public DSL, but its
+// setup task creation action does not copy that value into the task input. Keep
+// this narrow workaround until AGP propagates the property itself.
+tasks.matching { it.name == "fpsApi30AtdSetup" }.configureEach {
+    @Suppress("UNCHECKED_CAST")
+    val testedAbiProperty = javaClass.methods
+        .singleOrNull { it.name == "getTestedAbi" && it.parameterCount == 0 }
+        ?.invoke(this) as? org.gradle.api.provider.Property<String>
+    testedAbiProperty?.set("x86_64")
+}
+
 dependencies {
     implementation(platform("com.squareup.okhttp3:okhttp-bom:5.3.2"))
     implementation("com.squareup.okhttp3:okhttp")

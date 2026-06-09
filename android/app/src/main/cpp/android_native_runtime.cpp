@@ -5,8 +5,8 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -27,6 +27,7 @@
 
 #include "fps/core/crypto.hpp"
 #include "fps/core/enum.hpp"
+#include "fps/net/covert_datagram_transport.hpp"
 #include "fps/net/tun_packet.hpp"
 
 namespace fps::android_native {
@@ -38,12 +39,43 @@ constexpr auto kTunPumpPollInterval = 10ms;
 constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
+constexpr fps::net::CarrierId kFakeCarrierId = 1;
 
 enum class TunPacketSinkMode {
     none,
     capture_accept,
     capture_reject,
 };
+
+[[nodiscard]] auto direction_name(fps::Direction direction) noexcept -> std::string_view {
+    switch(direction) {
+    case fps::Direction::client_to_server:
+        return "client_to_server";
+    case fps::Direction::server_to_client:
+        return "server_to_client";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] auto frame_type_name(fps::FrameType frame_type) noexcept -> std::string_view {
+    switch(frame_type) {
+    case fps::FrameType::opaque_datagram:
+        return "opaque_datagram";
+    case fps::FrameType::ping:
+        return "ping";
+    case fps::FrameType::pong:
+        return "pong";
+    case fps::FrameType::flow_control:
+        return "flow_control";
+    case fps::FrameType::close:
+        return "close";
+    case fps::FrameType::opaque_datagram_fragment:
+        return "opaque_datagram_fragment";
+    case fps::FrameType::control:
+        return "control";
+    }
+    return "unknown";
+}
 
 class UniqueFd {
 public:
@@ -81,7 +113,13 @@ private:
 
 class AndroidNativeRuntime {
 public:
-    explicit AndroidNativeRuntime(std::string profile_text) : profile_text_{std::move(profile_text)}, tun_poll_timer_{io_context_} {}
+    explicit AndroidNativeRuntime(std::string profile_text)
+        : profile_text_{std::move(profile_text)}
+        , tun_poll_timer_{io_context_}
+        , datagram_transport_{fps::net::CovertDatagramTransportConfig{
+              .role = fps::RelayRole::client,
+              .max_datagram_size = kTunPumpMaxPacketSize,
+          }} {}
 
     ~AndroidNativeRuntime() { static_cast<void>(stop()); }
 
@@ -126,6 +164,7 @@ public:
         }
 
         started_ = false;
+        clear_fake_carrier_on_worker_no_error();
         stop_tun_pump_no_error();
         work_guard_.reset();
         io_context_.stop();
@@ -250,6 +289,7 @@ public:
     }
 
     [[nodiscard]] auto complete_tun_policy_packet(std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
+        std::vector<std::byte> packet;
         {
             std::lock_guard tun_lock{tun_mutex_};
             const auto found = tun_policy_in_flight_.find(packet_id);
@@ -257,19 +297,21 @@ public:
                 last_error_ = "unknown_tun_policy_packet_id";
                 return snapshot_locked();
             }
-            auto packet = std::move(found->second.packet);
+            packet = std::move(found->second.packet);
             tun_policy_in_flight_.erase(found);
-            if(allow) {
-                tun_policy_allowed_.fetch_add(1);
-                enqueue_allowed_tun_packet_locked(std::span<const std::byte>{packet.data(), packet.size()});
-                return snapshot_locked();
-            }
-            tun_policy_dropped_.fetch_add(1);
-            tun_packets_dropped_.fetch_add(1);
-            tun_last_drop_reason_ = "tun_policy_drop";
-            last_error_.clear();
-            return snapshot_locked();
         }
+        if(allow) {
+            tun_policy_allowed_.fetch_add(1);
+            enqueue_allowed_tun_packet(std::span<const std::byte>{packet.data(), packet.size()});
+            return snapshot();
+        }
+
+        std::lock_guard tun_lock{tun_mutex_};
+        tun_policy_dropped_.fetch_add(1);
+        tun_packets_dropped_.fetch_add(1);
+        tun_last_drop_reason_ = "tun_policy_drop";
+        last_error_.clear();
+        return snapshot_locked();
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -284,6 +326,70 @@ public:
     [[nodiscard]] auto captured_tun_packet_digests_for_test() const -> std::vector<std::string> {
         std::lock_guard tun_lock{tun_mutex_};
         return captured_tun_packet_digests_;
+    }
+
+    [[nodiscard]] auto start_fake_carrier_for_test(bool reject_frames) -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            carrier_active_.store(0);
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<std::string>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, reject_frames, done] {
+            if(carrier_active_.load() != 0U) {
+                done->set_value({});
+                return;
+            }
+
+            fake_carrier_reject_frames_ = reject_frames;
+            fake_carrier_alive_.store(true);
+            {
+                std::lock_guard lock{carrier_capture_mutex_};
+                captured_fake_carrier_frame_digests_.clear();
+            }
+
+            auto added = datagram_transport_.add_carrier(
+                fps::net::CovertCarrier{
+                    .id = kFakeCarrierId,
+                    .enqueue_frames = [this](
+                                          fps::Direction direction, std::span<const fps::net::CovertCarrierFrame> frames
+                                      ) { return enqueue_fake_carrier_frames(direction, frames); },
+                    .is_alive = [this] { return fake_carrier_alive_.load(); },
+                    .can_enqueue_now = [this] { return io_context_.get_executor().running_in_this_thread(); },
+                }
+            );
+            if(!added) {
+                fake_carrier_alive_.store(false);
+                done->set_value("fake_carrier_add_failed");
+                return;
+            }
+            carrier_active_.store(1);
+            carrier_started_.fetch_add(1);
+            done->set_value({});
+        });
+
+        const auto error = finished.get();
+        last_error_ = error;
+        return snapshot();
+    }
+
+    [[nodiscard]] auto stop_fake_carrier_for_test() -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            carrier_active_.store(0);
+            return snapshot();
+        }
+
+        clear_fake_carrier_on_worker_no_error();
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test() const -> std::vector<std::string> {
+        std::lock_guard lock{carrier_capture_mutex_};
+        return captured_fake_carrier_frame_digests_;
     }
 
 private:
@@ -311,6 +417,90 @@ private:
             return false;
         }
         return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+    }
+
+    [[nodiscard]] auto enqueue_fake_carrier_frames(fps::Direction direction, std::span<const fps::net::CovertCarrierFrame> frames)
+        -> fps::net::CovertDatagramResult {
+        if(!fake_carrier_alive_.load()) {
+            return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::session_closed);
+        }
+        if(fake_carrier_reject_frames_) {
+            return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::write_queue_full);
+        }
+
+        std::vector<std::string> captured;
+        captured.reserve(frames.size());
+        std::size_t total_payload_bytes = 0;
+        for(const auto& frame : frames) {
+            auto digest = fps::sha256(frame.payload);
+            if(!digest) {
+                return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::codec_error);
+            }
+            total_payload_bytes += frame.payload.size();
+            captured.push_back(
+                std::string{direction_name(direction)} + "|" + std::string{frame_type_name(frame.frame_type)} + "|" + std::to_string(frame.payload.size()) +
+                "|" + hex_digest(digest.value())
+            );
+        }
+
+        {
+            std::lock_guard lock{carrier_capture_mutex_};
+            captured_fake_carrier_frame_digests_.insert(captured_fake_carrier_frame_digests_.end(), captured.begin(), captured.end());
+        }
+        carrier_frames_enqueued_.fetch_add(static_cast<std::uint64_t>(frames.size()));
+        carrier_frame_bytes_enqueued_.fetch_add(static_cast<std::uint64_t>(total_payload_bytes));
+        return fps::net::CovertDatagramResult::success(total_payload_bytes);
+    }
+
+    void clear_fake_carrier_on_worker_no_error() {
+        if(!worker_thread_running_.load()) {
+            fake_carrier_alive_.store(false);
+            carrier_active_.store(0);
+            return;
+        }
+
+        auto clear = [this] {
+            const auto was_active = carrier_active_.exchange(0) != 0U;
+            if(was_active) {
+                static_cast<void>(datagram_transport_.remove_carrier_if(kFakeCarrierId));
+                fake_carrier_alive_.store(false);
+                fake_carrier_reject_frames_ = false;
+                carrier_stopped_.fetch_add(1);
+            } else {
+                fake_carrier_alive_.store(false);
+            }
+        };
+
+        if(io_context_.get_executor().running_in_this_thread()) {
+            clear();
+            return;
+        }
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [clear = std::move(clear), done] {
+            clear();
+            done->set_value();
+        });
+        finished.wait();
+    }
+
+    [[nodiscard]] auto enqueue_tun_packet_on_carrier(std::span<const std::byte> packet) -> fps::net::CovertDatagramResult {
+        if(!started_ || !worker_thread_running_.load()) {
+            return fps::net::CovertDatagramResult::failure(fps::net::CovertDatagramError::no_carrier_session);
+        }
+
+        std::vector<std::byte> packet_copy(packet.begin(), packet.end());
+        if(io_context_.get_executor().running_in_this_thread()) {
+            return datagram_transport_.try_write(std::span<const std::byte>{packet_copy.data(), packet_copy.size()});
+        }
+
+        auto done = std::make_shared<std::promise<fps::net::CovertDatagramResult>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, packet = std::move(packet_copy), done]() mutable {
+            done->set_value(datagram_transport_.try_write(std::span<const std::byte>{packet.data(), packet.size()}));
+        });
+        return finished.get();
     }
 
     void stop_tun_pump_no_error() {
@@ -426,16 +616,45 @@ private:
         tun_last_drop_reason_.clear();
     }
 
-    void enqueue_allowed_tun_packet_locked(std::span<const std::byte> packet) {
+    void enqueue_allowed_tun_packet(std::span<const std::byte> packet) {
         tun_covert_enqueue_attempted_.fetch_add(1);
-        if(tun_packet_sink_mode_ == TunPacketSinkMode::none) {
+        TunPacketSinkMode sink_mode = TunPacketSinkMode::none;
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            sink_mode = tun_packet_sink_mode_;
+        }
+
+        if(sink_mode == TunPacketSinkMode::none) {
+            const auto queued = enqueue_tun_packet_on_carrier(packet);
+            std::lock_guard tun_lock{tun_mutex_};
+            if(queued) {
+                tun_covert_enqueue_accepted_.fetch_add(1);
+                tun_last_drop_reason_.clear();
+                last_error_.clear();
+                return;
+            }
+
+            const auto error = queued.error();
             tun_covert_enqueue_rejected_.fetch_add(1);
             tun_packets_dropped_.fetch_add(1);
-            tun_last_drop_reason_ = "no_carrier_transport";
-            last_error_ = "no_carrier_transport";
+            if(error == fps::net::CovertDatagramError::write_queue_full) {
+                carrier_enqueue_rejected_.fetch_add(1);
+                tun_last_drop_reason_ = "carrier_enqueue_rejected";
+                last_error_ = "carrier_enqueue_rejected";
+                return;
+            }
+            if(error == fps::net::CovertDatagramError::no_carrier_session) {
+                tun_last_drop_reason_ = "no_carrier_transport";
+                last_error_ = "no_carrier_transport";
+                return;
+            }
+            const auto reason = std::string{"carrier_enqueue_"} + std::string{fps::enum_name_or(error)};
+            tun_last_drop_reason_ = reason;
+            last_error_ = reason;
             return;
         }
-        if(tun_packet_sink_mode_ == TunPacketSinkMode::capture_reject) {
+        if(sink_mode == TunPacketSinkMode::capture_reject) {
+            std::lock_guard tun_lock{tun_mutex_};
             tun_covert_enqueue_rejected_.fetch_add(1);
             tun_packets_dropped_.fetch_add(1);
             tun_last_drop_reason_ = "carrier_enqueue_rejected";
@@ -445,12 +664,14 @@ private:
 
         auto digest = fps::sha256(packet);
         if(!digest) {
+            std::lock_guard tun_lock{tun_mutex_};
             tun_covert_enqueue_rejected_.fetch_add(1);
             tun_packets_dropped_.fetch_add(1);
             tun_last_drop_reason_ = "carrier_enqueue_digest_failed";
             last_error_ = "carrier_enqueue_digest_failed";
             return;
         }
+        std::lock_guard tun_lock{tun_mutex_};
         captured_tun_packet_digests_.push_back(hex_digest(digest.value()));
         tun_covert_enqueue_accepted_.fetch_add(1);
         tun_last_drop_reason_.clear();
@@ -489,6 +710,12 @@ private:
             .tun_covert_enqueue_rejected = tun_covert_enqueue_rejected_.load(),
             .commands_posted = commands_posted_.load(),
             .commands_completed = commands_completed_.load(),
+            .carrier_active = carrier_active_.load(),
+            .carrier_started = carrier_started_.load(),
+            .carrier_stopped = carrier_stopped_.load(),
+            .carrier_frames_enqueued = carrier_frames_enqueued_.load(),
+            .carrier_frame_bytes_enqueued = carrier_frame_bytes_enqueued_.load(),
+            .carrier_enqueue_rejected = carrier_enqueue_rejected_.load(),
             .last_error = last_error_,
         };
     }
@@ -498,6 +725,7 @@ private:
     std::string profile_text_;
     boost::asio::io_context io_context_;
     boost::asio::steady_timer tun_poll_timer_;
+    fps::net::CovertDatagramTransport datagram_transport_;
     using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
     std::optional<WorkGuard> work_guard_;
     std::thread worker_thread_;
@@ -525,6 +753,16 @@ private:
     std::atomic<std::uint64_t> tun_covert_enqueue_rejected_ = 0;
     TunPacketSinkMode tun_packet_sink_mode_ = TunPacketSinkMode::none;
     std::vector<std::string> captured_tun_packet_digests_;
+    std::atomic_bool fake_carrier_alive_ = false;
+    bool fake_carrier_reject_frames_ = false;
+    std::atomic<std::uint64_t> carrier_active_ = 0;
+    std::atomic<std::uint64_t> carrier_started_ = 0;
+    std::atomic<std::uint64_t> carrier_stopped_ = 0;
+    std::atomic<std::uint64_t> carrier_frames_enqueued_ = 0;
+    std::atomic<std::uint64_t> carrier_frame_bytes_enqueued_ = 0;
+    std::atomic<std::uint64_t> carrier_enqueue_rejected_ = 0;
+    mutable std::mutex carrier_capture_mutex_;
+    std::vector<std::string> captured_fake_carrier_frame_digests_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -648,6 +886,33 @@ public:
         return found->second->captured_tun_packet_digests_for_test();
     }
 
+    [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->start_fake_carrier_for_test(reject_frames);
+    }
+
+    [[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->stop_fake_carrier_for_test();
+    }
+
+    [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second->captured_fake_carrier_frame_digests_for_test();
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
@@ -663,45 +928,29 @@ private:
 
 auto tun_fd_ownership_name(TunFdOwnership ownership) noexcept -> std::string_view {
     switch(ownership) {
-        case TunFdOwnership::none:
-            return "";
-        case TunFdOwnership::owned_duplicate:
-            return "owned_duplicate";
+    case TunFdOwnership::none:
+        return "";
+    case TunFdOwnership::owned_duplicate:
+        return "owned_duplicate";
     }
     return "";
 }
 
-auto create_runtime(std::string profile_text) -> NativeRuntimeHandle {
-    return runtime_registry().create(std::move(profile_text));
-}
+auto create_runtime(std::string profile_text) -> NativeRuntimeHandle { return runtime_registry().create(std::move(profile_text)); }
 
-void close_runtime(NativeRuntimeHandle handle) {
-    runtime_registry().close(handle);
-}
+void close_runtime(NativeRuntimeHandle handle) { runtime_registry().close(handle); }
 
-auto start_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().start(handle);
-}
+auto start_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().start(handle); }
 
-auto stop_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().stop(handle);
-}
+auto stop_runtime(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop(handle); }
 
-auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().snapshot(handle);
-}
+auto runtime_snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().snapshot(handle); }
 
-auto start_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().start_tun_pump(handle);
-}
+auto start_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().start_tun_pump(handle); }
 
-auto stop_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().stop_tun_pump(handle);
-}
+auto stop_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_tun_pump(handle); }
 
-auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().post_noop_command(handle);
-}
+auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().post_noop_command(handle); }
 
 auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
     return runtime_registry().attach_tun_fd_owned_duplicate(handle, fd, mtu);
@@ -721,6 +970,16 @@ auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool r
 
 auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
     return runtime_registry().captured_tun_packet_digests_for_test(handle);
+}
+
+auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().start_fake_carrier_for_test(handle, reject_frames);
+}
+
+auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_fake_carrier_for_test(handle); }
+
+auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
+    return runtime_registry().captured_fake_carrier_frame_digests_for_test(handle);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

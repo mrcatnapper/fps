@@ -2,6 +2,161 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-09
+
+### Android fake-carrier reject hang fix
+
+Goal:
+
+- Finish PR verification before opening the Android fake-carrier transport PR.
+- Investigate a managed-device hang found during final local checks.
+
+Completed:
+
+- Local C++/Python/shell checks passed before the Android managed-device lane.
+- The first managed-device run hung after 6/13 tests. Logcat showed the stuck
+  test was `nativeTunPolicyAllowReportsFakeCarrierReject`.
+- Root cause: `complete_tun_policy_packet(...ALLOW)` held `tun_mutex_` while
+  synchronously posting and waiting for `CovertDatagramTransport::try_write(...)`
+  on the native worker. The reject path completed inside the transport, but the
+  lock boundary was too broad for this cross-thread operation.
+- Fixed the Android native runtime by moving the pending packet out of the
+  in-flight map under lock, releasing `tun_mutex_`, performing the carrier
+  enqueue, and reacquiring the lock only for counter/drop-reason updates.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+
+### Android managed-device warning and default Docker tags
+
+Goal:
+
+- Stop carrying custom Android Docker image tag environment variables during
+  routine local checks.
+- Suppress the recurring AGP managed-device `testedAbi` warning if possible.
+
+Completed:
+
+- Retagged local Android images to the defaults used by
+  `tools/run_android_checks.sh`:
+  - `fps:android-ci`
+  - `fps:android-ci-base`
+  - `fps:android-emulator-ci`
+- Removed the old temporary `*-cache-split` tags after retagging. No dangling
+  layers or stopped containers were left.
+- Confirmed the default command works without custom image tag variables:
+  `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`.
+- Investigated AGP 9.0.1 bytecode and confirmed
+  `ManagedVirtualDevice.testedAbi` exists and is visible in the public DSL, but
+  `ManagedDeviceInstrumentationTestSetupTask.CreationAction` does not copy it
+  into the setup task input.
+- Added a narrow reflection workaround in `android/app/build.gradle.kts` that
+  sets `fpsApi30AtdSetup.testedAbi = "x86_64"` until AGP propagates the DSL
+  value itself.
+- Updated Android testing docs to prefer the default image tags.
+
+Verification:
+
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Notes:
+
+- The previous `unspecified testedAbi` warning is gone. Gradle still prints the
+  separate experimental-property warning for
+  `android.testoptions.manageddevices.emulator.gpu=swiftshader_indirect`.
+
+### Android native fake carrier lifecycle
+
+Goal:
+
+- Close the next Android runtime gap after the outbound TUN seam: native code
+  must be able to register a carrier-like transport and route policy-allowed
+  TUN packets through the same `CovertDatagramTransport` path that production
+  raw TLS/TCP carriers will use later.
+
+Plan:
+
+- Keep this PR network-free. The carrier is an in-process fake carrier used by
+  JVM/instrumented tests; real raw TCP/TLS connect/auth remains the next
+  increment.
+- Add focused tests first:
+  - starting a fake carrier requires a started native runtime;
+  - starting/stopping is idempotent and updates non-secret snapshot counters;
+  - `ALLOW` with no carrier still returns `no_carrier_transport`;
+  - `ALLOW` with a started fake carrier enqueues through
+    `CovertDatagramTransport`, records frame metadata/digest and increments
+    accepted counters;
+  - fake carrier queue rejection reports `carrier_enqueue_rejected`.
+- Extend native/JNI/Kotlin snapshots with carrier lifecycle counters:
+  active carriers, started/stopped fake carriers and captured fake-carrier frame
+  metadata for tests only.
+- Keep packet bytes native-owned. Test hooks expose SHA-256 digests and frame
+  metadata, not raw payload samples.
+- Update Android boundary/testing/specification notes after implementation.
+
+Docker environment cleanup completed before implementation:
+
+- Removed stale `fps:android-emulator-cache-split`, rebuilt
+  `fps:android-gradle-base-cache-split` from the current `Dockerfile.android`
+  target, rebuilt `fps:android-emulator-cache-split` from that base and pruned
+  dangling layers.
+- Final local Docker state: only `fps:android-gradle-base-cache-split`,
+  `fps:android-ci-cache-split`, `fps:android-emulator-cache-split` and
+  `ubuntu:24.04`; no dangling images or stopped containers.
+
+Verification target:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split tools/run_android_checks.sh --docker`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check`
+
+Completed:
+
+- Added Android debug-only fake carrier test hooks and native lifecycle:
+  `startFakeCarrier`, `stopFakeCarrier` and metadata-only captured frame
+  digests.
+- Extended `NativeRuntimeSnapshot` with carrier lifecycle/enqueue counters.
+- Routed policy-allowed native TUN packets through
+  `CovertDatagramTransport::try_write(...)` when a carrier is registered.
+  The default runtime still reports `no_carrier_transport` when no real or fake
+  carrier exists.
+- Kept the old exact-packet capture sink as a test-only seam and added a
+  stronger fake-carrier smoke proving the shared datagram transport path is
+  used.
+- Updated Android boundary/testing/specification notes. Real native raw
+  TLS/TCP auth and carrier I/O remain the next runtime increment.
+
+Verification:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci-cache-split tools/run_android_checks.sh --host`
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-cache-split FPS_ANDROID_BASE_IMAGE=fps:android-gradle-base-cache-split FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-cache-split tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Notes:
+
+- Gradle Managed Device still prints an AGP warning that `testedAbi` defaults to
+  `x86_64` today and changes in AGP 9.0. This is not a functional regression,
+  but should be pinned explicitly in a small follow-up test-infra cleanup.
+
 ## 2026-06-08
 
 ### Android native TUN packet enqueue bridge

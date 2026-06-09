@@ -670,9 +670,11 @@ Linux-specific runtime is separate:
   outbound native transport seam. Until real native carrier auth/I/O is wired,
   the default runtime has no carrier transport and reports
   `no_carrier_transport` with explicit enqueue rejected counters instead of
-  silently treating the packet as forwarded. TUN reattach/clear drops pending
-  and in-flight policy packets from the old fd. Native FPS auth, carrier I/O
-  and real covert enqueue remain follow-up work;
+  silently treating the packet as forwarded. Debug-only Android tests can
+  register an in-process fake carrier that exercises the production
+  `CovertDatagramTransport` path without opening network sockets. TUN
+  reattach/clear drops pending and in-flight policy packets from the old fd.
+  Native FPS auth and real raw carrier I/O remain follow-up work;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -702,10 +704,12 @@ Linux-specific runtime is separate:
   TCP/UDP 5-tuples, exposes metadata to Kotlin policy and accepts allow/drop
   completion decisions. `ALLOW` reaches a native outbound seam and is counted
   separately as attempted/accepted/rejected enqueue; without a carrier
-  transport it fails with `no_carrier_transport`. The runtime does not yet run
-  native FPS auth or raw carrier I/O, so production Android code must not treat
-  policy allow as successful remote delivery until the native carrier is
-  attached.
+  transport it fails with `no_carrier_transport`. Instrumented debug tests can
+  attach a fake carrier to prove that the seam uses the shared
+  `CovertDatagramTransport` rather than Android-specific packet handling. The
+  runtime does not yet run native FPS auth or raw carrier I/O, so production
+  Android code must not treat policy allow as successful remote delivery until
+  the native carrier is attached.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

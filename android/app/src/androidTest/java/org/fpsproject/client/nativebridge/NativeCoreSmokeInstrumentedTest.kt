@@ -298,6 +298,113 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
+    fun nativeFakeCarrierLifecycleRequiresStartedRuntimeAndIsIdempotent() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        val stoppedRuntime = FpsNativeTestHooks.startFakeCarrier(handle, rejectFrames = false)
+        assertEquals(0L, stoppedRuntime.carrierActive)
+        assertEquals("runtime_stopped", stoppedRuntime.lastError)
+
+        FpsNative.startRuntime(handle)
+        val started = FpsNativeTestHooks.startFakeCarrier(handle, rejectFrames = false)
+        val startedAgain = FpsNativeTestHooks.startFakeCarrier(handle, rejectFrames = false)
+        val stopped = FpsNativeTestHooks.stopFakeCarrier(handle)
+        val stoppedAgain = FpsNativeTestHooks.stopFakeCarrier(handle)
+
+        assertEquals(1L, started.carrierActive)
+        assertEquals(1L, started.carrierStarted)
+        assertEquals(null, started.lastError)
+        assertEquals(1L, startedAgain.carrierActive)
+        assertEquals(1L, startedAgain.carrierStarted)
+        assertEquals(0L, startedAgain.carrierStopped)
+        assertEquals(0L, stopped.carrierActive)
+        assertEquals(1L, stopped.carrierStarted)
+        assertEquals(1L, stopped.carrierStopped)
+        assertEquals(0L, stoppedAgain.carrierActive)
+        assertEquals(1L, stoppedAgain.carrierStopped)
+
+        FpsNative.closeRuntime(handle)
+    }
+
+    @Test
+    fun nativeTunPolicyAllowRoutesThroughFakeCarrierTransport() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+        FpsNativeTestHooks.startFakeCarrier(handle, rejectFrames = false)
+
+        val packet = validUdpPacket()
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+        output.write(packet)
+        output.flush()
+        awaitSnapshot(handle) { it.tunPolicyPending == 1L }
+        val pending = FpsNative.drainTunPolicyPackets(handle, 1).single()
+        val allowed = FpsNative.completeTunPolicyPacket(handle, pending.packetId, SplitTunnelDecision.ALLOW)
+        val frames = FpsNativeTestHooks.capturedFakeCarrierFrameDigests(handle)
+
+        assertEquals(1L, allowed.carrierActive)
+        assertEquals(1L, allowed.carrierStarted)
+        assertEquals(1L, allowed.tunPolicyAllowed)
+        assertEquals(0L, allowed.tunPacketsDropped)
+        assertEquals(1L, allowed.tunCovertEnqueueAttempted)
+        assertEquals(1L, allowed.tunCovertEnqueueAccepted)
+        assertEquals(0L, allowed.tunCovertEnqueueRejected)
+        assertEquals(1L, allowed.carrierFramesEnqueued)
+        assertEquals(packet.size.toLong(), allowed.carrierFrameBytesEnqueued)
+        assertEquals(0L, allowed.carrierEnqueueRejected)
+        assertEquals(null, allowed.lastError)
+        assertEquals(listOf("client_to_server|opaque_datagram|${packet.size}|${sha256Hex(packet)}"), frames)
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeTunPolicyAllowReportsFakeCarrierReject() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, readEnd.fd, 1280)
+        FpsNative.startTunPump(handle)
+        FpsNativeTestHooks.startFakeCarrier(handle, rejectFrames = true)
+
+        val output = FileOutputStream(writeEnd.fileDescriptor)
+        output.write(validUdpPacket())
+        output.flush()
+        awaitSnapshot(handle) { it.tunPolicyPending == 1L }
+        val pending = FpsNative.drainTunPolicyPackets(handle, 1).single()
+        val rejected = FpsNative.completeTunPolicyPacket(handle, pending.packetId, SplitTunnelDecision.ALLOW)
+
+        assertEquals(1L, rejected.carrierActive)
+        assertEquals(1L, rejected.tunPolicyAllowed)
+        assertEquals(1L, rejected.tunPacketsDropped)
+        assertEquals(1L, rejected.tunCovertEnqueueAttempted)
+        assertEquals(0L, rejected.tunCovertEnqueueAccepted)
+        assertEquals(1L, rejected.tunCovertEnqueueRejected)
+        assertEquals(0L, rejected.carrierFramesEnqueued)
+        assertEquals(1L, rejected.carrierEnqueueRejected)
+        assertEquals("carrier_enqueue_rejected", rejected.tunLastDropReason)
+        assertEquals("carrier_enqueue_rejected", rejected.lastError)
+        assertEquals(emptyList<String>(), FpsNativeTestHooks.capturedFakeCarrierFrameDigests(handle))
+
+        FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
     fun nativeTunPolicyAllowReportsCaptureSinkReject() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)
