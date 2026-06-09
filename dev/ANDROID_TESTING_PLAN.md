@@ -50,6 +50,9 @@ documentation.
   TUN pump skeleton against a pipe fd, including policy metadata drain and
   allow/drop completion, default no-carrier enqueue rejection and a capture
   sink check proving exact native-owned packet bytes reach the outbound seam.
+  It also includes a debug-only fake carrier lifecycle/enqueue smoke proving
+  allowed packets route through the production `CovertDatagramTransport` path
+  and produce metadata-only frame digests.
   The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
@@ -182,8 +185,9 @@ Prioritize these emulator/device scenarios in order:
    - Current managed-device coverage also routes that real fd through the full
      `HeadlessNativeVpnRuntime` attach path, starts the native TUN pump and
      verifies clean cleanup. Pipe-fd native smoke separately verifies metadata
-     drain, allow/drop completion, no-carrier enqueue rejection and exact packet
-     delivery into a test capture sink.
+     drain, allow/drop completion, no-carrier enqueue rejection, exact packet
+     delivery into a test capture sink and fake-carrier
+     `CovertDatagramTransport` enqueue.
 
 2. **Service revoke/stop lifecycle**
    - Current managed-device coverage exercises explicit stop and a debug
@@ -257,6 +261,7 @@ Prioritize these emulator/device scenarios in order:
 2. Add underlying-network DNS coverage before enabling native carrier connect.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
-4. Wire the native outbound packet seam into real native carrier enqueue.
+4. Wire the native outbound packet seam into real native raw TLS/TCP carrier
+   enqueue.
 5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

@@ -38,6 +38,12 @@ data class NativeRuntimeSnapshot(
     val tunCovertEnqueueRejected: Long,
     val commandsPosted: Long,
     val commandsCompleted: Long,
+    val carrierActive: Long = 0,
+    val carrierStarted: Long = 0,
+    val carrierStopped: Long = 0,
+    val carrierFramesEnqueued: Long = 0,
+    val carrierFrameBytesEnqueued: Long = 0,
+    val carrierEnqueueRejected: Long = 0,
     val lastError: String?,
 )
 

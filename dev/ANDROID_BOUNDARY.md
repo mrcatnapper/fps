@@ -96,7 +96,7 @@ devices and future Gradle-managed emulators.
   resulting fd to native as an owned duplicate. It starts the native TUN pump
   after attachment, and the managed emulator smoke verifies that path with a
   real `VpnService` fd plus explicit stop/debug-revoke cleanup. It intentionally
-  does not start native auth, carrier I/O or covert datagram enqueue yet.
+  does not start native auth or real raw carrier I/O yet.
 - Added the first native runtime executor lifecycle. The JNI runtime can start
   and stop one Boost.Asio `io_context` worker thread, exposes non-secret
   lifecycle/counter snapshots and has a deterministic no-op posted-command
@@ -110,10 +110,13 @@ devices and future Gradle-managed emulators.
   bridge, `allow` means "policy accepted and native attempted outbound
   enqueue"; it is not proof that the packet reached the remote peer. Without a
   carrier transport, `ALLOW` returns `no_carrier_transport` and the packet is
-  dropped with explicit counters. Reattaching or clearing the TUN fd clears
-  pending and in-flight policy packets so stale decisions from an old fd cannot
-  affect a new runtime state. The pump intentionally does not run FPS auth, raw
-  carrier I/O or real covert datagram enqueue yet.
+  dropped with explicit counters. Debug-only instrumented hooks can register an
+  in-process fake carrier that exercises the same `CovertDatagramTransport`
+  enqueue path production carriers will use, recording only frame metadata and
+  SHA-256 digests. Reattaching or clearing the TUN fd clears pending and
+  in-flight policy packets so stale decisions from an old fd cannot affect a
+  new runtime state. The pump intentionally does not run FPS auth or raw
+  carrier I/O yet.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -135,10 +138,11 @@ devices and future Gradle-managed emulators.
   Kotlin split-tunnel policy and completes packets as allow/drop for testable
   fail-closed accounting. Allowed packets now reach a native outbound packet
   seam. The default runtime has no real carrier transport yet, so it reports
-  `no_carrier_transport` and increments enqueue rejected counters; a capture
-  sink is used by instrumented tests to prove exact native-owned packet bytes
-  reach the seam. The next step is native raw TLS/TCP auth/carrier I/O and
-  replacing the capture/default seam with real covert datagram enqueue.
+  `no_carrier_transport` and increments enqueue rejected counters. Debug-only
+  tests can install either an exact-packet capture sink or an in-process fake
+  carrier. The fake carrier is the current proof that allowed packets enter
+  `CovertDatagramTransport` rather than a parallel Android-only path. The next
+  step is native raw TLS/TCP auth/carrier I/O.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through
@@ -172,8 +176,8 @@ devices and future Gradle-managed emulators.
   (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
   explicit native `io_context` executor lifecycle plus a non-protocol native
   TUN read/parse pump with non-secret runtime snapshots. Managed-device
-  coverage exercises that path with a real Android TUN fd; native auth/carrier
-  enqueue wiring is next.
+  coverage exercises that path with a real Android TUN fd; native auth and raw
+  carrier I/O wiring are next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

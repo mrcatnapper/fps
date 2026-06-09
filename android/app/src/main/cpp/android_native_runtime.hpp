@@ -40,6 +40,12 @@ struct NativeRuntimeSnapshotFields {
     std::uint64_t tun_covert_enqueue_rejected = 0;
     std::uint64_t commands_posted = 0;
     std::uint64_t commands_completed = 0;
+    std::uint64_t carrier_active = 0;
+    std::uint64_t carrier_started = 0;
+    std::uint64_t carrier_stopped = 0;
+    std::uint64_t carrier_frames_enqueued = 0;
+    std::uint64_t carrier_frame_bytes_enqueued = 0;
+    std::uint64_t carrier_enqueue_rejected = 0;
     std::string last_error;
 };
 
@@ -64,6 +70,9 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
+[[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native
