@@ -163,9 +163,23 @@ The helper builds the base image first, builds the emulator image from that
 local tag, then runs the managed-device task in a container with `/dev/kvm`
 passed through and the current workspace bind-mounted. The base image is built
 from the source-free `android-gradle-base` target. With
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing image tags are used directly and
-only missing images are built. Keep this lane opt-in until repeated local/agent
-runs show it is stable enough for scheduled CI.
+`FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing default tags are used directly and
+only missing images are built:
+
+- `fps:android-ci`
+- `fps:android-ci-base`
+- `fps:android-emulator-ci`
+
+Avoid long-lived custom local tags for routine Android checks. They make it too
+easy to build a second independent SDK/emulator image set and waste disk space.
+Keep this lane opt-in until repeated local/agent runs show it is stable enough
+for scheduled CI.
+
+AGP 9.0.1 currently exposes `ManagedVirtualDevice.testedAbi` in the public DSL
+but does not propagate that value into the generated setup task. The build file
+therefore also sets the setup task's `testedAbi` property through a narrow
+reflection workaround. Remove that workaround once AGP forwards the DSL property
+itself.
 
 The repository has a manual-only GitHub Actions workflow named
 `Android Emulator` for the same lane. It is not a required PR check; it exists

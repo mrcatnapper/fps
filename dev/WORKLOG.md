@@ -4,6 +4,47 @@
 
 ## 2026-06-09
 
+### Android managed-device warning and default Docker tags
+
+Goal:
+
+- Stop carrying custom Android Docker image tag environment variables during
+  routine local checks.
+- Suppress the recurring AGP managed-device `testedAbi` warning if possible.
+
+Completed:
+
+- Retagged local Android images to the defaults used by
+  `tools/run_android_checks.sh`:
+  - `fps:android-ci`
+  - `fps:android-ci-base`
+  - `fps:android-emulator-ci`
+- Removed the old temporary `*-cache-split` tags after retagging. No dangling
+  layers or stopped containers were left.
+- Confirmed the default command works without custom image tag variables:
+  `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`.
+- Investigated AGP 9.0.1 bytecode and confirmed
+  `ManagedVirtualDevice.testedAbi` exists and is visible in the public DSL, but
+  `ManagedDeviceInstrumentationTestSetupTask.CreationAction` does not copy it
+  into the setup task input.
+- Added a narrow reflection workaround in `android/app/build.gradle.kts` that
+  sets `fpsApi30AtdSetup.testedAbi = "x86_64"` until AGP propagates the DSL
+  value itself.
+- Updated Android testing docs to prefer the default image tags.
+
+Verification:
+
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Notes:
+
+- The previous `unspecified testedAbi` warning is gone. Gradle still prints the
+  separate experimental-property warning for
+  `android.testoptions.manageddevices.emulator.gpu=swiftshader_indirect`.
+
 ### Android native fake carrier lifecycle
 
 Goal:

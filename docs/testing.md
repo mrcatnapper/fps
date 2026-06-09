@@ -102,9 +102,9 @@ directly instead of rebuilding:
 
 ```sh
 docker run --rm fps:local fps_client --help
-docker run --rm fps:android-ci-local tools/run_android_checks.sh --host
+docker run --rm fps:android-ci tools/run_android_checks.sh --host
 docker run --rm -v "$PWD:/workspaces" -w /workspaces \
-  fps:android-ci-local tools/run_android_checks.sh --host
+  fps:android-ci tools/run_android_checks.sh --host
 ```
 
 The bind-mounted form uses the current working tree while reusing the toolchain
@@ -117,14 +117,8 @@ Android Docker checks have the same reuse path. Set
 exist and you only want to rerun Gradle/tests:
 
 ```sh
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
-  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
-  tools/run_android_checks.sh --docker
-
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 \
-  FPS_ANDROID_DOCKER_IMAGE=fps:android-ci-local \
-  FPS_ANDROID_EMULATOR_IMAGE=fps:android-emulator-ci-local \
-  tools/run_android_checks.sh --docker-managed-device
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker
+FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
 ## Android Bootstrap Checks
