@@ -4,6 +4,37 @@
 
 ## 2026-06-09
 
+### Android fake-carrier reject hang fix
+
+Goal:
+
+- Finish PR verification before opening the Android fake-carrier transport PR.
+- Investigate a managed-device hang found during final local checks.
+
+Completed:
+
+- Local C++/Python/shell checks passed before the Android managed-device lane.
+- The first managed-device run hung after 6/13 tests. Logcat showed the stuck
+  test was `nativeTunPolicyAllowReportsFakeCarrierReject`.
+- Root cause: `complete_tun_policy_packet(...ALLOW)` held `tun_mutex_` while
+  synchronously posting and waiting for `CovertDatagramTransport::try_write(...)`
+  on the native worker. The reject path completed inside the transport, but the
+  lock boundary was too broad for this cross-thread operation.
+- Fixed the Android native runtime by moving the pending packet out of the
+  in-flight map under lock, releasing `tun_mutex_`, performing the carrier
+  enqueue, and reacquiring the lock only for counter/drop-reason updates.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh examples/docker/proxy-dante/*.sh`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `ctest --test-dir build -L local --output-on-failure`
+- `python3 tests/integration/docker_artifacts.py --repo /workspaces`
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+
 ### Android managed-device warning and default Docker tags
 
 Goal:

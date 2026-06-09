@@ -289,6 +289,7 @@ public:
     }
 
     [[nodiscard]] auto complete_tun_policy_packet(std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
+        std::vector<std::byte> packet;
         {
             std::lock_guard tun_lock{tun_mutex_};
             const auto found = tun_policy_in_flight_.find(packet_id);
@@ -296,19 +297,21 @@ public:
                 last_error_ = "unknown_tun_policy_packet_id";
                 return snapshot_locked();
             }
-            auto packet = std::move(found->second.packet);
+            packet = std::move(found->second.packet);
             tun_policy_in_flight_.erase(found);
-            if(allow) {
-                tun_policy_allowed_.fetch_add(1);
-                enqueue_allowed_tun_packet_locked(std::span<const std::byte>{packet.data(), packet.size()});
-                return snapshot_locked();
-            }
-            tun_policy_dropped_.fetch_add(1);
-            tun_packets_dropped_.fetch_add(1);
-            tun_last_drop_reason_ = "tun_policy_drop";
-            last_error_.clear();
-            return snapshot_locked();
         }
+        if(allow) {
+            tun_policy_allowed_.fetch_add(1);
+            enqueue_allowed_tun_packet(std::span<const std::byte>{packet.data(), packet.size()});
+            return snapshot();
+        }
+
+        std::lock_guard tun_lock{tun_mutex_};
+        tun_policy_dropped_.fetch_add(1);
+        tun_packets_dropped_.fetch_add(1);
+        tun_last_drop_reason_ = "tun_policy_drop";
+        last_error_.clear();
+        return snapshot_locked();
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -613,10 +616,17 @@ private:
         tun_last_drop_reason_.clear();
     }
 
-    void enqueue_allowed_tun_packet_locked(std::span<const std::byte> packet) {
+    void enqueue_allowed_tun_packet(std::span<const std::byte> packet) {
         tun_covert_enqueue_attempted_.fetch_add(1);
-        if(tun_packet_sink_mode_ == TunPacketSinkMode::none) {
+        TunPacketSinkMode sink_mode = TunPacketSinkMode::none;
+        {
+            std::lock_guard tun_lock{tun_mutex_};
+            sink_mode = tun_packet_sink_mode_;
+        }
+
+        if(sink_mode == TunPacketSinkMode::none) {
             const auto queued = enqueue_tun_packet_on_carrier(packet);
+            std::lock_guard tun_lock{tun_mutex_};
             if(queued) {
                 tun_covert_enqueue_accepted_.fetch_add(1);
                 tun_last_drop_reason_.clear();
@@ -643,7 +653,8 @@ private:
             last_error_ = reason;
             return;
         }
-        if(tun_packet_sink_mode_ == TunPacketSinkMode::capture_reject) {
+        if(sink_mode == TunPacketSinkMode::capture_reject) {
+            std::lock_guard tun_lock{tun_mutex_};
             tun_covert_enqueue_rejected_.fetch_add(1);
             tun_packets_dropped_.fetch_add(1);
             tun_last_drop_reason_ = "carrier_enqueue_rejected";
@@ -653,12 +664,14 @@ private:
 
         auto digest = fps::sha256(packet);
         if(!digest) {
+            std::lock_guard tun_lock{tun_mutex_};
             tun_covert_enqueue_rejected_.fetch_add(1);
             tun_packets_dropped_.fetch_add(1);
             tun_last_drop_reason_ = "carrier_enqueue_digest_failed";
             last_error_ = "carrier_enqueue_digest_failed";
             return;
         }
+        std::lock_guard tun_lock{tun_mutex_};
         captured_tun_packet_digests_.push_back(hex_digest(digest.value()));
         tun_covert_enqueue_accepted_.fetch_add(1);
         tun_last_drop_reason_.clear();
