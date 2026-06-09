@@ -161,7 +161,7 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         return nullptr;
     }
     auto* constructor =
-        env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJJJJJJJJJJLjava/lang/String;)V");
+        env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZJJJLjava/lang/String;)V");
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -191,7 +191,10 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         static_cast<jlong>(snapshot.tun_covert_enqueue_rejected), static_cast<jlong>(snapshot.commands_posted), static_cast<jlong>(snapshot.commands_completed),
         static_cast<jlong>(snapshot.carrier_active), static_cast<jlong>(snapshot.carrier_started), static_cast<jlong>(snapshot.carrier_stopped),
         static_cast<jlong>(snapshot.carrier_frames_enqueued), static_cast<jlong>(snapshot.carrier_frame_bytes_enqueued),
-        static_cast<jlong>(snapshot.carrier_enqueue_rejected), error_string.get()
+        static_cast<jlong>(snapshot.carrier_enqueue_rejected), static_cast<jint>(snapshot.raw_carrier_protect_fd),
+        static_cast<jboolean>(snapshot.raw_carrier_connecting), static_cast<jboolean>(snapshot.raw_carrier_active),
+        static_cast<jlong>(snapshot.raw_carrier_connect_attempted), static_cast<jlong>(snapshot.raw_carrier_connect_succeeded),
+        static_cast<jlong>(snapshot.raw_carrier_connect_failed), error_string.get()
     );
 }
 

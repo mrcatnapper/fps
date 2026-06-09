@@ -141,8 +141,14 @@ devices and future Gradle-managed emulators.
   `no_carrier_transport` and increments enqueue rejected counters. Debug-only
   tests can install either an exact-packet capture sink or an in-process fake
   carrier. The fake carrier is the current proof that allowed packets enter
-  `CovertDatagramTransport` rather than a parallel Android-only path. The next
-  step is native raw TLS/TCP auth/carrier I/O.
+  `CovertDatagramTransport` rather than a parallel Android-only path.
+- Continue native raw TLS/TCP carrier wiring. The Android native runtime now has
+  a two-phase raw TCP socket lifecycle: native opens the socket, exposes the fd
+  to Kotlin for `VpnService.protect(fd)`, then native connects or aborts before
+  any `connect`. Instrumented coverage verifies stopped-runtime rejection,
+  invalid endpoint rejection, protect-denied abort and loopback TCP
+  connect/stop. The next layer is to attach `TlsTcpCarrierSession`, Zero-RTT
+  auth and lease handling to this protected socket lifecycle.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through
@@ -163,9 +169,9 @@ devices and future Gradle-managed emulators.
   native raw TLS/TCP auth/pump wiring and Android lifecycle resilience, not
   changing protocol core.
 - Use the platform socket-protection hook before Android carrier `connect`.
-  Linux remains no-op; Android native sockets use the fd hook and OkHttp-owned
-  sockets use the Java `Socket` hook before the socket can be captured by the
-  VPN.
+  Linux remains no-op; Android native sockets now use a two-phase fd hook, and
+  OkHttp-owned sockets use the Java `Socket` hook before the socket can be
+  captured by the VPN.
 - Resolve FPS server/carrier hostnames through Android's underlying
   `ConnectivityManager.Network`, then pass resolved endpoints into native code.
   Do not rely on native resolver behavior after VPN activation.

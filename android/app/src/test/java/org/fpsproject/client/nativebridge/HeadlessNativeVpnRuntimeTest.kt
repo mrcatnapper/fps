@@ -206,6 +206,58 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(0L, snapshot.tunPolicyPending)
         assertEquals(0L, snapshot.tunPolicyInFlight)
     }
+
+    @Test
+    fun startNativeCarrierResolvesProtectsAndCompletesNativeConnect() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val endpoint = runtime.resolveServerEndpoint().single()
+        val snapshot = runtime.startNativeCarrier(endpoint)
+
+        assertEquals(listOf("fps.example.test:443"), hooks.resolvedEndpoints)
+        assertEquals(listOf(77), hooks.protectedFds)
+        assertEquals(listOf(Triple(1L, "203.0.113.10", 443)), backend.preparedRawCarriers)
+        assertEquals(listOf(1L to true), backend.completedRawCarrierProtection)
+        assertTrue(snapshot.rawCarrierActive)
+        assertEquals(1L, snapshot.rawCarrierConnectAttempted)
+        assertEquals(1L, snapshot.rawCarrierConnectSucceeded)
+        assertEquals(null, snapshot.lastError)
+    }
+
+    @Test
+    fun startNativeCarrierAbortsNativeConnectWhenProtectFails() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks(protectSocketResult = false)
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val snapshot = runtime.startNativeCarrier(ResolvedEndpoint("203.0.113.10", 443))
+
+        assertEquals(listOf(77), hooks.protectedFds)
+        assertEquals(listOf(1L to false), backend.completedRawCarrierProtection)
+        assertFalse(snapshot.rawCarrierActive)
+        assertEquals("socket_protect_failed", snapshot.lastError)
+        assertEquals(VpnRuntimeState.FAILED, runtime.state)
+        assertEquals("socket_protect_failed", runtime.lastError)
+    }
+
+    @Test
+    fun startNativeCarrierFailsClosedWhenNativePrepareFails() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startNativeCarrier(ResolvedEndpoint("203.0.113.10", 443))
+
+        assertEquals(listOf(Triple(1L, "203.0.113.10", 443)), backend.preparedRawCarriers)
+        assertEquals(emptyList<Pair<Long, Boolean>>(), backend.completedRawCarrierProtection)
+        assertEquals(-1, snapshot.rawCarrierProtectFd)
+        assertEquals("runtime_stopped", snapshot.lastError)
+        assertEquals(VpnRuntimeState.FAILED, runtime.state)
+        assertEquals("runtime_stopped", runtime.lastError)
+    }
 }
 
 private fun coordinatorSnapshot(
@@ -232,6 +284,12 @@ private fun coordinatorSnapshot(
     tunCovertEnqueueRejected: Long = 0,
     commandsPosted: Long = 0,
     commandsCompleted: Long = 0,
+    rawCarrierProtectFd: Int = -1,
+    rawCarrierConnecting: Boolean = false,
+    rawCarrierActive: Boolean = false,
+    rawCarrierConnectAttempted: Long = 0,
+    rawCarrierConnectSucceeded: Long = 0,
+    rawCarrierConnectFailed: Long = 0,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -257,6 +315,12 @@ private fun coordinatorSnapshot(
     tunCovertEnqueueRejected = tunCovertEnqueueRejected,
     commandsPosted = commandsPosted,
     commandsCompleted = commandsCompleted,
+    rawCarrierProtectFd = rawCarrierProtectFd,
+    rawCarrierConnecting = rawCarrierConnecting,
+    rawCarrierActive = rawCarrierActive,
+    rawCarrierConnectAttempted = rawCarrierConnectAttempted,
+    rawCarrierConnectSucceeded = rawCarrierConnectSucceeded,
+    rawCarrierConnectFailed = rawCarrierConnectFailed,
     lastError = lastError,
 )
 
@@ -284,6 +348,9 @@ private class FakeCoordinatorNativeBackend(
     val startedTunPumps = mutableListOf<Long>()
     val stoppedTunPumps = mutableListOf<Long>()
     val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
+    val preparedRawCarriers = mutableListOf<Triple<Long, String, Int>>()
+    val completedRawCarrierProtection = mutableListOf<Pair<Long, Boolean>>()
+    val stoppedRawCarriers = mutableListOf<Long>()
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
     private val pendingPolicy = ArrayDeque(initialPolicyPackets)
     private val inFlightPolicy = mutableSetOf<Long>()
@@ -435,14 +502,67 @@ private class FakeCoordinatorNativeBackend(
         return snapshot
     }
 
+    override fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot {
+        preparedRawCarriers += Triple(handle, address, port)
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(rawCarrierProtectFd = -1, lastError = "runtime_stopped").also { snapshots[handle] = it }
+        }
+        return current.copy(
+            rawCarrierProtectFd = 77,
+            rawCarrierConnecting = false,
+            rawCarrierActive = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot {
+        completedRawCarrierProtection += handle to protectAllowed
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (current.rawCarrierProtectFd < 0) {
+            return current.copy(lastError = "raw_carrier_not_prepared").also { snapshots[handle] = it }
+        }
+        if (!protectAllowed) {
+            return current.copy(
+                rawCarrierProtectFd = -1,
+                rawCarrierConnecting = false,
+                rawCarrierActive = false,
+                rawCarrierConnectFailed = current.rawCarrierConnectFailed + 1,
+                lastError = "socket_protect_failed",
+            ).also { snapshots[handle] = it }
+        }
+        return current.copy(
+            rawCarrierProtectFd = -1,
+            rawCarrierConnecting = false,
+            rawCarrierActive = true,
+            rawCarrierConnectAttempted = current.rawCarrierConnectAttempted + 1,
+            rawCarrierConnectSucceeded = current.rawCarrierConnectSucceeded + 1,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot {
+        stoppedRawCarriers += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            rawCarrierProtectFd = -1,
+            rawCarrierConnecting = false,
+            rawCarrierActive = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
 }
 
 private class FakeAndroidHooks(
     private val vpnPermissionGranted: Boolean = true,
     private val establishedTun: EstablishedTun? = EstablishedTun.borrowed(fd = 7, mtu = 1280),
     private val uidForFlow: (TunFlowTuple) -> Int = { -1 },
+    private val protectSocketResult: Boolean = true,
 ) : AndroidPlatformHooks {
     var establishTunCalls = 0
+    val protectedFds = mutableListOf<Int>()
+    val resolvedEndpoints = mutableListOf<String>()
 
     override fun hasVpnPermission() = vpnPermissionGranted
 
@@ -451,11 +571,17 @@ private class FakeAndroidHooks(
         return establishedTun
     }
 
-    override fun protectSocket(fd: Int) = true
+    override fun protectSocket(fd: Int): Boolean {
+        protectedFds += fd
+        return protectSocketResult
+    }
 
-    override fun protectSocket(socket: Socket) = true
+    override fun protectSocket(socket: Socket) = protectSocketResult
 
-    override fun resolveOnUnderlyingNetwork(host: String, port: Int) = listOf(ResolvedEndpoint("203.0.113.10", port))
+    override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
+        resolvedEndpoints += "$host:$port"
+        return listOf(ResolvedEndpoint("203.0.113.10", port))
+    }
 
     override fun uidForFlow(flow: TunFlowTuple) = uidForFlow.invoke(flow)
 }

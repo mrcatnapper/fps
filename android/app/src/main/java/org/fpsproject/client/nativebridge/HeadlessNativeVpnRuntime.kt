@@ -120,6 +120,24 @@ class HeadlessNativeVpnRuntime private constructor(
 
     fun resolveServerEndpoint(): List<ResolvedEndpoint> = controller.resolveServerEndpoint()
 
+    fun startNativeCarrier(endpoint: ResolvedEndpoint): NativeRuntimeSnapshot {
+        val prepared = nativeRuntime.prepareRawCarrierSocket(endpoint.address, endpoint.port)
+        if (!prepared.alive || prepared.rawCarrierProtectFd < 0) {
+            if (prepared.lastError != null) {
+                controller.fail(prepared.lastError)
+            }
+            return prepared
+        }
+        val protected = controller.prepareCarrierSocket(prepared.rawCarrierProtectFd)
+        val completed = nativeRuntime.completeRawCarrierProtection(protected)
+        if (!completed.rawCarrierActive && completed.lastError != null) {
+            controller.fail(completed.lastError)
+        }
+        return completed
+    }
+
+    fun stopNativeCarrier(): NativeRuntimeSnapshot = nativeRuntime.stopRawCarrier()
+
     fun startCarrierProbeRunners(transportFactory: CarrierProbeTransportFactory, nowMs: Long = 0): List<CarrierProbeRuntimeStatus> {
         return controller.startCarrierProbeRunners(transportFactory, nowMs)
     }
@@ -148,6 +166,7 @@ class HeadlessNativeVpnRuntime private constructor(
     }
 
     fun stop(): VpnRuntimeState {
+        nativeRuntime.stopRawCarrier()
         nativeRuntime.stopTunPump()
         nativeRuntime.stop()
         return controller.stop()

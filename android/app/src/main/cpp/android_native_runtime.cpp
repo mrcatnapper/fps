@@ -2,6 +2,8 @@
 
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 
@@ -40,6 +42,7 @@ constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
 constexpr fps::net::CarrierId kFakeCarrierId = 1;
+constexpr auto kRawCarrierConnectTimeout = 3s;
 
 enum class TunPacketSinkMode {
     none,
@@ -164,6 +167,7 @@ public:
         }
 
         started_ = false;
+        stop_raw_carrier_on_worker_no_error();
         clear_fake_carrier_on_worker_no_error();
         stop_tun_pump_no_error();
         work_guard_.reset();
@@ -312,6 +316,117 @@ public:
         tun_last_drop_reason_ = "tun_policy_drop";
         last_error_.clear();
         return snapshot_locked();
+    }
+
+    [[nodiscard]] auto prepare_raw_carrier_socket(std::string address, int port) -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            raw_carrier_protect_fd_.store(-1);
+            return snapshot();
+        }
+        if(port <= 0 || port > 65535) {
+            last_error_ = "invalid_carrier_endpoint";
+            raw_carrier_protect_fd_.store(-1);
+            return snapshot();
+        }
+
+        boost::system::error_code address_error;
+        const auto parsed_address = boost::asio::ip::make_address(address, address_error);
+        if(address_error) {
+            last_error_ = "invalid_carrier_endpoint";
+            raw_carrier_protect_fd_.store(-1);
+            return snapshot();
+        }
+        const boost::asio::ip::tcp::endpoint endpoint{parsed_address, static_cast<unsigned short>(port)};
+
+        auto done = std::make_shared<std::promise<std::string>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, endpoint, done] {
+            stop_raw_carrier_on_worker_no_error();
+            auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
+            boost::system::error_code open_error;
+            socket->open(endpoint.protocol(), open_error);
+            if(open_error) {
+                raw_carrier_connect_failed_.fetch_add(1);
+                done->set_value("raw_carrier_open_failed");
+                return;
+            }
+            raw_carrier_socket_ = std::move(socket);
+            raw_carrier_endpoint_ = endpoint;
+            raw_carrier_connecting_.store(false);
+            raw_carrier_active_.store(false);
+            raw_carrier_protect_fd_.store(raw_carrier_socket_->native_handle());
+            done->set_value({});
+        });
+
+        last_error_ = finished.get();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto complete_raw_carrier_protection(bool protect_allowed) -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            raw_carrier_protect_fd_.store(-1);
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<std::string>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, protect_allowed, done] {
+            if(!raw_carrier_socket_ || raw_carrier_protect_fd_.load() < 0) {
+                done->set_value("raw_carrier_not_prepared");
+                return;
+            }
+            raw_carrier_protect_fd_.store(-1);
+            if(!protect_allowed) {
+                raw_carrier_connect_failed_.fetch_add(1);
+                stop_raw_carrier_on_worker_no_error();
+                done->set_value("socket_protect_failed");
+                return;
+            }
+
+            raw_carrier_connect_attempted_.fetch_add(1);
+            raw_carrier_connecting_.store(true);
+            auto socket = raw_carrier_socket_;
+            auto timeout = std::make_shared<boost::asio::steady_timer>(io_context_);
+            auto completed = std::make_shared<bool>(false);
+            timeout->expires_after(kRawCarrierConnectTimeout);
+            timeout->async_wait([socket, completed](const boost::system::error_code& error) {
+                if(error || *completed) {
+                    return;
+                }
+                boost::system::error_code ignored;
+                socket->cancel(ignored);
+            });
+            socket->async_connect(raw_carrier_endpoint_, [this, done, socket, timeout, completed](const boost::system::error_code& error) {
+                if(*completed) {
+                    return;
+                }
+                *completed = true;
+                boost::system::error_code ignored;
+                timeout->cancel(ignored);
+                raw_carrier_connecting_.store(false);
+                if(error) {
+                    raw_carrier_connect_failed_.fetch_add(1);
+                    raw_carrier_active_.store(false);
+                    raw_carrier_socket_.reset();
+                    done->set_value("raw_carrier_connect_failed");
+                    return;
+                }
+                raw_carrier_connect_succeeded_.fetch_add(1);
+                raw_carrier_active_.store(true);
+                done->set_value({});
+            });
+        });
+
+        last_error_ = finished.get();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto stop_raw_carrier() -> NativeRuntimeSnapshotFields {
+        stop_raw_carrier_on_worker_no_error();
+        last_error_.clear();
+        return snapshot();
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -471,6 +586,37 @@ private:
             }
         };
 
+        if(io_context_.get_executor().running_in_this_thread()) {
+            clear();
+            return;
+        }
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [clear = std::move(clear), done] {
+            clear();
+            done->set_value();
+        });
+        finished.wait();
+    }
+
+    void stop_raw_carrier_on_worker_no_error() {
+        auto clear = [this] {
+            raw_carrier_protect_fd_.store(-1);
+            raw_carrier_connecting_.store(false);
+            raw_carrier_active_.store(false);
+            if(raw_carrier_socket_) {
+                boost::system::error_code ignored;
+                raw_carrier_socket_->cancel(ignored);
+                raw_carrier_socket_->close(ignored);
+                raw_carrier_socket_.reset();
+            }
+        };
+
+        if(!worker_thread_running_.load()) {
+            clear();
+            return;
+        }
         if(io_context_.get_executor().running_in_this_thread()) {
             clear();
             return;
@@ -716,6 +862,12 @@ private:
             .carrier_frames_enqueued = carrier_frames_enqueued_.load(),
             .carrier_frame_bytes_enqueued = carrier_frame_bytes_enqueued_.load(),
             .carrier_enqueue_rejected = carrier_enqueue_rejected_.load(),
+            .raw_carrier_protect_fd = raw_carrier_protect_fd_.load(),
+            .raw_carrier_connecting = raw_carrier_connecting_.load(),
+            .raw_carrier_active = raw_carrier_active_.load(),
+            .raw_carrier_connect_attempted = raw_carrier_connect_attempted_.load(),
+            .raw_carrier_connect_succeeded = raw_carrier_connect_succeeded_.load(),
+            .raw_carrier_connect_failed = raw_carrier_connect_failed_.load(),
             .last_error = last_error_,
         };
     }
@@ -763,6 +915,14 @@ private:
     std::atomic<std::uint64_t> carrier_enqueue_rejected_ = 0;
     mutable std::mutex carrier_capture_mutex_;
     std::vector<std::string> captured_fake_carrier_frame_digests_;
+    std::shared_ptr<boost::asio::ip::tcp::socket> raw_carrier_socket_;
+    boost::asio::ip::tcp::endpoint raw_carrier_endpoint_;
+    std::atomic<int> raw_carrier_protect_fd_ = -1;
+    std::atomic_bool raw_carrier_connecting_ = false;
+    std::atomic_bool raw_carrier_active_ = false;
+    std::atomic<std::uint64_t> raw_carrier_connect_attempted_ = 0;
+    std::atomic<std::uint64_t> raw_carrier_connect_succeeded_ = 0;
+    std::atomic<std::uint64_t> raw_carrier_connect_failed_ = 0;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -868,6 +1028,33 @@ public:
         return found->second->complete_tun_policy_packet(packet_id, allow);
     }
 
+    [[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->prepare_raw_carrier_socket(std::move(address), port);
+    }
+
+    [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->complete_raw_carrier_protection(protect_allowed);
+    }
+
+    [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->stop_raw_carrier();
+    }
+
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
         std::lock_guard lock{mutex_};
         const auto found = runtimes_.find(handle);
@@ -963,6 +1150,16 @@ auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> st
 auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
     return runtime_registry().complete_tun_policy_packet(handle, packet_id, allow);
 }
+
+auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().prepare_raw_carrier_socket(handle, std::move(address), port);
+}
+
+auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().complete_raw_carrier_protection(handle, protect_allowed);
+}
+
+auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_raw_carrier(handle); }
 
 auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
     return runtime_registry().install_tun_packet_capture_sink_for_test(handle, reject_packets);

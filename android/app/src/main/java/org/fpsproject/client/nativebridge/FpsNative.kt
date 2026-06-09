@@ -44,6 +44,12 @@ data class NativeRuntimeSnapshot(
     val carrierFramesEnqueued: Long = 0,
     val carrierFrameBytesEnqueued: Long = 0,
     val carrierEnqueueRejected: Long = 0,
+    val rawCarrierProtectFd: Int = -1,
+    val rawCarrierConnecting: Boolean = false,
+    val rawCarrierActive: Boolean = false,
+    val rawCarrierConnectAttempted: Long = 0,
+    val rawCarrierConnectSucceeded: Long = 0,
+    val rawCarrierConnectFailed: Long = 0,
     val lastError: String?,
 )
 
@@ -69,6 +75,12 @@ interface FpsNativeBackend {
     fun drainTunPolicyPackets(handle: Long, maxPackets: Int): List<NativeTunPolicyPacket>
 
     fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot
+
+    fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot
+
+    fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
+
+    fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 }
 
 class FpsNativeRuntime private constructor(
@@ -191,6 +203,30 @@ class FpsNativeRuntime private constructor(
         return backend.completeTunPolicyPacket(activeHandle, packetId, decision)
     }
 
+    fun prepareRawCarrierSocket(address: String, port: Int): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.prepareRawCarrierSocket(activeHandle, address, port)
+    }
+
+    fun completeRawCarrierProtection(protectAllowed: Boolean): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.completeRawCarrierProtection(activeHandle, protectAllowed)
+    }
+
+    fun stopRawCarrier(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.stopRawCarrier(activeHandle)
+    }
+
     override fun close() {
         val activeHandle = handle
         if (activeHandle == 0L) {
@@ -241,5 +277,11 @@ object FpsNative : FpsNativeBackend {
     override fun completeTunPolicyPacket(handle: Long, packetId: Long, decision: SplitTunnelDecision): NativeRuntimeSnapshot {
         return nativeCompleteTunPolicyPacket(handle, packetId, decision == SplitTunnelDecision.ALLOW)
     }
+
+    external override fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot
+
+    external override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
+
+    external override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 
 }

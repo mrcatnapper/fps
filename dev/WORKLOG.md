@@ -4,6 +4,84 @@
 
 ## 2026-06-09
 
+### Android native raw carrier lifecycle
+
+Goal:
+
+- Start the next Android runtime increment after fake-carrier coverage: native
+  code must be able to open a raw TCP carrier socket, expose the fd to Kotlin
+  for `VpnService.protect(fd)` before connect, connect to a resolved endpoint
+  and stop/close the socket cleanly.
+
+Plan:
+
+- Keep this increment below FPS auth/lease semantics. It validates raw carrier
+  socket lifecycle and Android loop-prevention ordering only.
+- Add a two-phase JNI API:
+  - prepare raw carrier socket and expose `rawCarrierProtectFd`;
+  - Kotlin calls the existing platform protect hook;
+  - native continues connect or aborts with `socket_protect_failed`.
+- Extend non-secret native snapshots with raw-carrier lifecycle metadata:
+  protect fd, connecting/active flags and connect attempt/success/failure
+  counters.
+- Add tests first:
+  - JVM/headless bridge verifies resolve/protect/native call order and protect
+    failure handling;
+  - instrumented native smoke verifies stopped-runtime rejection, invalid
+    endpoint rejection, loopback TCP connect success and clean stop.
+- Do not start `TlsTcpCarrierSession`, Zero-RTT auth or lease handling in this
+  increment; those remain the next layer above a working raw socket lifecycle.
+
+Verification target:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- C++/CTest if shared native/core files outside Android JNI are touched.
+
+Completed:
+
+- Added a two-phase JNI/native raw carrier socket lifecycle:
+  `prepareRawCarrierSocket(...)` opens a native TCP socket and exposes the fd,
+  Kotlin calls the existing `VpnService.protect(fd)` hook, and
+  `completeRawCarrierProtection(...)` connects or aborts with
+  `socket_protect_failed`.
+- Extended `NativeRuntimeSnapshot` with non-secret raw-carrier metadata:
+  protect fd, connecting/active flags and connect attempt/success/failure
+  counters.
+- Wired `HeadlessNativeVpnRuntime.startNativeCarrier(...)` to resolve/protect
+  through the existing Android platform hooks before native connect.
+- Propagated native raw-carrier prepare/connect failures into the headless
+  controller state so Android lifecycle code fails closed instead of only
+  returning a failed native snapshot.
+- Added JVM tests for call ordering, protect failure and closed-runtime
+  behavior.
+- Added managed-device native smoke coverage for stopped-runtime rejection,
+  invalid endpoint rejection, protect-denied abort and loopback TCP
+  connect/stop.
+- Updated Android boundary/testing notes. The next layer remains
+  `TlsTcpCarrierSession`/FPS auth/lease registration on top of this protected
+  socket lifecycle.
+
+Verification:
+
+- Initial host Android check failed because the Android native target used
+  `boost::asio::ip::tcp` without including `<boost/asio/ip/tcp.hpp>`.
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `git diff --check`
+
+Follow-up hardening before PR:
+
+- Added raw-carrier edge coverage for `completeRawCarrierProtection(...)`
+  before prepare and idempotent `stopRawCarrier()` before prepare, after
+  prepare and after connect.
+- Updated fake native backends to model `raw_carrier_not_prepared` instead of
+  silently turning an unprepared connect into an active carrier.
+- Added a headless fail-closed test for native prepare failure before runtime
+  start.
+- Re-ran Android host checks and Docker-managed emulator checks after the
+  hardening tests; managed-device coverage now runs 17 instrumented tests.
+
 ### Android fake-carrier reject hang fix
 
 Goal:
