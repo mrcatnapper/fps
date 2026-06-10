@@ -95,7 +95,10 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
-[[nodiscard]] auto configure_client_auth(NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
+[[nodiscard]] auto configure_client_auth(
+    NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64,
+    std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+)
     -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields>;
@@ -104,6 +107,7 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
+[[nodiscard]] auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native

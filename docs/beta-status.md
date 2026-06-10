@@ -172,9 +172,9 @@ Those remain release-hardening concerns.
 - Android remains pre-application: the headless profile/runtime boundary,
   OkHttp app-owned HTTPS/WSS carrier probes, first `VpnService` TUN fd ownership
   layer, split JNI native runtime handle, headless Kotlin/native lifecycle
-  bridge and protected raw `TlsTcpCarrierSession` passthrough bridge exist.
-  Native Zero-RTT/lease registration on that bridge, Android lifecycle
-  resilience/status and UI are not implemented yet.
+  bridge and protected raw `TlsTcpCarrierSession` with real client-side
+  Zero-RTT/lease delivery exist. Inbound datagram-to-TUN writes, Android
+  lifecycle resilience/status and UI are not implemented yet.
 
 ## Public Beta Gate
 

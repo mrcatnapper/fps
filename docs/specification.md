@@ -670,12 +670,12 @@ Linux-specific runtime is separate:
   outbound native transport seam. The Android runtime can also take a protected
   raw TCP socket, expose a loopback local-cover listener and create a
   `TlsTcpCarrierSession` that bridges the local cover socket to that protected
-  socket. This proves production-shaped raw carrier socket ownership and TLS
-  record byte flow through the shared carrier implementation. Full native
-  Zero-RTT/lease registration on that bridge remains follow-up work. Until an
-  authenticated carrier is attached, the default runtime reports
-  `no_carrier_transport` with explicit enqueue rejected counters instead of
-  silently treating a packet as forwarded. Debug-only Android tests can also
+  socket. The bridge now installs real client-side Zero-RTT options derived
+  from the validated Android profile, receives encrypted server-accept lease
+  metadata and reports tampered server-accept failure without registering a
+  lease. Until an authenticated carrier is attached, the default runtime
+  reports `no_carrier_transport` with explicit enqueue rejected counters instead
+  of silently treating a packet as forwarded. Debug-only Android tests can also
   register an in-process fake carrier that exercises the production
   `CovertDatagramTransport` path without opening network sockets. TUN
   reattach/clear drops pending and in-flight policy packets from the old fd;
@@ -714,10 +714,10 @@ Linux-specific runtime is separate:
   native runtime also has a first protected raw TLS/TCP bridge: after native
   opens and Kotlin protects the outbound socket, native binds a loopback
   listener, accepts the app-owned cover side and starts a shared
-  `TlsTcpCarrierSession` over both sockets. The current bridge is passthrough
-  and test-only until Zero-RTT auth/lease registration is attached, so
-  production Android code must not treat policy allow as successful remote
-  delivery before an authenticated carrier is available.
+  `TlsTcpCarrierSession` over both sockets with real client-side Zero-RTT and
+  encrypted lease delivery. Production Android code must still not treat policy
+  allow as successful remote delivery before an authenticated carrier is
+  available and inbound datagram-to-TUN writes are implemented.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

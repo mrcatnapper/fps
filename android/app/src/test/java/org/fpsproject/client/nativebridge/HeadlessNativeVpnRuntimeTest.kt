@@ -674,8 +674,26 @@ private class FakeCoordinatorNativeBackend(
         ).also { snapshots[handle] = it }
     }
 
-    override fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot {
-        configuredAuth += CoordinatorAuthConfigCall(handle, profileId, clientUuid, serverPublicKeyBase64)
+    override fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot {
+        configuredAuth += CoordinatorAuthConfigCall(
+            handle,
+            profileId,
+            clientUuid,
+            serverPublicKeyBase64,
+            clientUpgradeDelayMs,
+            clientUpgradeDelaySigmaMs,
+            maxFramePayload,
+            maxFramePadding,
+        )
         val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
         return current.copy(
             carrierAuthConfigured = true,
@@ -729,6 +747,10 @@ private data class CoordinatorAuthConfigCall(
     val profileId: String,
     val clientUuid: String,
     val serverPublicKeyBase64: String,
+    val clientUpgradeDelayMs: Long,
+    val clientUpgradeDelaySigmaMs: Long,
+    val maxFramePayload: Int,
+    val maxFramePadding: Int,
 )
 
 private class FakeAndroidHooks(

@@ -243,7 +243,8 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
 }
 
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_configureClientAuth(
-    JNIEnv* env, jobject /* self */, jlong handle, jstring profile_id, jstring client_uuid, jstring server_public_key_base64
+    JNIEnv* env, jobject /* self */, jlong handle, jstring profile_id, jstring client_uuid, jstring server_public_key_base64, jlong client_upgrade_delay_ms,
+    jlong client_upgrade_delay_sigma_ms, jint max_frame_payload, jint max_frame_padding
 ) {
     auto parsed_profile_id = fps::android_jni::jstring_to_string(env, profile_id);
     auto parsed_client_uuid = fps::android_jni::jstring_to_string(env, client_uuid);
@@ -254,7 +255,8 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     }
     const auto snapshot = fps::android_native::configure_client_auth(
         static_cast<fps::android_native::NativeRuntimeHandle>(handle), std::move(parsed_profile_id.value()), std::move(parsed_client_uuid.value()),
-        std::move(parsed_server_public_key.value())
+        std::move(parsed_server_public_key.value()), static_cast<std::int64_t>(client_upgrade_delay_ms), static_cast<std::int64_t>(client_upgrade_delay_sigma_ms),
+        static_cast<int>(max_frame_payload), static_cast<int>(max_frame_padding)
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
@@ -305,4 +307,18 @@ extern "C" JNIEXPORT jobjectArray JNICALL
 Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeCapturedFakeCarrierFrameDigestsForTest(JNIEnv* env, jobject /* self */, jlong handle) {
     const auto digests = fps::android_native::captured_fake_carrier_frame_digests_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
     return string_array(env, digests);
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeRunZeroRttServerPeerForTest(
+    JNIEnv* env, jobject /* self */, jint fd, jstring profile_id, jstring client_uuid, jboolean tamper_server_accept
+) {
+    auto parsed_profile_id = fps::android_jni::jstring_to_string(env, profile_id);
+    auto parsed_client_uuid = fps::android_jni::jstring_to_string(env, client_uuid);
+    if(!parsed_profile_id || !parsed_client_uuid) {
+        return env->NewStringUTF("invalid_args");
+    }
+    const auto result = fps::android_native::run_zero_rtt_server_peer_for_test(
+        static_cast<int>(fd), std::move(parsed_profile_id.value()), std::move(parsed_client_uuid.value()), tamper_server_accept == JNI_TRUE
+    );
+    return env->NewStringUTF(result.c_str());
 }

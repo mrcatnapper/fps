@@ -22,10 +22,10 @@ when Android test infrastructure or emulator strategy changes.
 - Keep the application headless while product behavior is still incomplete.
   The next Android milestone is not more isolated smoke coverage; it is a
   production-like runtime path that composes the existing pieces into one VPN
-  lifecycle. The current raw carrier bridge is still passthrough-only, native
-  TUN read/policy/enqueue exists only in the outbound direction, and
-  `FpsVpnService` does not yet drive carrier/auth/lease/TUN/policy loops by
-  itself.
+  lifecycle. The current raw carrier bridge now runs real client-side Zero-RTT
+  over `TlsTcpCarrierSession` and emits encrypted lease metadata, but native
+  TUN read/policy/enqueue exists only in the outbound direction and
+  `FpsVpnService` does not yet drive carrier/lease/TUN/policy loops by itself.
 
 ## Implemented Headless Core Slice
 
@@ -97,9 +97,11 @@ Delivered:
   That smoke uses the shared C++ auth/record/control codecs and emits a
   metadata-only encrypted TUN lease event for Kotlin. The native runtime can
   also bridge a protected raw carrier socket to a loopback local-cover socket
-  through `TlsTcpCarrierSession` in passthrough mode. The remaining production
-  gap is attaching Zero-RTT auth/lease registration and datagram enqueue to that
-  real bridge instead of only proving each piece separately.
+  through `TlsTcpCarrierSession` with real client-side Zero-RTT options. Managed
+  emulator coverage verifies successful encrypted lease delivery and tampered
+  server-accept failure on this bridge. The remaining production gap is
+  bidirectional datagram/TUN delivery and a coordinator that drives the pieces
+  as one lifecycle.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -128,18 +130,12 @@ profile
 
 Tactical implementation order:
 
-1. **Real Zero-RTT on the protected bridge.**
-   Replace the Android bridge's passthrough `TlsTcpCarrierSession` config with
-   production `TlsTcpCarrierZeroRttOptions` built from the validated Android
-   profile. Wire authenticated, auth-failed, covert-frame, server-accept/lease
-   and close callbacks into the existing native event/counter surface.
-
-2. **Bidirectional TUN/data path.**
+1. **Bidirectional TUN/data path.**
    Add an inbound `CovertDatagramTransport::on_datagram` handler that writes
    server-to-client packets to the native-owned duplicated TUN fd. Keep packet
    bytes in native state and expose only non-secret counters and drop reasons.
 
-3. **Runtime coordinator.**
+2. **Runtime coordinator.**
    Add one headless coordinator owned by `FpsVpnService` or
    `HeadlessNativeVpnRuntime` that performs the product sequence: start native
    executor, resolve endpoint through the underlying-network hook, prepare and
@@ -148,7 +144,7 @@ Tactical implementation order:
    establish TUN, start the pump, drain/apply split-tunnel policy and reconnect
    carriers on close/backoff.
 
-4. **Production surface cleanup.**
+3. **Production surface cleanup.**
    Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
    and then add operator/UI-facing lifecycle/status features. Do this after the
    headless product path works, so cleanup does not harden the wrong API shape.

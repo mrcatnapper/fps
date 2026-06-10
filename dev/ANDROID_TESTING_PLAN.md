@@ -211,16 +211,7 @@ path.
 
 Prioritize these emulator/device scenarios in order:
 
-1. **Real Zero-RTT on the protected bridge**
-   - Start from the existing protected raw socket and loopback local-cover
-     bridge.
-   - Replace passthrough-only coverage with a local production-shaped
-     `TlsTcpCarrierSession` auth flow that uses real Zero-RTT options, receives
-     encrypted server accept metadata and emits a lease event.
-   - Include fail-closed branches for protect denied, auth failure and malformed
-     lease event.
-
-2. **Bidirectional TUN/data path**
+1. **Bidirectional TUN/data path**
    - Keep outbound packet policy checks through the native pump and Kotlin UID
      resolver.
    - Add inbound datagram-to-TUN write coverage using a pipe fd first, then the
@@ -228,7 +219,7 @@ Prioritize these emulator/device scenarios in order:
    - Assert counters distinguish accepted packets, policy drops, malformed
      packets, no-carrier rejections and inbound write failures.
 
-3. **Headless coordinator lifecycle**
+2. **Headless coordinator lifecycle**
    - One JVM fake-backend test should drive the intended production sequence:
      start native executor, resolve through underlying network, prepare/protect
      raw fd, connect, start bridge, start app-owned cover client, apply lease,
@@ -292,22 +283,19 @@ Prioritize these emulator/device scenarios in order:
   encoding is rejected, a shared C++ Zero-RTT exchange returns an encrypted test
   TUN lease event and a tampered server accept reports failure without a lease.
   A protected raw carrier bridge smoke also opens a native-protected outbound
-  socket, exposes a loopback local-cover listener and verifies
-  TLS-record-shaped bytes pass through `TlsTcpCarrierSession` in both
-  directions.
+  socket, exposes a loopback local-cover listener, verifies TLS-record-shaped
+  bytes pass through `TlsTcpCarrierSession` in both directions, then exercises
+  real client-side Zero-RTT over that bridge with encrypted lease delivery and
+  tampered server-accept failure.
 
 ## Next Android Runtime Steps
 
-1. Add native raw TLS/FPS auth over the protected raw carrier bridge. The test
-   should prove auth/lease metadata is exchanged through the existing
-   `TlsTcpCarrierSession` bridge without adding a parallel Kotlin carrier
-   protocol.
-2. Add inbound datagram-to-TUN writes and a bidirectional pipe-fd data-flow
+1. Add inbound datagram-to-TUN writes and a bidirectional pipe-fd data-flow
    test.
-3. Add the headless coordinator and a JVM product-flow test that includes
+2. Add the headless coordinator and a JVM product-flow test that includes
    underlying-network resolution, protect-before-connect, bridge startup, lease,
    TUN attach and policy draining.
-4. Extend the managed-device lane from fd/pump smoke to the smallest
+3. Extend the managed-device lane from fd/pump smoke to the smallest
    production-shaped flow that requires Android framework behavior.
-5. Keep managed-device CI manual/scheduled until repeated runs show it is
+4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

@@ -116,7 +116,16 @@ interface FpsNativeBackend {
 
     fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 
-    fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot
+    fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot
 
     fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
 
@@ -145,6 +154,10 @@ class FpsNativeRuntime private constructor(
                 profileId = profile.zeroRtt.profileId,
                 clientUuid = profile.zeroRtt.clientUuid,
                 serverPublicKeyBase64 = profile.zeroRtt.serverPublicKeyBase64,
+                clientUpgradeDelayMs = profile.zeroRtt.clientUpgradeDelayMs,
+                clientUpgradeDelaySigmaMs = profile.zeroRtt.clientUpgradeDelaySigmaMs,
+                maxFramePayload = profile.codec.maxFramePayload,
+                maxFramePadding = profile.codec.maxFramePadding,
             )
             if (!configured.alive || !configured.carrierAuthConfigured) {
                 backend.closeRuntime(handle)
@@ -360,7 +373,16 @@ object FpsNative : FpsNativeBackend {
 
     external override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 
-    external override fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot
+    external override fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot
 
     external override fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
 

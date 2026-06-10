@@ -4,6 +4,52 @@
 
 ## 2026-06-10
 
+### Android protected bridge Zero-RTT implementation
+
+Goal:
+
+- Implement the first product-flow Android increment: protected raw bridge must
+  stop being passthrough-only and run real client-side Zero-RTT over
+  `TlsTcpCarrierSession`, producing encrypted lease/control events through the
+  existing native event queue.
+
+Plan:
+
+1. Add tests first around the production-shaped bridge auth path and failure
+   handling.
+2. Build Android bridge `TlsTcpCarrierZeroRttOptions` from validated native
+   auth config and Android profile limits/delay.
+3. Decode server accept `control` frames as TUN lease events, preserve
+   metadata-only auth/error counters, and keep covert frames on
+   `CovertDatagramTransport`.
+4. Update Android dev docs/worklog and run Android Docker plus emulator checks.
+
+Completed:
+
+- Extended Android profile/JNI auth config to pass upgrade delay, randomized
+  delay sigma and codec frame/padding limits into native.
+- Replaced protected raw bridge passthrough-only mode with
+  `TlsTcpCarrierSession` client Zero-RTT options built from validated UUID and
+  server public key material.
+- Added native handling for encrypted server accept control frames: valid
+  `tun_lease` payloads emit metadata-only `lease_received` native events and
+  other covert frames continue through `CovertDatagramTransport`.
+- Added a debug-only native peer hook and instrumented tests for successful
+  raw-bridge Zero-RTT lease delivery plus tampered server-accept failure.
+- Tightened Android auth accounting so raw bridge success is counted after the
+  encrypted lease payload is decoded, not merely after cryptographic accept.
+
+Verification:
+
+- `tools/run_android_checks.sh --host` failed early as expected in this
+  workspace because `/opt/android-sdk` is absent; Android checks are Dockerized.
+- `tools/run_android_checks.sh --docker` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed with 22/22 instrumented tests.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android product-flow implementation plan
 
 Goal:

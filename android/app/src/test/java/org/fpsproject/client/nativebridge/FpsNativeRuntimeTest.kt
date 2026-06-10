@@ -57,7 +57,7 @@ class FpsNativeRuntimeTest {
         assertEquals(null, snapshot.tunFdOwnership)
         assertEquals(1L, backend.createdProfiles.single().first)
         assertEquals(profileJson, backend.createdProfiles.single().second)
-        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key)), backend.configuredAuth)
+        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key, 2000, 666, 16 * 1024, 2048)), backend.configuredAuth)
         assertFalse(snapshot.toString().contains(profileJson))
         assertFalse(snapshot.toString().contains(uuid))
         assertFalse(snapshot.toString().contains(key))
@@ -92,7 +92,7 @@ class FpsNativeRuntimeTest {
 
         assertEquals("invalid_client_auth_config", error.message)
         assertEquals(1, backend.createdProfiles.size)
-        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key)), backend.configuredAuth)
+        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key, 2000, 666, 16 * 1024, 2048)), backend.configuredAuth)
         assertEquals(listOf(1L), backend.closedHandles)
     }
 
@@ -442,6 +442,10 @@ private data class RuntimeAuthConfigCall(
     val profileId: String,
     val clientUuid: String,
     val serverPublicKeyBase64: String,
+    val clientUpgradeDelayMs: Long,
+    val clientUpgradeDelaySigmaMs: Long,
+    val maxFramePayload: Int,
+    val maxFramePadding: Int,
 )
 
 private fun leaseEvent() = NativeRuntimeEvent(
@@ -787,8 +791,26 @@ private class FakeNativeBackend(
         ).also { snapshots[handle] = it }
     }
 
-    override fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot {
-        configuredAuth += RuntimeAuthConfigCall(handle, profileId, clientUuid, serverPublicKeyBase64)
+    override fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot {
+        configuredAuth += RuntimeAuthConfigCall(
+            handle,
+            profileId,
+            clientUuid,
+            serverPublicKeyBase64,
+            clientUpgradeDelayMs,
+            clientUpgradeDelaySigmaMs,
+            maxFramePayload,
+            maxFramePadding,
+        )
         val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
         if (authConfigureError != null) {
             return current.copy(
