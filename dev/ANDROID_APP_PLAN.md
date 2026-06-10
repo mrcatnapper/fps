@@ -19,12 +19,13 @@ when Android test infrastructure or emulator strategy changes.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI and no production native raw
-  carrier I/O yet. Native auth-core linkage is covered by an in-memory
-  Zero-RTT smoke; production carrier auth still needs `TlsTcpCarrierSession`
-  attached to the protected raw socket lifecycle. A native TUN pump skeleton
-  exists for fd read/parse/counter validation, and connected instrumented smoke
-  remains opt-in when an external Android device or emulator is attached.
+- Keep the application headless while product behavior is still incomplete.
+  The next Android milestone is not more isolated smoke coverage; it is a
+  production-like runtime path that composes the existing pieces into one VPN
+  lifecycle. The current raw carrier bridge is still passthrough-only, native
+  TUN read/policy/enqueue exists only in the outbound direction, and
+  `FpsVpnService` does not yet drive carrier/auth/lease/TUN/policy loops by
+  itself.
 
 ## Implemented Headless Core Slice
 
@@ -104,6 +105,64 @@ Delivered:
 - Required verification remains Docker/JVM-first. Connected Android runtime
   checks stay opt-in.
 
+## Product-Focused Next Plan
+
+The project has enough Android "brick" tests for the current boundary. New
+Android work should now prefer product-shaped integration checks over isolated
+proofs unless an isolated test is needed to make a failing contract precise.
+
+Target headless product flow:
+
+```text
+profile
+  -> native runtime
+  -> protected raw TCP socket
+  -> local cover-client connection into native bridge
+  -> TlsTcpCarrierSession with real Zero-RTT options
+  -> encrypted server accept / TUN lease event
+  -> VpnService TUN fd establishment
+  -> outbound TUN policy
+  -> CovertDatagramTransport enqueue
+  -> inbound datagram write back to TUN
+```
+
+Tactical implementation order:
+
+1. **Real Zero-RTT on the protected bridge.**
+   Replace the Android bridge's passthrough `TlsTcpCarrierSession` config with
+   production `TlsTcpCarrierZeroRttOptions` built from the validated Android
+   profile. Wire authenticated, auth-failed, covert-frame, server-accept/lease
+   and close callbacks into the existing native event/counter surface.
+
+2. **Bidirectional TUN/data path.**
+   Add an inbound `CovertDatagramTransport::on_datagram` handler that writes
+   server-to-client packets to the native-owned duplicated TUN fd. Keep packet
+   bytes in native state and expose only non-secret counters and drop reasons.
+
+3. **Runtime coordinator.**
+   Add one headless coordinator owned by `FpsVpnService` or
+   `HeadlessNativeVpnRuntime` that performs the product sequence: start native
+   executor, resolve endpoint through the underlying-network hook, prepare and
+   protect the raw socket, connect, start the native bridge, start the app-owned
+   cover client against the bridge listener, drain native events until lease,
+   establish TUN, start the pump, drain/apply split-tunnel policy and reconnect
+   carriers on close/backoff.
+
+4. **Production surface cleanup.**
+   Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
+   and then add operator/UI-facing lifecycle/status features. Do this after the
+   headless product path works, so cleanup does not harden the wrong API shape.
+
+Testing expectation:
+
+- JVM tests should validate coordinator sequencing and fail-closed branches
+  with fake platform/native backends.
+- Managed-device tests should validate the smallest production-shaped flow that
+  needs real Android framework behavior: protected fd, real `VpnService` fd and
+  native bridge/auth/TUN wiring.
+- Do not add more "2 + 2" tests around already-stable helpers unless they
+  protect a newly integrated product contract.
+
 ## Environment
 
 - JDK: OpenJDK 21 is acceptable; AGP 9 requires JDK 17 or newer.
@@ -168,10 +227,12 @@ emulator/system-image layers to rebuild.
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
   maintains HTTPS/WSS carrier traffic itself.
-- Carrier probe requests are configured at the Android layer: for example a
-  periodic HTTPS GET or a WSS stream probe. The current headless probe runner
-  tests lifecycle with fake transports, and the OkHttp probe transport factory
-  provides live HTTPS/WSS keepalive sockets without changing the FPS protocol.
+- Carrier/cover requests are configured at the Android layer: for example a
+  periodic HTTPS GET or a WSS stream. The existing OkHttp code is support
+  machinery for app-owned cover traffic only. It must not become a direct FPS
+  wire carrier because OkHttp terminates TLS and does not expose raw TLS record
+  bytes. Production cover traffic should feed the native loopback bridge so
+  `TlsTcpCarrierSession` remains the single FPS wire implementation.
 - Real FPS carrier traffic must use native raw TCP/TLS stream handling through
   `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
   wire protocol. The native runtime already exposes the first protected raw TCP

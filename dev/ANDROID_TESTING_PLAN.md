@@ -100,6 +100,24 @@ for contracts that require real Android framework behavior.
      that emulators do not faithfully cover: battery/background restrictions,
      vendor VPN quirks, always-on/lockdown behavior and network switching.
 
+## Product-Flow Testing Policy
+
+The current Android scaffold has enough low-level smoke coverage for native
+library loading, fd ownership, policy queues, fake carriers and passthrough
+bridge bytes. New Android tests should now prefer product-shaped checks:
+
+- one test should verify a meaningful lifecycle or data-flow property, not only
+  that a helper returns the obvious value;
+- isolated tests are still appropriate when they define a new failure contract
+  before implementation, but they should feed into a product-flow test in the
+  same increment;
+- underlying-network DNS, socket protection and raw bridge startup should be
+  checked as steps inside the coordinator/carrier-auth flow instead of as an
+  ever-growing list of standalone blockers;
+- emulator-managed tests should stay small, but their target should be
+  production composition: protected socket, real bridge auth, lease, TUN attach
+  and packet movement.
+
 ## Gradle Managed Device Direction
 
 Use Gradle Managed Devices before custom emulator scripts. The Android Gradle
@@ -189,38 +207,39 @@ to validate the Docker-managed emulator setup in GitHub-hosted infrastructure
 without putting emulator startup latency or KVM availability into the normal PR
 path.
 
-## VPN-Specific Test Scenarios
+## VPN-Specific Product Scenarios
 
 Prioritize these emulator/device scenarios in order:
 
-1. **Real `VpnService` preparation and fd establishment**
-   - Current managed-device coverage uses a debug-only harness activity/service
-     to test `VpnService.prepare(...)` behavior, accept the system dialog with
-     UI Automator when needed, establish a real TUN fd after a test lease and
-     close it.
-   - Current managed-device coverage also routes that real fd through the full
-     `HeadlessNativeVpnRuntime` attach path, starts the native TUN pump and
-     verifies clean cleanup. Pipe-fd native smoke separately verifies metadata
-     drain, allow/drop completion, no-carrier enqueue rejection, exact packet
-     delivery into a test capture sink and fake-carrier
-     `CovertDatagramTransport` enqueue.
+1. **Real Zero-RTT on the protected bridge**
+   - Start from the existing protected raw socket and loopback local-cover
+     bridge.
+   - Replace passthrough-only coverage with a local production-shaped
+     `TlsTcpCarrierSession` auth flow that uses real Zero-RTT options, receives
+     encrypted server accept metadata and emits a lease event.
+   - Include fail-closed branches for protect denied, auth failure and malformed
+     lease event.
 
-2. **Service revoke/stop lifecycle**
-   - Current managed-device coverage exercises explicit stop and a debug
-     `onRevoke()` path after full runtime startup.
-   - Future coverage should repeat this through the production service once
-     native carrier/auth startup is no longer test-lease injected.
+2. **Bidirectional TUN/data path**
+   - Keep outbound packet policy checks through the native pump and Kotlin UID
+     resolver.
+   - Add inbound datagram-to-TUN write coverage using a pipe fd first, then the
+     real managed-device TUN fd when the bridge is authenticated.
+   - Assert counters distinguish accepted packets, policy drops, malformed
+     packets, no-carrier rejections and inbound write failures.
 
-3. **Socket loop-prevention**
-   - Verify app-owned Java sockets call `VpnService.protect(Socket)` before
-     connect.
-   - Later, verify native sockets call `protect(fd)` before connect. The
-     production FPS carrier must never loop into its own VPN routes.
+3. **Headless coordinator lifecycle**
+   - One JVM fake-backend test should drive the intended production sequence:
+     start native executor, resolve through underlying network, prepare/protect
+     raw fd, connect, start bridge, start app-owned cover client, apply lease,
+     establish TUN, start pump and drain policy.
+   - One managed-device smoke should validate the Android-only pieces of that
+     same sequence with real `VpnService` fd ownership.
 
-4. **Underlying-network resolution**
-   - Confirm Android code resolves carrier/FPS endpoints through the selected
-     underlying `Network`, then passes resolved endpoints to native code.
-   - Do not trust native resolver behavior after VPN activation.
+4. **Socket loop-prevention and underlying-network resolution**
+   - Verify these as part of the coordinator path. The production FPS carrier
+     must protect sockets before connect and must not rely on native resolver
+     behavior after VPN activation.
 
 5. **Split-tunnel UID policy**
    - Use the native pump's parsed TCP/UDP 5-tuple as the bridge to Android
@@ -230,24 +249,11 @@ Prioritize these emulator/device scenarios in order:
      `Process.INVALID_UID` or throw if unsupported/not active; FPS must keep the
      current fail-closed policy for those cases.
 
-6. **Packet pump and policy integration**
-   - Once the policy bridge exists, feed controlled TCP/UDP traffic through the
-     emulator VPN.
-   - Assert counters distinguish accepted packets, malformed packets,
-     unsupported protocols and policy drops.
-
-7. **Controlled native carrier/auth smoke**
-   - Native raw TCP socket lifecycle now has a small managed-device smoke:
-     stopped-runtime and invalid endpoint rejection, protect-denied abort, and
-     loopback TCP connect/stop after fd protection.
-   - Native auth-core linkage now has an in-memory managed-device smoke:
-     Android profile auth metadata is revalidated in C++, client UUID derives a
-     native X25519 keypair, shared Zero-RTT/control codecs exchange an encrypted
-     test lease and tampering fails closed.
-   - Next, add production native raw TLS/FPS auth against a local test
-     origin/server on top of the protected socket lifecycle.
-   - Keep auth as a small smoke first; full Android VPN E2E should come after
-     reconnect/status behavior is observable.
+6. **Service revoke/stop lifecycle**
+   - Current managed-device coverage exercises explicit stop and a debug
+     `onRevoke()` path after full runtime startup.
+   - Repeat this through the coordinator once native carrier/auth startup is no
+     longer test-lease injected.
 
 ## Stability Rules
 
@@ -292,14 +298,16 @@ Prioritize these emulator/device scenarios in order:
 
 ## Next Android Runtime Steps
 
-1. Add underlying-network DNS coverage before enabling native carrier auth.
-2. Add native raw TLS/FPS auth over the protected raw carrier bridge. Start
-   with one local-origin smoke that proves auth/lease metadata can be exchanged
-   through the existing `TlsTcpCarrierSession` bridge without adding a parallel
-   Kotlin carrier protocol.
-3. Add split-tunnel UID policy integration over emulator VPN traffic once the
-   real-fd runtime path is stable.
-4. Wire the native outbound packet seam into authenticated native raw TLS/TCP
-   carrier enqueue.
+1. Add native raw TLS/FPS auth over the protected raw carrier bridge. The test
+   should prove auth/lease metadata is exchanged through the existing
+   `TlsTcpCarrierSession` bridge without adding a parallel Kotlin carrier
+   protocol.
+2. Add inbound datagram-to-TUN writes and a bidirectional pipe-fd data-flow
+   test.
+3. Add the headless coordinator and a JVM product-flow test that includes
+   underlying-network resolution, protect-before-connect, bridge startup, lease,
+   TUN attach and policy draining.
+4. Extend the managed-device lane from fd/pump smoke to the smallest
+   production-shaped flow that requires Android framework behavior.
 5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

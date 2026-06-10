@@ -4,6 +4,44 @@
 
 ## 2026-06-10
 
+### Android product-flow implementation plan
+
+Goal:
+
+- Align Android development plans after the source-first architecture review:
+  keep headless testability, but stop treating isolated smoke checks as the
+  main deliverable. The next Android work must assemble a real VPN lifecycle
+  from already-tested core pieces.
+
+Decisions:
+
+- Updated `dev/ANDROID_APP_PLAN.md`, `dev/ANDROID_BOUNDARY.md`,
+  `dev/ANDROID_TESTING_PLAN.md` and `dev/ROADMAP.md`.
+- The next milestone is a production-like headless flow:
+  profile -> native runtime -> protected raw TCP socket -> local cover-client
+  bridge -> `TlsTcpCarrierSession` with real Zero-RTT -> encrypted lease event
+  -> Android `VpnService` TUN -> outbound policy -> covert datagram enqueue ->
+  inbound datagram write back to TUN.
+- New Android tests should prefer lifecycle/data-flow properties over isolated
+  helper checks. Small red tests are still expected when they define a new
+  failure contract before implementation.
+
+Tactical order:
+
+1. Replace protected bridge passthrough with real Zero-RTT auth/lease
+   registration.
+2. Add inbound datagram-to-TUN writes.
+3. Add a headless coordinator that drives carrier/auth/lease/TUN/policy loops.
+4. Gate debug-only JNI hooks and reduce registry lock scope after the product
+   path exists.
+
+Verification:
+
+- Documentation-only change.
+- `git diff --check` passed.
+- Stale-plan search found no remaining active standalone DNS/auth-smoke
+  blockers outside the updated roadmap pointer.
+
 ### Android architecture review snapshot
 
 Goal:

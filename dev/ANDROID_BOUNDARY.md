@@ -133,50 +133,58 @@ devices and future Gradle-managed emulators.
 - Added an Android `FPS_LOG_*` macro backend over `__android_log_print`; Linux
   keeps Boost.Log behind the same project facade.
 
-## Follow-Up Increments
+## Product-Focused Follow-Up Increments
 
-- Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
-  and the current `fps://v1` client profile shape instead of dragging Linux
-  daemon/Boost.JSON config paths into the app.
-- Wire allowed native pump packets into transport. Current
-  `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
-  starts the `io_context` worker thread, drains native pump metadata through
-  Kotlin split-tunnel policy and completes packets as allow/drop for testable
-  fail-closed accounting. Allowed packets now reach a native outbound packet
-  seam. The default runtime has no authenticated carrier transport yet, so it
-  reports `no_carrier_transport` and increments enqueue rejected counters.
-  Debug-only tests can install either an exact-packet capture sink or an
-  in-process fake carrier. The fake carrier is the current proof that allowed
-  packets enter `CovertDatagramTransport` rather than a parallel Android-only
-  path.
-- Continue native raw TLS/TCP carrier wiring. The Android native runtime now has
-  a two-phase raw TCP socket lifecycle and a real passthrough
-  `TlsTcpCarrierSession` bridge over a protected outbound socket plus a
-  loopback local-cover socket. Native also has an in-memory Zero-RTT auth smoke
-  that reuses the C++ `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record
-  layer and encrypted TUN lease/control codecs, then emits a bounded
-  metadata-only `lease_received` event through JNI. The next layer is to run
-  Zero-RTT auth, lease delivery and authenticated datagram enqueue on the real
-  protected bridge.
-- Use the opt-in Gradle Managed Device lane described in
-  [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
-  emulator behavior for PR gating. The lane is launched through
-  `Dockerfile.android-emulator` plus `/dev/kvm`; current tests cover native
-  smoke and real `VpnService` full-runtime fd attach/pump/stop/revoke. Next
-  emulator tests should stay small and focus on protect-before-connect,
-  underlying-network DNS and policy integration.
+The Android boundary is now mature enough that the next work should compose
+existing pieces instead of adding more isolated proof points. Keep small TDD
+tests when a contract is ambiguous, but make each increment advance the
+headless VPN lifecycle.
+
+1. **Protected bridge becomes a real FPS carrier.**
+   - Keep Android profile parsing in Kotlin with `org.json`; do not import
+     Linux daemon config code.
+   - Build `TlsTcpCarrierZeroRttOptions` from the already validated Android
+     profile and install them on the protected raw bridge.
+   - Decode encrypted server accept / TUN lease control data through shared
+     native codecs and publish bounded metadata-only events to Kotlin.
+   - Keep OkHttp out of the FPS wire path. It may be used only as the app-owned
+     cover client that connects to the native bridge listener.
+
+2. **TUN becomes bidirectional.**
+   - Keep outbound TUN read, 5-tuple parsing and Kotlin UID policy as the
+     Android-specific side of the boundary.
+   - Add inbound datagram delivery from `CovertDatagramTransport` back to the
+     native-owned duplicated TUN fd.
+   - Reuse shared datagram/TUN semantics where possible; do not grow a second
+     Android-only packet transport.
+
+3. **One coordinator owns the product lifecycle.**
+   - `FpsVpnService` or `HeadlessNativeVpnRuntime` should own the full sequence:
+     start native executor, resolve via underlying network, protect/connect raw
+     socket, start bridge, start cover client, drain lease event, establish TUN,
+     start pump, drain/apply policy and reconnect carriers on close.
+   - Tests for this layer should be integration-shaped: ordered lifecycle,
+     fail-closed branches and observable counters, not individual helper
+     arithmetic.
+
+4. **Harden the API surface after the product path exists.**
+   - Gate debug-only JNI hooks out of production variants.
+   - Reduce native runtime registry mutex scope so registry locks are not held
+     while runtime methods post to Asio, wait on futures or stop threads.
+   - Add UI/foreground-service/status work only after the headless path can
+     authenticate, lease, establish TUN and move packets both ways.
 
 ## Accepted Android Direction
 
 - First Android beta should use app-owned carrier sessions. The Android app
   opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
-- Carrier probe behavior is app-configurable at the Android profile/runtime
-  layer. The current headless model supports HTTPS GET and WSS probe metadata
-  plus a fake-transport runner and a live OkHttp-backed HTTPS/WSS probe
-  transport factory plus first `VpnService` TUN fd ownership and a passthrough
-  native raw TLS/TCP bridge. The next step is auth/lease/datagram wiring on
-  that bridge and Android lifecycle resilience, not changing protocol core.
+- Carrier behavior is app-configurable at the Android profile/runtime layer.
+  The current headless model supports HTTPS GET and WSS metadata, fake
+  transport coverage, live OkHttp cover traffic support, first `VpnService` TUN
+  fd ownership and a passthrough native raw TLS/TCP bridge. The next step is
+  auth/lease/datagram wiring on that bridge and one lifecycle coordinator, not
+  changing protocol core and not adding another wire carrier path.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets now use a two-phase fd hook, and
   OkHttp-owned sockets use the Java `Socket` hook before the socket can be
