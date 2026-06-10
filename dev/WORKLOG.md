@@ -4,6 +4,39 @@
 
 ## 2026-06-10
 
+### Android architecture review snapshot
+
+Goal:
+
+- Pause Android feature work and record a source-first review of whether the
+  Android client is still moving toward a real FPS VPN client that reuses shared
+  C++ core rather than duplicating protocol logic in Kotlin.
+
+Decisions:
+
+- Added a dedicated ad hoc review file:
+  `dev/ANDROID_ARCH_REVIEW_2026-06-10.md`.
+- No runtime/code behavior changes in this step.
+- Treat the current Android state as a strong boundary/testing scaffold, not a
+  working VPN client yet.
+
+Key findings:
+
+- `FpsVpnService` does not yet run the production daemon loop.
+- The protected raw carrier bridge currently uses passthrough
+  `TlsTcpCarrierSession` without Zero-RTT/classified-record config.
+- Android native runtime has outbound TUN read/enqueue coverage, but no inbound
+  datagram-to-TUN write path.
+- OkHttp carrier probes are useful support code but must not become the real
+  FPS wire carrier path.
+- Test-only native hooks should be gated before production APK work.
+- Registry mutex scope should be reduced before lifecycle complexity grows.
+
+Verification:
+
+- Documentation-only change.
+- `git diff --check` passed.
+
 ### Android protected raw carrier bridge
 
 Goal:
