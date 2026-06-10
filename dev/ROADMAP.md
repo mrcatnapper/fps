@@ -187,11 +187,15 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add first Android native TUN outbound seam: policy-allowed packets attempt
   native outbound enqueue, no-carrier/reject paths are explicit counters, and
   instrumented tests verify exact packet bytes reach a capture sink.
+- [x] Add first protected raw Android carrier bridge: native connects a
+  protected outbound TCP socket, exposes a loopback local-cover listener and
+  passes TLS-record-shaped bytes through shared `TlsTcpCarrierSession`
+  passthrough.
 - Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: replace the Android capture/default outbound seam
-  with real native carrier enqueue, implement native raw TLS/TCP auth/carrier
-  I/O, Android lifecycle resilience/status and richer native/Kotlin async
-  commands.
+  `dev/ANDROID_APP_PLAN.md`: attach Zero-RTT auth/lease registration to the
+  protected raw `TlsTcpCarrierSession` bridge, connect the TUN outbound seam to
+  authenticated carrier enqueue, then improve Android lifecycle
+  resilience/status and richer native/Kotlin async commands.
 
 ## Phase 7: Fuzzing And Soak
 

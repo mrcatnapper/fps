@@ -5,13 +5,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class NativeCoreSmokeInstrumentedTest {
@@ -459,6 +463,66 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
+    fun nativeRawCarrierBridgePassesTlsRecordsBetweenLocalCoverAndRemote() {
+        val clientRecord = tlsApplicationDataRecord("android-cover-client".encodeToByteArray())
+        val serverRecord = tlsApplicationDataRecord("android-cover-server".encodeToByteArray())
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val remoteError = AtomicReference<Throwable?>(null)
+        val accepted = thread(start = true) {
+            try {
+                server.accept().use { socket ->
+                    assertArrayEquals(clientRecord, readExact(socket.getInputStream(), clientRecord.size))
+                    socket.getOutputStream().write(serverRecord)
+                    socket.getOutputStream().flush()
+                    Thread.sleep(100)
+                }
+            } catch (throwable: Throwable) {
+                remoteError.set(throwable)
+            }
+        }
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val stoppedRuntime = FpsNative.startRawCarrierBridge(handle)
+            assertEquals("runtime_stopped", stoppedRuntime.lastError)
+
+            FpsNative.startRuntime(handle)
+            val notConnected = FpsNative.startRawCarrierBridge(handle)
+            assertEquals("raw_carrier_not_connected", notConnected.lastError)
+            assertFalse(notConnected.rawCarrierBridgeListening)
+
+            FpsNative.prepareRawCarrierSocket(handle, "127.0.0.1", server.localPort)
+            val connected = FpsNative.completeRawCarrierProtection(handle, protectAllowed = true)
+            assertTrue(connected.rawCarrierActive)
+
+            val listening = FpsNative.startRawCarrierBridge(handle)
+            assertTrue(listening.rawCarrierBridgeListening)
+            assertTrue(listening.rawCarrierBridgeListenPort > 0)
+            assertFalse(listening.rawCarrierBridgeActive)
+
+            Socket("127.0.0.1", listening.rawCarrierBridgeListenPort).use { localCover ->
+                localCover.getOutputStream().write(clientRecord)
+                localCover.getOutputStream().flush()
+                assertArrayEquals(serverRecord, readExact(localCover.getInputStream(), serverRecord.size))
+            }
+            accepted.join(1_000)
+            remoteError.get()?.let { throw AssertionError("remote bridge endpoint failed", it) }
+
+            val bridged = awaitSnapshot(handle) { it.rawCarrierBridgeActive || it.carrierStarted == 1L }
+            assertEquals(1L, bridged.carrierStarted)
+            val stopped = FpsNative.stopRawCarrier(handle)
+            assertFalse(stopped.rawCarrierBridgeListening)
+            assertEquals(0, stopped.rawCarrierBridgeListenPort)
+            assertFalse(stopped.rawCarrierBridgeActive)
+        } finally {
+            FpsNative.closeRuntime(handle)
+            server.close()
+            accepted.join(1_000)
+        }
+    }
+
+    @Test
     fun nativeClientAuthConfigurationRejectsInvalidServerPublicKey() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)
@@ -665,6 +729,30 @@ class NativeCoreSmokeInstrumentedTest {
         0xcf.toByte(), 0x08, 0x01, 0xbb.toByte(),
         0x00, 0x08, 0x00, 0x00,
     )
+
+    private fun tlsApplicationDataRecord(payload: ByteArray): ByteArray {
+        require(payload.size <= 0xffff)
+        return byteArrayOf(
+            0x17,
+            0x03,
+            0x03,
+            ((payload.size ushr 8) and 0xff).toByte(),
+            (payload.size and 0xff).toByte(),
+        ) + payload
+    }
+
+    private fun readExact(input: InputStream, size: Int): ByteArray {
+        val out = ByteArray(size)
+        var offset = 0
+        while (offset < size) {
+            val read = input.read(out, offset, size - offset)
+            if (read < 0) {
+                throw AssertionError("unexpected EOF after $offset of $size bytes")
+            }
+            offset += read
+        }
+        return out
+    }
 
     private fun sha256Hex(bytes: ByteArray): String {
         return MessageDigest.getInstance("SHA-256")

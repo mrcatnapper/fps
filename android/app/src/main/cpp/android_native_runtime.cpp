@@ -35,6 +35,8 @@
 #include "fps/core/identity.hpp"
 #include "fps/core/tls_record_layer.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_lease_control.hpp"
 #include "fps/net/tun_packet.hpp"
 
@@ -49,6 +51,7 @@ constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
 constexpr std::size_t kNativeEventQueueCapacity = 64;
 constexpr fps::net::CarrierId kFakeCarrierId = 1;
+constexpr fps::net::CarrierId kRawCarrierBridgeCarrierId = 2;
 constexpr auto kRawCarrierConnectTimeout = 3s;
 constexpr std::string_view kAndroidAuthSmokeProfileIdFallback{"android-auth-smoke-v5"};
 
@@ -238,6 +241,15 @@ struct ClientAuthConfig {
         return std::nullopt;
     }
     return controller.process_inbound_record(direction, *record);
+}
+
+[[nodiscard]] auto passthrough_pipelines() -> fps::net::TlsTcpCarrierSessionPipelines {
+    return fps::net::TlsTcpCarrierSessionPipelines{
+        .inbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
+        .inbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
+        .outbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
+        .outbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
+    };
 }
 
 class AndroidNativeRuntime {
@@ -547,6 +559,24 @@ public:
                 raw_carrier_active_.store(true);
                 done->set_value({});
             });
+        });
+
+        last_error_ = finished.get();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto start_raw_carrier_bridge() -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<std::string>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, done] {
+            done->set_value(start_raw_carrier_bridge_on_worker());
         });
 
         last_error_ = finished.get();
@@ -906,8 +936,146 @@ private:
         finished.wait();
     }
 
+    [[nodiscard]] auto start_raw_carrier_bridge_on_worker() -> std::string {
+        if(!raw_carrier_socket_ || !raw_carrier_active_.load()) {
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            raw_carrier_bridge_active_.store(false);
+            return "raw_carrier_not_connected";
+        }
+        if(raw_carrier_bridge_acceptor_ || raw_carrier_bridge_active_.load()) {
+            return {};
+        }
+        if(carrier_active_.load() != 0U) {
+            return "carrier_already_active";
+        }
+
+        auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(io_context_);
+        boost::system::error_code error;
+        const boost::asio::ip::tcp::endpoint endpoint{boost::asio::ip::address_v4::loopback(), 0};
+        acceptor->open(endpoint.protocol(), error);
+        if(error) {
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->set_option(boost::asio::socket_base::reuse_address(true), error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->bind(endpoint, error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->listen(boost::asio::socket_base::max_listen_connections, error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        const auto local_endpoint = acceptor->local_endpoint(error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+
+        raw_carrier_bridge_acceptor_ = acceptor;
+        raw_carrier_bridge_listening_.store(true);
+        raw_carrier_bridge_listen_port_.store(static_cast<int>(local_endpoint.port()));
+        raw_carrier_bridge_active_.store(false);
+
+        auto local_socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
+        acceptor->async_accept(*local_socket, [this, acceptor, local_socket](const boost::system::error_code& accept_error) {
+            handle_raw_carrier_bridge_accept(acceptor, local_socket, accept_error);
+        });
+        return {};
+    }
+
+    void handle_raw_carrier_bridge_accept(
+        const std::shared_ptr<boost::asio::ip::tcp::acceptor>& acceptor, const std::shared_ptr<boost::asio::ip::tcp::socket>& local_socket,
+        const boost::system::error_code& accept_error
+    ) {
+        if(raw_carrier_bridge_acceptor_ == acceptor) {
+            raw_carrier_bridge_acceptor_.reset();
+        }
+        raw_carrier_bridge_listening_.store(false);
+        raw_carrier_bridge_listen_port_.store(0);
+        boost::system::error_code ignored;
+        acceptor->close(ignored);
+
+        if(accept_error) {
+            if(accept_error != boost::asio::error::operation_aborted) {
+                last_error_ = "raw_carrier_bridge_accept_failed";
+            }
+            return;
+        }
+        if(!raw_carrier_socket_ || !raw_carrier_active_.load()) {
+            local_socket->close(ignored);
+            last_error_ = "raw_carrier_not_connected";
+            return;
+        }
+
+        auto remote_socket = std::move(*raw_carrier_socket_);
+        raw_carrier_socket_.reset();
+        raw_carrier_protect_fd_.store(-1);
+
+        fps::net::TlsTcpCarrierSessionHandlers handlers;
+        handlers.on_covert_frame = [this](fps::Direction direction, const fps::DecodedFrame& frame) {
+            datagram_transport_.handle_covert_frame(kRawCarrierBridgeCarrierId, direction, frame);
+        };
+        handlers.on_closed = [this](const fps::net::TlsTcpCarrierSessionStats&) {
+            static_cast<void>(datagram_transport_.remove_carrier_if(kRawCarrierBridgeCarrierId));
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            raw_carrier_bridge_active_.store(false);
+            raw_carrier_active_.store(false);
+            raw_carrier_connecting_.store(false);
+            raw_carrier_protect_fd_.store(-1);
+            if(carrier_active_.exchange(0) != 0U) {
+                carrier_stopped_.fetch_add(1);
+            }
+        };
+
+        auto session = fps::net::TlsTcpCarrierSession::create(
+            std::move(*local_socket), std::move(remote_socket), passthrough_pipelines(), std::move(handlers), fps::net::TlsTcpCarrierSessionConfig{}
+        );
+        const auto added = datagram_transport_.add_carrier(fps::net::make_tls_tcp_carrier_adapter(kRawCarrierBridgeCarrierId, session));
+        if(!added) {
+            session->stop();
+            raw_carrier_active_.store(false);
+            last_error_ = "raw_carrier_bridge_add_failed";
+            return;
+        }
+
+        raw_carrier_bridge_session_ = session;
+        raw_carrier_bridge_active_.store(true);
+        raw_carrier_active_.store(true);
+        carrier_active_.store(1);
+        carrier_started_.fetch_add(1);
+        last_error_.clear();
+        session->start();
+    }
+
     void stop_raw_carrier_on_worker_no_error() {
         auto clear = [this] {
+            if(raw_carrier_bridge_acceptor_) {
+                boost::system::error_code ignored;
+                raw_carrier_bridge_acceptor_->cancel(ignored);
+                raw_carrier_bridge_acceptor_->close(ignored);
+                raw_carrier_bridge_acceptor_.reset();
+            }
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            if(raw_carrier_bridge_session_) {
+                auto session = std::move(raw_carrier_bridge_session_);
+                session->stop();
+            } else if(raw_carrier_bridge_active_.exchange(false) && carrier_active_.exchange(0) != 0U) {
+                carrier_stopped_.fetch_add(1);
+                static_cast<void>(datagram_transport_.remove_carrier_if(kRawCarrierBridgeCarrierId));
+            }
             raw_carrier_protect_fd_.store(-1);
             raw_carrier_connecting_.store(false);
             raw_carrier_active_.store(false);
@@ -1179,6 +1347,9 @@ private:
             .raw_carrier_protect_fd = raw_carrier_protect_fd_.load(),
             .raw_carrier_connecting = raw_carrier_connecting_.load(),
             .raw_carrier_active = raw_carrier_active_.load(),
+            .raw_carrier_bridge_listening = raw_carrier_bridge_listening_.load(),
+            .raw_carrier_bridge_listen_port = raw_carrier_bridge_listen_port_.load(),
+            .raw_carrier_bridge_active = raw_carrier_bridge_active_.load(),
             .raw_carrier_connect_attempted = raw_carrier_connect_attempted_.load(),
             .raw_carrier_connect_succeeded = raw_carrier_connect_succeeded_.load(),
             .raw_carrier_connect_failed = raw_carrier_connect_failed_.load(),
@@ -1235,10 +1406,15 @@ private:
     mutable std::mutex carrier_capture_mutex_;
     std::vector<std::string> captured_fake_carrier_frame_digests_;
     std::shared_ptr<boost::asio::ip::tcp::socket> raw_carrier_socket_;
+    std::shared_ptr<boost::asio::ip::tcp::acceptor> raw_carrier_bridge_acceptor_;
+    std::shared_ptr<fps::net::TlsTcpCarrierSession> raw_carrier_bridge_session_;
     boost::asio::ip::tcp::endpoint raw_carrier_endpoint_;
     std::atomic<int> raw_carrier_protect_fd_ = -1;
     std::atomic_bool raw_carrier_connecting_ = false;
     std::atomic_bool raw_carrier_active_ = false;
+    std::atomic_bool raw_carrier_bridge_listening_ = false;
+    std::atomic<int> raw_carrier_bridge_listen_port_ = 0;
+    std::atomic_bool raw_carrier_bridge_active_ = false;
     std::atomic<std::uint64_t> raw_carrier_connect_attempted_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_succeeded_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_failed_ = 0;
@@ -1372,6 +1548,15 @@ public:
             return invalid_runtime_snapshot("invalid_handle");
         }
         return found->second->complete_raw_carrier_protection(protect_allowed);
+    }
+
+    [[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->start_raw_carrier_bridge();
     }
 
     [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
@@ -1514,6 +1699,8 @@ auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address,
 auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields {
     return runtime_registry().complete_raw_carrier_protection(handle, protect_allowed);
 }
+
+auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().start_raw_carrier_bridge(handle); }
 
 auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_raw_carrier(handle); }
 

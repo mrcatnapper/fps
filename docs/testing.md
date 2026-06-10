@@ -236,8 +236,11 @@ stop/debug-revoke cleanup. The native smoke also covers the first raw carrier
 socket lifecycle: native opens a TCP socket, exposes the pre-connect fd to
 Kotlin for `VpnService.protect(fd)`, aborts cleanly when protection is denied,
 connects to a loopback TCP server when protection succeeds and closes the socket
-without leaving carrier state active. It is opt-in because it requires a real
-Android runtime.
+without leaving carrier state active. It also starts the first protected raw
+carrier bridge: native exposes a loopback local-cover listener, accepts a local
+TCP client and verifies TLS-record-shaped bytes pass through the shared
+`TlsTcpCarrierSession` to a loopback remote endpoint and back. It is opt-in
+because it requires a real Android runtime.
 
 For reproducible post-JVM checks without relying on host SDK paths, use the
 Docker-managed emulator lane:
@@ -274,8 +277,10 @@ The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
 probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
 wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
-handling. The first raw carrier socket lifecycle is present but intentionally
-stops below TLS/FPS authentication. The scaffold also has a lease-triggered
+handling. The first raw carrier bridge now reaches `TlsTcpCarrierSession`
+passthrough over a protected raw socket plus a local loopback cover socket, but
+Zero-RTT auth/lease registration on that bridge is still future work. The
+scaffold also has a lease-triggered
 `VpnService.Builder` TUN fd ownership layer, tested with fake builders and a
 real debug `VpnService` fd routed through the Kotlin/native runtime bridge. It
 remains guarded by explicit `tun.enabled=true` profile intent. The native smoke

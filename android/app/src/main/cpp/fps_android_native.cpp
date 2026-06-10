@@ -232,6 +232,11 @@ Java_org_fpsproject_client_nativebridge_FpsNative_completeRawCarrierProtection(J
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_startRawCarrierBridge(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::start_raw_carrier_bridge(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_stopRawCarrier(JNIEnv* env, jobject /* self */, jlong handle) {
     const auto snapshot = fps::android_native::stop_raw_carrier(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
     return fps::android_jni::runtime_snapshot_object(env, snapshot);

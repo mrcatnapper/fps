@@ -285,16 +285,21 @@ Prioritize these emulator/device scenarios in order:
   client auth metadata is configured through JNI, invalid server public key
   encoding is rejected, a shared C++ Zero-RTT exchange returns an encrypted test
   TUN lease event and a tampered server accept reports failure without a lease.
+  A protected raw carrier bridge smoke also opens a native-protected outbound
+  socket, exposes a loopback local-cover listener and verifies
+  TLS-record-shaped bytes pass through `TlsTcpCarrierSession` in both
+  directions.
 
 ## Next Android Runtime Steps
 
 1. Add underlying-network DNS coverage before enabling native carrier auth.
-2. Add native raw TLS/FPS auth over the protected socket lifecycle. Start with
-   one local-origin smoke that proves auth/lease metadata can be exchanged
-   without adding a parallel Kotlin carrier protocol.
+2. Add native raw TLS/FPS auth over the protected raw carrier bridge. Start
+   with one local-origin smoke that proves auth/lease metadata can be exchanged
+   through the existing `TlsTcpCarrierSession` bridge without adding a parallel
+   Kotlin carrier protocol.
 3. Add split-tunnel UID policy integration over emulator VPN traffic once the
    real-fd runtime path is stable.
-4. Wire the native outbound packet seam into real native raw TLS/TCP carrier
-   enqueue.
+4. Wire the native outbound packet seam into authenticated native raw TLS/TCP
+   carrier enqueue.
 5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

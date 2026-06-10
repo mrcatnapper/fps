@@ -138,6 +138,8 @@ class HeadlessNativeVpnRuntime private constructor(
 
     fun stopNativeCarrier(): NativeRuntimeSnapshot = nativeRuntime.stopRawCarrier()
 
+    fun startNativeCarrierBridge(): NativeRuntimeSnapshot = nativeRuntime.startRawCarrierBridge()
+
     fun runClientAuthSmokeForTest(tamperServerAccept: Boolean = false): NativeRuntimeSnapshot {
         return nativeRuntime.runClientAuthSmokeForTest(tamperServerAccept)
     }

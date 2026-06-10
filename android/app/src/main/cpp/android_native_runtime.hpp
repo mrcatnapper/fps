@@ -49,6 +49,9 @@ struct NativeRuntimeSnapshotFields {
     int raw_carrier_protect_fd = -1;
     bool raw_carrier_connecting = false;
     bool raw_carrier_active = false;
+    bool raw_carrier_bridge_listening = false;
+    int raw_carrier_bridge_listen_port = 0;
+    bool raw_carrier_bridge_active = false;
     std::uint64_t raw_carrier_connect_attempted = 0;
     std::uint64_t raw_carrier_connect_succeeded = 0;
     std::uint64_t raw_carrier_connect_failed = 0;
@@ -90,6 +93,7 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto configure_client_auth(NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
     -> NativeRuntimeSnapshotFields;

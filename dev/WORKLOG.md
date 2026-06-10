@@ -4,6 +4,86 @@
 
 ## 2026-06-10
 
+### Android protected raw carrier bridge
+
+Goal:
+
+- Build the next Android runtime layer above protected raw socket connect:
+  prove that native can give `TlsTcpCarrierSession` both TCP endpoints on
+  Android without inventing a parallel Kotlin wire protocol.
+
+Scope:
+
+- Add a loopback local-cover listener in native runtime after a protected raw
+  carrier socket has connected.
+- When the Android app/client connects to that local listener, native creates a
+  `TlsTcpCarrierSession` with:
+  - local cover socket as the browser/app side;
+  - the already protected raw carrier socket as the remote FPS link side.
+- First increment is passthrough only: no Zero-RTT server accept/lease
+  registration on this bridge yet. The previous in-memory auth smoke already
+  proves native auth-core linkage; this increment proves production socket
+  ownership and byte flow through the real TLS/TCP carrier session.
+
+Plan:
+
+- Add snapshot fields and JNI/Kotlin API for `startRawCarrierBridge()`:
+  local listen port, listening flag and bridge-active flag.
+- TDD first:
+  - JVM fake backend checks closed/stopped wrapper behavior and snapshot fields;
+  - instrumented native test checks start before raw connect fails closed;
+  - instrumented native test connects a local cover TCP client to the native
+    listener and verifies TLS-record-shaped bytes pass to a loopback remote
+    server and back through `TlsTcpCarrierSession`.
+- Implement native loopback acceptor and session ownership:
+  - require started runtime and connected/protected raw socket;
+  - bind `127.0.0.1:0`;
+  - move the protected raw socket into `TlsTcpCarrierSession` after accept;
+  - close acceptor/session from `stopRawCarrier()` and runtime stop.
+- Update Android boundary/testing notes and complete this worklog section after
+  verification.
+
+Verification target:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check`
+
+Completed:
+
+- Added `rawCarrierBridgeListening`, `rawCarrierBridgeListenPort` and
+  `rawCarrierBridgeActive` to native snapshots, plus
+  `startRawCarrierBridge()` through Kotlin, JNI and fake test backends.
+- Added JVM coverage for direct `FpsNativeRuntime` bridge delegation and
+  `HeadlessNativeVpnRuntime` delegation.
+- Added managed-device coverage for the production-shaped socket path:
+  stopped runtime and raw-not-connected failures are explicit, then native
+  connects a protected raw loopback socket, binds a `127.0.0.1:0` local-cover
+  listener, accepts a local cover client and passes TLS-record-shaped bytes in
+  both directions through `TlsTcpCarrierSession`.
+- Implemented native loopback acceptor/session ownership. On accept, native
+  moves the already protected raw socket and accepted local socket into the
+  shared `TlsTcpCarrierSession`, registers it as a `CovertCarrier` through the
+  existing adapter, and cleans listener/session state from `stopRawCarrier()`
+  and runtime stop.
+- Kept this increment passthrough-only. Native Zero-RTT/lease registration on
+  the protected bridge remains the next Android production step.
+- Updated Android boundary, testing, beta-status, roadmap and specification
+  notes to reflect the protected raw carrier bridge.
+
+Verification:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- stale-doc scan:
+  `rg -n 'no real carrier transport|raw carrier socket lifecycle is present|stops below TLS|native raw TLS/TCP auth/pump wiring|production raw carrier I/O|not yet run native FPS auth|raw carrier I/O remain' docs dev -g '*.md'`
+
 ### Android native Zero-RTT auth smoke
 
 Goal:

@@ -71,6 +71,9 @@ data class NativeRuntimeSnapshot(
     val rawCarrierProtectFd: Int = -1,
     val rawCarrierConnecting: Boolean = false,
     val rawCarrierActive: Boolean = false,
+    val rawCarrierBridgeListening: Boolean = false,
+    val rawCarrierBridgeListenPort: Int = 0,
+    val rawCarrierBridgeActive: Boolean = false,
     val rawCarrierConnectAttempted: Long = 0,
     val rawCarrierConnectSucceeded: Long = 0,
     val rawCarrierConnectFailed: Long = 0,
@@ -108,6 +111,8 @@ interface FpsNativeBackend {
     fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot
 
     fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
+
+    fun startRawCarrierBridge(handle: Long): NativeRuntimeSnapshot
 
     fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 
@@ -264,6 +269,14 @@ class FpsNativeRuntime private constructor(
         return backend.completeRawCarrierProtection(activeHandle, protectAllowed)
     }
 
+    fun startRawCarrierBridge(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.startRawCarrierBridge(activeHandle)
+    }
+
     fun stopRawCarrier(): NativeRuntimeSnapshot {
         val activeHandle = handle
         if (activeHandle == 0L) {
@@ -342,6 +355,8 @@ object FpsNative : FpsNativeBackend {
     external override fun prepareRawCarrierSocket(handle: Long, address: String, port: Int): NativeRuntimeSnapshot
 
     external override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
+
+    external override fun startRawCarrierBridge(handle: Long): NativeRuntimeSnapshot
 
     external override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
 

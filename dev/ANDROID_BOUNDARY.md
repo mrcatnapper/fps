@@ -95,8 +95,7 @@ devices and future Gradle-managed emulators.
   owns both layers, performs lease-triggered TUN establishment and attaches the
   resulting fd to native as an owned duplicate. It starts the native TUN pump
   after attachment, and the managed emulator smoke verifies that path with a
-  real `VpnService` fd plus explicit stop/debug-revoke cleanup. Production raw
-  carrier I/O is still intentionally outside this bridge.
+  real `VpnService` fd plus explicit stop/debug-revoke cleanup.
 - Added the first native runtime executor lifecycle. The JNI runtime can start
   and stop one Boost.Asio `io_context` worker thread, exposes non-secret
   lifecycle/counter snapshots and has a deterministic no-op posted-command
@@ -115,8 +114,15 @@ devices and future Gradle-managed emulators.
   enqueue path production carriers will use, recording only frame metadata and
   SHA-256 digests. Reattaching or clearing the TUN fd clears pending and
   in-flight policy packets so stale decisions from an old fd cannot affect a
-  new runtime state. The pump intentionally does not run FPS auth or raw
-  carrier I/O yet.
+  new runtime state. The pump intentionally does not run production FPS auth
+  yet.
+- Added the first protected raw carrier bridge. After native opens an outbound
+  TCP socket and Kotlin protects its fd, native can bind a loopback local-cover
+  listener; when the app/cover client connects, native moves the protected raw
+  socket and the accepted local socket into the shared `TlsTcpCarrierSession`.
+  Managed-device coverage verifies TLS-record-shaped bytes in both directions
+  through the real session. The bridge currently runs passthrough only; native
+  Zero-RTT/lease registration on this bridge is the next production step.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -137,23 +143,21 @@ devices and future Gradle-managed emulators.
   starts the `io_context` worker thread, drains native pump metadata through
   Kotlin split-tunnel policy and completes packets as allow/drop for testable
   fail-closed accounting. Allowed packets now reach a native outbound packet
-  seam. The default runtime has no real carrier transport yet, so it reports
-  `no_carrier_transport` and increments enqueue rejected counters. Debug-only
-  tests can install either an exact-packet capture sink or an in-process fake
-  carrier. The fake carrier is the current proof that allowed packets enter
-  `CovertDatagramTransport` rather than a parallel Android-only path.
+  seam. The default runtime has no authenticated carrier transport yet, so it
+  reports `no_carrier_transport` and increments enqueue rejected counters.
+  Debug-only tests can install either an exact-packet capture sink or an
+  in-process fake carrier. The fake carrier is the current proof that allowed
+  packets enter `CovertDatagramTransport` rather than a parallel Android-only
+  path.
 - Continue native raw TLS/TCP carrier wiring. The Android native runtime now has
-  a two-phase raw TCP socket lifecycle: native opens the socket, exposes the fd
-  to Kotlin for `VpnService.protect(fd)`, then native connects or aborts before
-  any `connect`. Instrumented coverage verifies stopped-runtime rejection,
-  invalid endpoint rejection, protect-denied abort and loopback TCP
-  connect/stop. Native also has an in-memory Zero-RTT auth smoke that reuses
-  the C++ `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record layer and
-  encrypted TUN lease/control codecs, then emits a bounded metadata-only
-  `lease_received` event through JNI. This is a linkage/auth-core smoke, not
-  production carrier registration yet. The next layer is to attach
-  `TlsTcpCarrierSession`, Zero-RTT auth and lease handling to the protected raw
-  socket lifecycle.
+  a two-phase raw TCP socket lifecycle and a real passthrough
+  `TlsTcpCarrierSession` bridge over a protected outbound socket plus a
+  loopback local-cover socket. Native also has an in-memory Zero-RTT auth smoke
+  that reuses the C++ `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record
+  layer and encrypted TUN lease/control codecs, then emits a bounded
+  metadata-only `lease_received` event through JNI. The next layer is to run
+  Zero-RTT auth, lease delivery and authenticated datagram enqueue on the real
+  protected bridge.
 - Use the opt-in Gradle Managed Device lane described in
   [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
   emulator behavior for PR gating. The lane is launched through
@@ -170,9 +174,9 @@ devices and future Gradle-managed emulators.
 - Carrier probe behavior is app-configurable at the Android profile/runtime
   layer. The current headless model supports HTTPS GET and WSS probe metadata
   plus a fake-transport runner and a live OkHttp-backed HTTPS/WSS probe
-  transport factory plus first `VpnService` TUN fd ownership. The next step is
-  native raw TLS/TCP auth/pump wiring and Android lifecycle resilience, not
-  changing protocol core.
+  transport factory plus first `VpnService` TUN fd ownership and a passthrough
+  native raw TLS/TCP bridge. The next step is auth/lease/datagram wiring on
+  that bridge and Android lifecycle resilience, not changing protocol core.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets now use a two-phase fd hook, and
   OkHttp-owned sockets use the Java `Socket` hook before the socket can be
@@ -188,8 +192,9 @@ devices and future Gradle-managed emulators.
   explicit native `io_context` executor lifecycle plus a non-protocol native
   TUN read/parse pump with non-secret runtime snapshots. Native auth-core
   linkage is covered by an in-memory smoke that can deliver an encrypted test
-  lease event to Kotlin. Managed-device coverage exercises that path plus a
-  real Android TUN fd; production raw carrier auth and I/O wiring are next.
+  lease event to Kotlin. Managed-device coverage exercises that path, a real
+  Android TUN fd and a passthrough `TlsTcpCarrierSession` bridge; production raw
+  carrier auth on that bridge and TUN-to-authenticated-carrier enqueue are next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

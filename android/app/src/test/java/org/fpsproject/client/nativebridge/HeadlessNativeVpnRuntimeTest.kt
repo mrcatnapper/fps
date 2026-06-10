@@ -260,6 +260,21 @@ class HeadlessNativeVpnRuntimeTest {
     }
 
     @Test
+    fun startNativeCarrierBridgeDelegatesToNativeBackend() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        runtime.start()
+        runtime.startNativeCarrier(ResolvedEndpoint("203.0.113.10", 443))
+        val snapshot = runtime.startNativeCarrierBridge()
+
+        assertEquals(listOf(1L), backend.startedRawCarrierBridges)
+        assertTrue(snapshot.rawCarrierBridgeListening)
+        assertEquals(18080, snapshot.rawCarrierBridgeListenPort)
+        assertEquals(null, snapshot.lastError)
+    }
+
+    @Test
     fun nativeLeaseEventRunsExistingLeaseBeforeTunPath() {
         val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
         val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
@@ -347,6 +362,9 @@ private fun coordinatorSnapshot(
     rawCarrierProtectFd: Int = -1,
     rawCarrierConnecting: Boolean = false,
     rawCarrierActive: Boolean = false,
+    rawCarrierBridgeListening: Boolean = false,
+    rawCarrierBridgeListenPort: Int = 0,
+    rawCarrierBridgeActive: Boolean = false,
     rawCarrierConnectAttempted: Long = 0,
     rawCarrierConnectSucceeded: Long = 0,
     rawCarrierConnectFailed: Long = 0,
@@ -383,6 +401,9 @@ private fun coordinatorSnapshot(
     rawCarrierProtectFd = rawCarrierProtectFd,
     rawCarrierConnecting = rawCarrierConnecting,
     rawCarrierActive = rawCarrierActive,
+    rawCarrierBridgeListening = rawCarrierBridgeListening,
+    rawCarrierBridgeListenPort = rawCarrierBridgeListenPort,
+    rawCarrierBridgeActive = rawCarrierBridgeActive,
     rawCarrierConnectAttempted = rawCarrierConnectAttempted,
     rawCarrierConnectSucceeded = rawCarrierConnectSucceeded,
     rawCarrierConnectFailed = rawCarrierConnectFailed,
@@ -421,6 +442,7 @@ private class FakeCoordinatorNativeBackend(
     val completedPolicy = mutableListOf<Pair<Long, SplitTunnelDecision>>()
     val preparedRawCarriers = mutableListOf<Triple<Long, String, Int>>()
     val completedRawCarrierProtection = mutableListOf<Pair<Long, Boolean>>()
+    val startedRawCarrierBridges = mutableListOf<Long>()
     val stoppedRawCarriers = mutableListOf<Long>()
     val configuredAuth = mutableListOf<CoordinatorAuthConfigCall>()
     val clientAuthSmokeCalls = mutableListOf<Pair<Long, Boolean>>()
@@ -616,6 +638,28 @@ private class FakeCoordinatorNativeBackend(
         ).also { snapshots[handle] = it }
     }
 
+    override fun startRawCarrierBridge(handle: Long): NativeRuntimeSnapshot {
+        startedRawCarrierBridges += handle
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(lastError = "runtime_stopped").also { snapshots[handle] = it }
+        }
+        if (!current.rawCarrierActive) {
+            return current.copy(
+                rawCarrierBridgeListening = false,
+                rawCarrierBridgeListenPort = 0,
+                rawCarrierBridgeActive = false,
+                lastError = "raw_carrier_not_connected",
+            ).also { snapshots[handle] = it }
+        }
+        return current.copy(
+            rawCarrierBridgeListening = true,
+            rawCarrierBridgeListenPort = 18080,
+            rawCarrierBridgeActive = false,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
     override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot {
         stoppedRawCarriers += handle
         val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
@@ -623,6 +667,9 @@ private class FakeCoordinatorNativeBackend(
             rawCarrierProtectFd = -1,
             rawCarrierConnecting = false,
             rawCarrierActive = false,
+            rawCarrierBridgeListening = false,
+            rawCarrierBridgeListenPort = 0,
+            rawCarrierBridgeActive = false,
             lastError = null,
         ).also { snapshots[handle] = it }
     }

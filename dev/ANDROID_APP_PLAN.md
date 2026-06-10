@@ -84,18 +84,21 @@ Delivered:
   metadata for Kotlin split-tunnel policy decisions. Packet bytes remain in
   native-owned state. Kotlin can complete packets as allow/drop and update
   non-secret counters. In this bridge, `allow` now attempts the native outbound
-  packet seam. With no real carrier transport installed yet, the default path
-  returns `no_carrier_transport` and increments enqueue rejected counters rather
-  than silently consuming the packet. Debug-only instrumented hooks can register
-  an in-process fake carrier, proving that policy-allowed packets travel
-  through the production `CovertDatagramTransport` path and produce
-  metadata-only frame digests.
+  packet seam. With no authenticated carrier transport installed yet, the
+  default path returns `no_carrier_transport` and increments enqueue rejected
+  counters rather than silently consuming the packet. Debug-only instrumented
+  hooks can register an in-process fake carrier, proving that policy-allowed
+  packets travel through the production `CovertDatagramTransport` path and
+  produce metadata-only frame digests.
 - The JNI runtime can configure client auth metadata from the validated Android
   profile, rederive the UUID-backed client X25519 keypair in C++, validate the
   server public key encoding and run an in-memory native Zero-RTT auth smoke.
   That smoke uses the shared C++ auth/record/control codecs and emits a
-  metadata-only encrypted TUN lease event for Kotlin. It is not the production
-  carrier path yet because no raw socket is connected to `TlsTcpCarrierSession`.
+  metadata-only encrypted TUN lease event for Kotlin. The native runtime can
+  also bridge a protected raw carrier socket to a loopback local-cover socket
+  through `TlsTcpCarrierSession` in passthrough mode. The remaining production
+  gap is attaching Zero-RTT auth/lease registration and datagram enqueue to that
+  real bridge instead of only proving each piece separately.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
