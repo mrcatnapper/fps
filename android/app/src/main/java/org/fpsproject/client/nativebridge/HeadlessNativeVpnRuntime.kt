@@ -2,6 +2,7 @@ package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.runtime.AndroidPlatformHooks
+import org.fpsproject.client.runtime.CarrierProbeRuntimePlan
 import org.fpsproject.client.runtime.CarrierProbeRuntimeStatus
 import org.fpsproject.client.runtime.CarrierProbeTransportFactory
 import org.fpsproject.client.runtime.HeadlessVpnController
@@ -82,7 +83,7 @@ data class LocalCoverClientStartResult(
 }
 
 fun interface LocalCoverClientStarter {
-    fun start(localBridgePort: Int): LocalCoverClientStartResult
+    fun start(localBridgePort: Int, carrierPlan: CarrierProbeRuntimePlan): LocalCoverClientStartResult
 }
 
 private object NoopLocalCoverClientHandle : LocalCoverClientHandle {
@@ -192,6 +193,8 @@ class HeadlessNativeVpnRuntime private constructor(
             .getOrElse { return failCoordinated("server_resolve_failed") }
         val endpoint = endpoints.firstOrNull()
             ?: return failCoordinated("server_resolve_failed")
+        val coverPlan = controller.carrierProbePlans().firstOrNull()
+            ?: return failCoordinated("carrier_profile_missing")
         val carrier = startNativeCarrier(endpoint)
         if (!carrier.rawCarrierActive) {
             return failCoordinated(carrier.lastError ?: "raw_carrier_connect_failed")
@@ -200,7 +203,7 @@ class HeadlessNativeVpnRuntime private constructor(
         if (!bridge.rawCarrierBridgeListening || bridge.rawCarrierBridgeListenPort <= 0) {
             return failCoordinated(bridge.lastError ?: "raw_carrier_bridge_start_failed")
         }
-        val cover = runCatching { coverClientStarter.start(bridge.rawCarrierBridgeListenPort) }
+        val cover = runCatching { coverClientStarter.start(bridge.rawCarrierBridgeListenPort, coverPlan) }
             .getOrElse { return failCoordinated("cover_client_start_failed") }
         val coverHandle = cover.handle
         if (coverHandle == null) {

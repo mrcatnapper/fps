@@ -284,17 +284,21 @@ probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
 wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
 handling. The first raw carrier bridge now reaches `TlsTcpCarrierSession` over
 a protected raw socket plus a local loopback cover socket with real client-side
-Zero-RTT and encrypted lease delivery. The scaffold also has a lease-triggered
-`VpnService.Builder` TUN fd ownership layer, tested with fake builders and a
-real debug `VpnService` fd routed through the Kotlin/native runtime bridge. It
-remains guarded by explicit `tun.enabled=true` profile intent. The native smoke
-reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
+Zero-RTT and encrypted lease delivery. The Kotlin layer also includes a raw
+HTTPS local cover client: it connects to the native loopback bridge, wraps that
+socket in TLS using the configured carrier origin hostname and sends
+HTTP/1.1 keep-alive GETs while preserving raw TLS bytes for the native bridge.
+OkHttp remains probe/support code, not the FPS wire carrier. The scaffold also
+has a lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with
+fake builders and a real debug `VpnService` fd routed through the Kotlin/native
+runtime bridge. It remains guarded by explicit `tun.enabled=true` profile
+intent. The native smoke reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
 a reusable native core smoke library built from protocol codec/crypto, generic
 covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
 excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and
 Boost.JSON-heavy operator paths.
 JVM tests also cover the first headless coordinator that composes native start,
-underlying-network DNS, protected raw socket connect, bridge start, fakeable
+underlying-network DNS, protected raw socket connect, bridge start, local
 cover-client startup, encrypted lease handling, TUN attach/pump and split-tunnel
 policy drain as one fail-closed product flow.
 

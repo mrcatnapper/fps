@@ -4,6 +4,55 @@
 
 ## 2026-06-10
 
+### Android raw HTTPS local cover client
+
+Goal:
+
+- Replace the fake coordinator cover hook with the first real headless Android
+  local cover client that preserves raw TLS bytes for the native
+  `TlsTcpCarrierSession` bridge.
+
+Plan:
+
+1. Extend the local cover starter contract to receive the selected
+   `CarrierProbeRuntimePlan`; coordinator uses the first configured carrier and
+   fails closed when none exists.
+2. Add a raw HTTPS GET local cover client that connects to the native loopback
+   bridge, wraps that socket in TLS using the carrier origin hostname and keeps
+   a simple HTTP/1.1 keep-alive GET loop.
+3. Cover the starter with JVM tests through a local TCP bridge and TLS
+   `MockWebServer`, plus coordinator tests for missing carrier profile and plan
+   handoff.
+4. Update Android docs/worklog and run Android Docker/JVM checks plus ordinary
+   local regression checks.
+
+Completed:
+
+- Extended the local cover starter contract to receive the selected
+  `CarrierProbeRuntimePlan`; the coordinator now fails closed with
+  `carrier_profile_missing` when a product-flow profile has no carrier.
+- Added `RawHttpsLocalCoverClientStarter`: it connects to the native loopback
+  bridge, wraps that socket in TLS with the configured carrier origin hostname,
+  performs an initial HTTPS GET and keeps a background HTTP/1.1 keep-alive GET
+  loop until closed.
+- Added JVM coverage with a local TCP byte bridge plus TLS `MockWebServer`:
+  repeated GETs reach the origin through the bridge, unsupported WSS mode fails
+  without network use, HTTP status failures and TLS failures return non-secret
+  metadata errors.
+- Updated Android plan/boundary/roadmap/testing docs. Next Android work is
+  coordinator reconnect/backoff plus service-runner integration; raw WSS can
+  follow if needed.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the import/test-fixture
+  compile-fix iterations.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android headless runtime coordinator
 
 Goal:

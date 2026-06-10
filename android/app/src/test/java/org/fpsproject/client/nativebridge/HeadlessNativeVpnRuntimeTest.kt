@@ -1,6 +1,7 @@
 package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.config.AndroidClientProfile
+import org.fpsproject.client.runtime.CarrierProbeRuntimePlan
 import org.fpsproject.client.runtime.AndroidPlatformHooks
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.runtime.ResolvedEndpoint
@@ -31,8 +32,25 @@ class HeadlessNativeVpnRuntimeTest {
               "server_public_key_base64": "$key"
             }
           },
+          "carriers": [
+            {"mode": "https_get", "endpoint": "origin.example.test:443", "path": "/ping", "interval_ms": 1000}
+          ],
           "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true},
           "split_tunnel": {"allowed_uids": [10042]}
+        }
+    """.trimIndent()
+    private val noCarrierProfileJson = """
+        {
+          "network": {"server": "fps.example.test:443"},
+          "security": {
+            "zero_rtt": {
+              "enabled": true,
+              "profile_id": "android-test-v5",
+              "client_uuid": "$uuid",
+              "server_public_key_base64": "$key"
+            }
+          },
+          "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true}
         }
     """.trimIndent()
     private val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
@@ -303,6 +321,7 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(listOf(1L to true), backend.completedRawCarrierProtection)
         assertEquals(listOf(1L), backend.startedRawCarrierBridges)
         assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf("origin.example.test:443:/ping"), cover.startedPlans)
         assertEquals(1, hooks.establishTunCalls)
         assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
         assertEquals(listOf(1L), backend.startedTunPumps)
@@ -368,6 +387,21 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
         assertEquals("server_resolve_failed", snapshot.vpn.lastError)
         assertEquals(listOf("fps.example.test:443"), hooks.resolvedEndpoints)
+        assertEquals(emptyList<Triple<Long, String, Int>>(), backend.preparedRawCarriers)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenProfileHasNoCarrier() {
+        val backend = FakeCoordinatorNativeBackend()
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(noCarrierProfileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("carrier_profile_missing", snapshot.vpn.lastError)
         assertEquals(emptyList<Triple<Long, String, Int>>(), backend.preparedRawCarriers)
         assertEquals(emptyList<Int>(), cover.startedPorts)
         assertEquals(listOf(1L), backend.stoppedHandles)
@@ -994,9 +1028,11 @@ private class FakeLocalCoverClientStarter(
     private val result: LocalCoverClientStartResult = LocalCoverClientStartResult.started(),
 ) : LocalCoverClientStarter {
     val startedPorts = mutableListOf<Int>()
+    val startedPlans = mutableListOf<String>()
 
-    override fun start(localBridgePort: Int): LocalCoverClientStartResult {
+    override fun start(localBridgePort: Int, carrierPlan: CarrierProbeRuntimePlan): LocalCoverClientStartResult {
         startedPorts += localBridgePort
+        startedPlans += "${carrierPlan.probe.endpoint}:${carrierPlan.probe.path}"
         return result
     }
 }
@@ -1004,7 +1040,7 @@ private class FakeLocalCoverClientStarter(
 private class ThrowingLocalCoverClientStarter : LocalCoverClientStarter {
     val startedPorts = mutableListOf<Int>()
 
-    override fun start(localBridgePort: Int): LocalCoverClientStartResult {
+    override fun start(localBridgePort: Int, carrierPlan: CarrierProbeRuntimePlan): LocalCoverClientStartResult {
         startedPorts += localBridgePort
         throw IllegalStateException("cover boom")
     }

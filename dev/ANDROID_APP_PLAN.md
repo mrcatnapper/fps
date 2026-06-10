@@ -105,11 +105,15 @@ Delivered:
 - `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
   surface. It starts the native executor, resolves the FPS server through the
   underlying-network hook, prepares/protects/connects the raw carrier socket,
-  starts the native bridge, starts a fakeable local cover-client hook against
-  that bridge, drains native lease/auth events, establishes/attaches TUN, starts
-  the pump and applies pending split-tunnel policy decisions. This coordinator
-  intentionally covers one carrier attempt; reconnect/backoff and a real
-  Android cover-client implementation remain next.
+  starts the native bridge, starts a local cover-client hook against that
+  bridge, drains native lease/auth events, establishes/attaches TUN, starts the
+  pump and applies pending split-tunnel policy decisions. This coordinator
+  intentionally covers one carrier attempt; reconnect/backoff remains next.
+- `RawHttpsLocalCoverClientStarter` is the first real local cover-client
+  implementation. It uses the first configured Android carrier profile, opens a
+  TLS HTTPS GET keep-alive loop through the native loopback bridge and preserves
+  raw TLS bytes for `TlsTcpCarrierSession`. It is separate from OkHttp probes,
+  which still terminate TLS and remain health/probe support machinery.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -138,15 +142,15 @@ profile
 
 Tactical implementation order:
 
-1. **Real Android cover-client implementation.**
-   Replace the current fakeable local cover-client starter with an app-owned
-   HTTPS/WSS cover client that connects to the native loopback bridge and keeps
-   carrier traffic alive without terminating the FPS wire TLS stream.
-
-2. **Reconnect/backoff.**
+1. **Coordinator reconnect/backoff.**
    Extend the coordinator from one carrier attempt to a bounded reconnect loop
-   that restarts raw carrier socket, bridge and cover client after carrier
-   close/auth failure while preserving fail-closed TUN behavior.
+   that restarts raw carrier socket, bridge and local cover client after
+   carrier close/auth failure while preserving fail-closed TUN behavior.
+
+2. **WSS local cover client.**
+   Add a raw WSS local cover mode only after the HTTPS GET loop is wired through
+   the coordinator/service path. It must still feed raw TLS bytes to the native
+   loopback bridge and must not reuse OkHttp as an FPS wire carrier.
 
 3. **Production surface cleanup.**
    Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,

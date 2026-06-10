@@ -79,6 +79,11 @@ devices and future Gradle-managed emulators.
   the actual FPS path must use native `TlsTcpCarrierSession` over raw TCP/TLS
   streams so the core can parse carrier TLS records and insert classified FPS
   TLS records.
+- Added the first raw HTTPS local cover client. It connects to the native
+  loopback bridge, wraps that connection in TLS using the configured carrier
+  origin hostname and runs a simple HTTP/1.1 keep-alive GET loop. This is the
+  first app-owned Android cover path that preserves raw TLS bytes for
+  `TlsTcpCarrierSession`.
 - Added the first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start, stop action, lease-triggered `VpnService.Builder`
   establishment, leased IPv4 address/route planning and idempotent
@@ -145,10 +150,10 @@ product flow.
 1. **One coordinator owns the product lifecycle.**
    - `HeadlessNativeVpnRuntime` now owns the first single-attempt coordinator:
      start native executor, resolve via underlying network, protect/connect raw
-     socket, start bridge, start fakeable cover-client hook, drain lease/auth
+     socket, start bridge, start local cover-client hook, drain lease/auth
      events, establish TUN, start pump and drain/apply policy.
-   - The next coordinator step is a real Android cover-client implementation
-     and bounded reconnect/backoff, not another wire path.
+   - The next coordinator step is bounded reconnect/backoff and service-runner
+     integration, not another wire path.
    - Tests for this layer are integration-shaped: ordered lifecycle,
      fail-closed branches and observable counters, not individual helper
      arithmetic.
