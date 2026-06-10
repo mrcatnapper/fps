@@ -293,6 +293,10 @@ a reusable native core smoke library built from protocol codec/crypto, generic
 covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
 excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and
 Boost.JSON-heavy operator paths.
+JVM tests also cover the first headless coordinator that composes native start,
+underlying-network DNS, protected raw socket connect, bridge start, fakeable
+cover-client startup, encrypted lease handling, TUN attach/pump and split-tunnel
+policy drain as one fail-closed product flow.
 
 Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
 root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to

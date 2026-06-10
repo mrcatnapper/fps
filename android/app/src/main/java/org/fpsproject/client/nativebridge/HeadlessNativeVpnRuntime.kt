@@ -58,10 +58,43 @@ data class NativeVpnRuntimeSnapshot(
     }
 }
 
+interface LocalCoverClientHandle : AutoCloseable
+
+data class LocalCoverClientStartResult(
+    val handle: LocalCoverClientHandle?,
+    val error: String?,
+) {
+    init {
+        require((handle != null) != (error != null)) {
+            "local cover client start result must contain either a handle or an error"
+        }
+    }
+
+    companion object {
+        fun started(handle: LocalCoverClientHandle = NoopLocalCoverClientHandle): LocalCoverClientStartResult {
+            return LocalCoverClientStartResult(handle = handle, error = null)
+        }
+
+        fun failed(error: String = "cover_client_start_failed"): LocalCoverClientStartResult {
+            return LocalCoverClientStartResult(handle = null, error = error.ifBlank { "cover_client_start_failed" })
+        }
+    }
+}
+
+fun interface LocalCoverClientStarter {
+    fun start(localBridgePort: Int): LocalCoverClientStartResult
+}
+
+private object NoopLocalCoverClientHandle : LocalCoverClientHandle {
+    override fun close() = Unit
+}
+
 class HeadlessNativeVpnRuntime private constructor(
     private val controller: HeadlessVpnController,
     private val nativeRuntime: FpsNativeRuntime,
 ) : AutoCloseable {
+    private var activeCoverClient: LocalCoverClientHandle? = null
+
     companion object {
         fun create(
             profileText: String,
@@ -143,6 +176,51 @@ class HeadlessNativeVpnRuntime private constructor(
 
     fun startNativeCarrierBridge(): NativeRuntimeSnapshot = nativeRuntime.startRawCarrierBridge()
 
+    fun startCoordinated(
+        coverClientStarter: LocalCoverClientStarter,
+        maxNativeEvents: Int = 16,
+        maxPolicyPackets: Int = 64,
+    ): NativeVpnRuntimeSnapshot {
+        if (state != VpnRuntimeState.STOPPED) {
+            return snapshot()
+        }
+        val started = start()
+        if (started != VpnRuntimeState.WAITING_FOR_LEASE) {
+            return snapshot()
+        }
+        val endpoints = runCatching { resolveServerEndpoint() }
+            .getOrElse { return failCoordinated("server_resolve_failed") }
+        val endpoint = endpoints.firstOrNull()
+            ?: return failCoordinated("server_resolve_failed")
+        val carrier = startNativeCarrier(endpoint)
+        if (!carrier.rawCarrierActive) {
+            return failCoordinated(carrier.lastError ?: "raw_carrier_connect_failed")
+        }
+        val bridge = startNativeCarrierBridge()
+        if (!bridge.rawCarrierBridgeListening || bridge.rawCarrierBridgeListenPort <= 0) {
+            return failCoordinated(bridge.lastError ?: "raw_carrier_bridge_start_failed")
+        }
+        val cover = runCatching { coverClientStarter.start(bridge.rawCarrierBridgeListenPort) }
+            .getOrElse { return failCoordinated("cover_client_start_failed") }
+        val coverHandle = cover.handle
+        if (coverHandle == null) {
+            return failCoordinated(cover.error ?: "cover_client_start_failed")
+        }
+        activeCoverClient = coverHandle
+        return tickCoordinated(maxNativeEvents = maxNativeEvents, maxPolicyPackets = maxPolicyPackets)
+    }
+
+    fun tickCoordinated(maxNativeEvents: Int = 16, maxPolicyPackets: Int = 64): NativeVpnRuntimeSnapshot {
+        val next = applyNativeEvents(maxNativeEvents)
+        if (next == VpnRuntimeState.FAILED) {
+            return failCoordinated(controller.lastError ?: "native_event_failed")
+        }
+        if (next == VpnRuntimeState.RUNNING) {
+            applyPendingTunPolicy(maxPolicyPackets)
+        }
+        return snapshot()
+    }
+
     fun runClientAuthSmokeForTest(tamperServerAccept: Boolean = false): NativeRuntimeSnapshot {
         return nativeRuntime.runClientAuthSmokeForTest(tamperServerAccept)
     }
@@ -200,6 +278,7 @@ class HeadlessNativeVpnRuntime private constructor(
     }
 
     fun stop(): VpnRuntimeState {
+        closeCoverClient()
         nativeRuntime.stopRawCarrier()
         nativeRuntime.stopTunPump()
         nativeRuntime.stop()
@@ -209,5 +288,20 @@ class HeadlessNativeVpnRuntime private constructor(
     override fun close() {
         stop()
         nativeRuntime.close()
+    }
+
+    private fun failCoordinated(error: String): NativeVpnRuntimeSnapshot {
+        closeCoverClient()
+        nativeRuntime.stopRawCarrier()
+        nativeRuntime.stopTunPump()
+        nativeRuntime.stop()
+        controller.fail(error, closeTun = true)
+        return snapshot()
+    }
+
+    private fun closeCoverClient() {
+        val coverClient = activeCoverClient ?: return
+        activeCoverClient = null
+        runCatching { coverClient.close() }
     }
 }

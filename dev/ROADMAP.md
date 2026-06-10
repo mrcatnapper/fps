@@ -191,14 +191,17 @@ without claiming resistance to advanced timing/size traffic analysis.
   protected outbound TCP socket, exposes a loopback local-cover listener and
   passes TLS-record-shaped bytes through shared `TlsTcpCarrierSession`
   passthrough.
+- [x] Add first Android headless runtime coordinator: one carrier attempt now
+  drives native start, underlying-network resolve, socket protection/connect,
+  bridge start, fakeable cover-client hook, lease/TUN attach, pump start and
+  split-tunnel policy drain with fail-closed JVM tests.
 - Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
   `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
-  product-flow bias: attach Zero-RTT auth/lease registration to the protected
-  raw `TlsTcpCarrierSession` bridge, add inbound datagram-to-TUN writes, then
-  add one headless coordinator that drives carrier/auth/lease/TUN/policy
-  lifecycle end to end. Prefer integration-shaped Android tests over more
-  isolated smoke checks unless a small red test is needed to define a new
-  failure contract.
+  product-flow bias: implement the real Android cover-client side for the
+  native loopback bridge, add reconnect/backoff around the single-attempt
+  coordinator and then harden debug-only JNI/registry locking. Prefer
+  integration-shaped Android tests over more isolated smoke checks unless a
+  small red test is needed to define a new failure contract.
 
 ## Phase 7: Fuzzing And Soak
 

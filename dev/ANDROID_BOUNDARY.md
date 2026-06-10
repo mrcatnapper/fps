@@ -137,17 +137,19 @@ devices and future Gradle-managed emulators.
 
 ## Product-Focused Follow-Up Increments
 
-The Android boundary is now mature enough that the next work should compose
-existing pieces instead of adding more isolated proof points. Keep small TDD
-tests when a contract is ambiguous, but make each increment advance the
-headless VPN lifecycle.
+The Android boundary is now mature enough that new work should extend the
+headless VPN lifecycle instead of adding more isolated proof points. Keep small
+TDD tests when a contract is ambiguous, but make each increment advance the
+product flow.
 
 1. **One coordinator owns the product lifecycle.**
-   - `FpsVpnService` or `HeadlessNativeVpnRuntime` should own the full sequence:
+   - `HeadlessNativeVpnRuntime` now owns the first single-attempt coordinator:
      start native executor, resolve via underlying network, protect/connect raw
-     socket, start bridge, start cover client, drain lease event, establish TUN,
-     start pump, drain/apply policy and reconnect carriers on close.
-   - Tests for this layer should be integration-shaped: ordered lifecycle,
+     socket, start bridge, start fakeable cover-client hook, drain lease/auth
+     events, establish TUN, start pump and drain/apply policy.
+   - The next coordinator step is a real Android cover-client implementation
+     and bounded reconnect/backoff, not another wire path.
+   - Tests for this layer are integration-shaped: ordered lifecycle,
      fail-closed branches and observable counters, not individual helper
      arithmetic.
 

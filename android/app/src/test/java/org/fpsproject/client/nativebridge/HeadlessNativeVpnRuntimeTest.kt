@@ -275,6 +275,188 @@ class HeadlessNativeVpnRuntimeTest {
     }
 
     @Test
+    fun coordinatedStartRunsCarrierBridgeCoverLeaseTunAndPolicy() {
+        val backend = FakeCoordinatorNativeBackend(
+            initialNativeEvents = listOf(leaseEvent()),
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 501,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+            ),
+        )
+        val hooks = FakeAndroidHooks(
+            establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280),
+            uidForFlow = { 10042 },
+        )
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.RUNNING, snapshot.vpn.state)
+        assertEquals(listOf(1L), backend.startedHandles)
+        assertEquals(listOf("fps.example.test:443"), hooks.resolvedEndpoints)
+        assertEquals(listOf(Triple(1L, "203.0.113.10", 443)), backend.preparedRawCarriers)
+        assertEquals(listOf(77), hooks.protectedFds)
+        assertEquals(listOf(1L to true), backend.completedRawCarrierProtection)
+        assertEquals(listOf(1L), backend.startedRawCarrierBridges)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(1, hooks.establishTunCalls)
+        assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
+        assertEquals(listOf(1L), backend.startedTunPumps)
+        assertEquals(listOf(501L to SplitTunnelDecision.ALLOW), backend.completedPolicy)
+        assertTrue(snapshot.native.tunPumpRunning)
+    }
+
+    @Test
+    fun coordinatedStartCanWaitForLeaseAfterStartingCoverClient() {
+        val backend = FakeCoordinatorNativeBackend()
+        val cover = FakeLocalCoverClientStarter()
+        val hooks = FakeAndroidHooks()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.WAITING_FOR_LEASE, snapshot.vpn.state)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(0, hooks.establishTunCalls)
+        assertFalse(snapshot.vpn.tun.fdPresent)
+        assertEquals(1, backend.drainNativeEventsCalls)
+    }
+
+    @Test
+    fun coordinatedStartDoesNotStartNativeWhenVpnPermissionIsMissing() {
+        val backend = FakeCoordinatorNativeBackend()
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(vpnPermissionGranted = false), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.NEEDS_VPN_PERMISSION, snapshot.vpn.state)
+        assertEquals(emptyList<Long>(), backend.startedHandles)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenDnsResolutionReturnsNoEndpoint() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks(resolvedEndpointResults = emptyList())
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("server_resolve_failed", snapshot.vpn.lastError)
+        assertEquals(listOf("fps.example.test:443"), hooks.resolvedEndpoints)
+        assertEquals(emptyList<Triple<Long, String, Int>>(), backend.preparedRawCarriers)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenDnsResolutionThrows() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks(resolveFailure = IllegalStateException("resolver boom"))
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("server_resolve_failed", snapshot.vpn.lastError)
+        assertEquals(listOf("fps.example.test:443"), hooks.resolvedEndpoints)
+        assertEquals(emptyList<Triple<Long, String, Int>>(), backend.preparedRawCarriers)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenSocketProtectFails() {
+        val backend = FakeCoordinatorNativeBackend()
+        val hooks = FakeAndroidHooks(protectSocketResult = false)
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("socket_protect_failed", snapshot.vpn.lastError)
+        assertEquals(listOf(77), hooks.protectedFds)
+        assertEquals(listOf(1L to false), backend.completedRawCarrierProtection)
+        assertEquals(emptyList<Long>(), backend.startedRawCarrierBridges)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenNativeBridgeCannotStart() {
+        val backend = FakeCoordinatorNativeBackend(bridgeResult = BridgeResult.FAIL_RAW_CARRIER_BRIDGE)
+        val cover = FakeLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("raw_carrier_bridge_start_failed", snapshot.vpn.lastError)
+        assertEquals(listOf(1L), backend.startedRawCarrierBridges)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenCoverClientCannotStart() {
+        val backend = FakeCoordinatorNativeBackend()
+        val cover = FakeLocalCoverClientStarter(result = LocalCoverClientStartResult.failed("cover_client_start_failed"))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("cover_client_start_failed", snapshot.vpn.lastError)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedStartFailsClosedWhenCoverClientThrows() {
+        val backend = FakeCoordinatorNativeBackend()
+        val cover = ThrowingLocalCoverClientStarter()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("cover_client_start_failed", snapshot.vpn.lastError)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedTickFailsClosedAndClosesCoverClientOnAuthFailureEvent() {
+        val coverHandle = CountingLocalCoverClientHandle()
+        val backend = FakeCoordinatorNativeBackend(
+            initialNativeEvents = listOf(NativeRuntimeEvent(type = NATIVE_EVENT_CARRIER_AUTH_FAILED, error = "carrier_auth_failed")),
+        )
+        val cover = FakeLocalCoverClientStarter(result = LocalCoverClientStartResult.started(coverHandle))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(cover)
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("carrier_auth_failed", snapshot.vpn.lastError)
+        assertEquals(1, coverHandle.closeCount)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
     fun nativeLeaseEventRunsExistingLeaseBeforeTunPath() {
         val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
         val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
@@ -431,9 +613,15 @@ private enum class PumpResult {
     FAIL_TUN_NOT_ATTACHED,
 }
 
+private enum class BridgeResult {
+    SUCCESS,
+    FAIL_RAW_CARRIER_BRIDGE,
+}
+
 private class FakeCoordinatorNativeBackend(
     private val attachResult: AttachResult = AttachResult.SUCCESS,
     private val pumpResult: PumpResult = PumpResult.SUCCESS,
+    private val bridgeResult: BridgeResult = BridgeResult.SUCCESS,
     initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
     initialNativeEvents: List<NativeRuntimeEvent> = emptyList(),
 ) : FpsNativeBackend {
@@ -658,6 +846,14 @@ private class FakeCoordinatorNativeBackend(
                 lastError = "raw_carrier_not_connected",
             ).also { snapshots[handle] = it }
         }
+        if (bridgeResult == BridgeResult.FAIL_RAW_CARRIER_BRIDGE) {
+            return current.copy(
+                rawCarrierBridgeListening = false,
+                rawCarrierBridgeListenPort = 0,
+                rawCarrierBridgeActive = false,
+                lastError = "raw_carrier_bridge_start_failed",
+            ).also { snapshots[handle] = it }
+        }
         return current.copy(
             rawCarrierBridgeListening = true,
             rawCarrierBridgeListenPort = 18080,
@@ -764,6 +960,8 @@ private class FakeAndroidHooks(
     private val establishedTun: EstablishedTun? = EstablishedTun.borrowed(fd = 7, mtu = 1280),
     private val uidForFlow: (TunFlowTuple) -> Int = { -1 },
     private val protectSocketResult: Boolean = true,
+    private val resolvedEndpointResults: List<ResolvedEndpoint> = listOf(ResolvedEndpoint("203.0.113.10", 443)),
+    private val resolveFailure: RuntimeException? = null,
 ) : AndroidPlatformHooks {
     var establishTunCalls = 0
     val protectedFds = mutableListOf<Int>()
@@ -785,10 +983,39 @@ private class FakeAndroidHooks(
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
         resolvedEndpoints += "$host:$port"
-        return listOf(ResolvedEndpoint("203.0.113.10", port))
+        resolveFailure?.let { throw it }
+        return resolvedEndpointResults.map { it.copy(port = port) }
     }
 
     override fun uidForFlow(flow: TunFlowTuple) = uidForFlow.invoke(flow)
+}
+
+private class FakeLocalCoverClientStarter(
+    private val result: LocalCoverClientStartResult = LocalCoverClientStartResult.started(),
+) : LocalCoverClientStarter {
+    val startedPorts = mutableListOf<Int>()
+
+    override fun start(localBridgePort: Int): LocalCoverClientStartResult {
+        startedPorts += localBridgePort
+        return result
+    }
+}
+
+private class ThrowingLocalCoverClientStarter : LocalCoverClientStarter {
+    val startedPorts = mutableListOf<Int>()
+
+    override fun start(localBridgePort: Int): LocalCoverClientStartResult {
+        startedPorts += localBridgePort
+        throw IllegalStateException("cover boom")
+    }
+}
+
+private class CountingLocalCoverClientHandle : LocalCoverClientHandle {
+    var closeCount = 0
+
+    override fun close() {
+        closeCount += 1
+    }
 }
 
 private class CountingTunHandle(override val fd: Int) : TunHandle {

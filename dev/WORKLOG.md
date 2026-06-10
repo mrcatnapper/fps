@@ -4,6 +4,50 @@
 
 ## 2026-06-10
 
+### Android headless runtime coordinator
+
+Goal:
+
+- Compose the existing Android runtime bricks into one headless product-flow
+  lifecycle before adding UI/service status work.
+
+Plan:
+
+1. Add a small Kotlin coordinator surface on `HeadlessNativeVpnRuntime`.
+2. Keep the cover-client side fakeable through a narrow local bridge starter
+   hook; do not introduce a second wire carrier path.
+3. Cover ordered success and fail-closed branches with JVM tests:
+   permission, DNS, socket protect, native bridge, cover start, auth failure,
+   lease/TUN attach and policy drain.
+4. Update Android developer notes and run Android Docker/JVM checks plus the
+   usual source/script sanity checks.
+
+Completed:
+
+- Added a `HeadlessNativeVpnRuntime` coordinator surface for one product-shaped
+  carrier attempt: native start, underlying-network resolve, raw socket
+  protect/connect, native bridge, fakeable local cover-client hook, native
+  event drain, lease-triggered TUN attach/pump and split-tunnel policy drain.
+- Added a narrow `LocalCoverClientStarter` / `LocalCoverClientHandle` hook so
+  the next Android increment can plug in a real app-owned cover client without
+  creating a second FPS wire carrier path.
+- Added JVM tests for the successful ordered flow and fail-closed branches:
+  missing VPN permission, empty/throwing DNS, socket protection failure, bridge
+  failure, cover start failure/exception and native auth failure cleanup.
+- Updated Android plan/boundary/roadmap/testing docs to mark the single-attempt
+  coordinator done and keep real cover-client plus reconnect/backoff as next
+  work.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the initial compile-fix
+  iteration.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android bidirectional TUN/data path
 
 Goal:

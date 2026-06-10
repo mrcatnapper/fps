@@ -101,8 +101,15 @@ Delivered:
   also bridge a protected raw carrier socket to a loopback local-cover socket
   through `TlsTcpCarrierSession` with real client-side Zero-RTT options. Managed
   emulator coverage verifies successful encrypted lease delivery and tampered
-  server-accept failure on this bridge. The remaining production gap is a
-  coordinator that drives the pieces as one lifecycle.
+  server-accept failure on this bridge.
+- `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
+  surface. It starts the native executor, resolves the FPS server through the
+  underlying-network hook, prepares/protects/connects the raw carrier socket,
+  starts the native bridge, starts a fakeable local cover-client hook against
+  that bridge, drains native lease/auth events, establishes/attaches TUN, starts
+  the pump and applies pending split-tunnel policy decisions. This coordinator
+  intentionally covers one carrier attempt; reconnect/backoff and a real
+  Android cover-client implementation remain next.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -131,24 +138,25 @@ profile
 
 Tactical implementation order:
 
-1. **Runtime coordinator.**
-   Add one headless coordinator owned by `FpsVpnService` or
-   `HeadlessNativeVpnRuntime` that performs the product sequence: start native
-   executor, resolve endpoint through the underlying-network hook, prepare and
-   protect the raw socket, connect, start the native bridge, start the app-owned
-   cover client against the bridge listener, drain native events until lease,
-   establish TUN, start the pump, drain/apply split-tunnel policy and reconnect
-   carriers on close/backoff.
+1. **Real Android cover-client implementation.**
+   Replace the current fakeable local cover-client starter with an app-owned
+   HTTPS/WSS cover client that connects to the native loopback bridge and keeps
+   carrier traffic alive without terminating the FPS wire TLS stream.
 
-2. **Production surface cleanup.**
+2. **Reconnect/backoff.**
+   Extend the coordinator from one carrier attempt to a bounded reconnect loop
+   that restarts raw carrier socket, bridge and cover client after carrier
+   close/auth failure while preserving fail-closed TUN behavior.
+
+3. **Production surface cleanup.**
    Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
    and then add operator/UI-facing lifecycle/status features. Do this after the
    headless product path works, so cleanup does not harden the wrong API shape.
 
 Testing expectation:
 
-- JVM tests should validate coordinator sequencing and fail-closed branches
-  with fake platform/native backends.
+- JVM tests validate coordinator sequencing and fail-closed branches with fake
+  platform/native backends.
 - Managed-device tests should validate the smallest production-shaped flow that
   needs real Android framework behavior: protected fd, real `VpnService` fd and
   native bridge/auth/TUN wiring.
