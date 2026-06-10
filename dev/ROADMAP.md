@@ -198,13 +198,15 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add first raw Android HTTPS local cover client: configured carrier
   profiles can now drive a TLS HTTPS GET keep-alive loop through the native
   loopback bridge without terminating FPS wire TLS in OkHttp.
+- [x] Add Android service-owned coordinated runner: `FpsVpnService` now starts
+  the raw native carrier/local-cover path through a bounded reconnect/backoff
+  loop with metadata-only status snapshots.
 - Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
   `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
-  product-flow bias: add reconnect/backoff around the single-attempt
-  coordinator, wire the coordinator into the service runner, add raw WSS cover
-  mode if needed and then harden debug-only JNI/registry locking. Prefer
-  integration-shaped Android tests over more isolated smoke checks unless a
-  small red test is needed to define a new failure contract.
+  product-flow bias: add raw WSS cover mode if needed and then harden
+  debug-only JNI/registry locking. Prefer integration-shaped Android tests over
+  more isolated smoke checks unless a small red test is needed to define a new
+  failure contract.
 
 ## Phase 7: Fuzzing And Soak
 

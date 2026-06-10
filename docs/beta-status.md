@@ -78,8 +78,9 @@ and signed artifacts remain deferred.
   socket-protection failure handling, deterministic fake-transport carrier
   probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS probe
   transport tests, native-runtime wrapper tests, bidirectional native TUN data
-  movement and two-phase lease-before-TUN state transitions without requiring an
-  emulator.
+  movement, two-phase lease-before-TUN state transitions and the service-owned
+  raw carrier/local-cover coordinated runner with bounded backoff, without
+  requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
   dispatch input before pushing images. It publishes only two tags per run: the

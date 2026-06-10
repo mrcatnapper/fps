@@ -84,6 +84,11 @@ devices and future Gradle-managed emulators.
   origin hostname and runs a simple HTTP/1.1 keep-alive GET loop. This is the
   first app-owned Android cover path that preserves raw TLS bytes for
   `TlsTcpCarrierSession`.
+- Added the first service-owned coordinated runner around the raw Android
+  carrier path. `CoordinatedNativeVpnRunner` drives
+  `HeadlessNativeVpnRuntime.startCoordinated(...)`, keeps ticking native
+  lease/auth/policy events, retries transient carrier/auth failures with bounded
+  backoff and is now the runtime path used by `FpsVpnService`.
 - Added the first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start, stop action, lease-triggered `VpnService.Builder`
   establishment, leased IPv4 address/route planning and idempotent
@@ -148,15 +153,15 @@ TDD tests when a contract is ambiguous, but make each increment advance the
 product flow.
 
 1. **One coordinator owns the product lifecycle.**
-   - `HeadlessNativeVpnRuntime` now owns the first single-attempt coordinator:
-     start native executor, resolve via underlying network, protect/connect raw
-     socket, start bridge, start local cover-client hook, drain lease/auth
-     events, establish TUN, start pump and drain/apply policy.
-   - The next coordinator step is bounded reconnect/backoff and service-runner
-     integration, not another wire path.
+   - `FpsVpnService` now starts a `CoordinatedNativeVpnRunner` instead of the
+     lower-level one-shot runtime. The runner owns native start, underlying
+     network resolve, protect/connect, raw bridge, local cover client, native
+     event ticks, lease-triggered TUN setup and policy drain.
+   - Transient carrier/auth failures enter bounded retry/backoff after closing
+     the old runtime; VPN permission and invalid profile remain terminal.
    - Tests for this layer are integration-shaped: ordered lifecycle,
-     fail-closed branches and observable counters, not individual helper
-     arithmetic.
+     reconnect/backoff, fail-closed branches and observable counters, not
+     individual helper arithmetic.
 
 2. **Harden the API surface after the product path exists.**
    - Gate debug-only JNI hooks out of production variants.

@@ -107,8 +107,14 @@ Delivered:
   underlying-network hook, prepares/protects/connects the raw carrier socket,
   starts the native bridge, starts a local cover-client hook against that
   bridge, drains native lease/auth events, establishes/attaches TUN, starts the
-  pump and applies pending split-tunnel policy decisions. This coordinator
-  intentionally covers one carrier attempt; reconnect/backoff remains next.
+  pump and applies pending split-tunnel policy decisions.
+- `CoordinatedNativeVpnRunner` wraps that one-attempt coordinator in a
+  service-owned retry loop. It owns a runtime instance, the raw local cover
+  starter and a scheduler; transient resolve/connect/bridge/cover/auth
+  failures close the runtime and enter bounded exponential backoff, while
+  missing VPN permission and invalid carrier profile remain terminal. The
+  production `FpsVpnService` now starts this runner with
+  `RawHttpsLocalCoverClientStarter`.
 - `RawHttpsLocalCoverClientStarter` is the first real local cover-client
   implementation. It uses the first configured Android carrier profile, opens a
   TLS HTTPS GET keep-alive loop through the native loopback bridge and preserves
@@ -142,25 +148,20 @@ profile
 
 Tactical implementation order:
 
-1. **Coordinator reconnect/backoff.**
-   Extend the coordinator from one carrier attempt to a bounded reconnect loop
-   that restarts raw carrier socket, bridge and local cover client after
-   carrier close/auth failure while preserving fail-closed TUN behavior.
-
-2. **WSS local cover client.**
+1. **WSS local cover client.**
    Add a raw WSS local cover mode only after the HTTPS GET loop is wired through
    the coordinator/service path. It must still feed raw TLS bytes to the native
    loopback bridge and must not reuse OkHttp as an FPS wire carrier.
 
-3. **Production surface cleanup.**
+2. **Production surface cleanup.**
    Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
    and then add operator/UI-facing lifecycle/status features. Do this after the
    headless product path works, so cleanup does not harden the wrong API shape.
 
 Testing expectation:
 
-- JVM tests validate coordinator sequencing and fail-closed branches with fake
-  platform/native backends.
+- JVM tests validate coordinator sequencing, retry/backoff, service-runner
+  lifecycle and fail-closed branches with fake platform/native backends.
 - Managed-device tests should validate the smallest production-shaped flow that
   needs real Android framework behavior: protected fd, real `VpnService` fd and
   native bridge/auth/TUN wiring.

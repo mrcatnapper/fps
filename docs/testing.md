@@ -210,7 +210,10 @@ delivery, starts the native executor lifecycle and duplicates the descriptor
 into native-owned runtime state. They also exercise the Kotlin/JNI-facing TUN
 pump lifecycle through fake backends: pump startup requires a started runtime
 and attached TUN fd, lease-triggered attach starts the pump, and stop/close are
-idempotent. They assert that lease-triggered TUN startup requires
+idempotent. Current JVM tests also cover the service-owned Android coordinated
+runner: native raw carrier start, local cover-client start, lease/TUN/policy
+ticks, transient failure backoff/retry, VPN-permission terminal state and
+metadata-only snapshots. They assert that lease-triggered TUN startup requires
 `tun.enabled=true` and that snapshots report only non-secret
 state/TUN/carrier-probe/native metadata. These checks still do not require an
 emulator or a real Android `VpnService` instance.

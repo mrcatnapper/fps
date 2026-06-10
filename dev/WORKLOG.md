@@ -4,6 +4,56 @@
 
 ## 2026-06-10
 
+### Android coordinated runner reconnect/backoff
+
+Goal:
+
+- Turn the one-shot Android coordinated runtime into a service-owned runtime
+  loop that can retry carrier/auth failures without introducing another wire
+  carrier path.
+
+Plan:
+
+1. Add JVM tests for a small coordinated runner around
+   `HeadlessNativeVpnRuntime`: initial product-flow success, transient
+   DNS/connect/cover/auth failures entering bounded backoff, retry after delay,
+   backoff reset after success, missing VPN permission as terminal and
+   idempotent stop cleanup.
+2. Implement the runner with injectable runtime factory, cover-client starter
+   and scheduler; production uses a single background scheduled executor,
+   tests use a deterministic manual scheduler.
+3. Wire `FpsVpnService` to the runner and the real
+   `RawHttpsLocalCoverClientStarter`, keeping status snapshots metadata-only.
+4. Update Android developer notes and run Android Docker/JVM checks plus local
+   source/script/C++ sanity checks.
+
+Completed:
+
+- Added `CoordinatedNativeVpnRunner`, a service-owned Kotlin runner around
+  `HeadlessNativeVpnRuntime.startCoordinated(...)`. It owns the raw local cover
+  starter and scheduler, ticks native lease/auth/policy events, treats missing
+  VPN permission and invalid carrier profiles as terminal states, and retries
+  transient resolve/connect/bridge/cover/auth failures with bounded exponential
+  backoff.
+- Wired `FpsVpnService` to start the coordinated runner with
+  `RawHttpsLocalCoverClientStarter`; the lower-level one-shot runtime remains
+  available for focused tests and debug harnesses.
+- Added JVM coverage for successful product-flow startup, scheduled ticks,
+  transient DNS retry, auth-failure cleanup/backoff, terminal VPN permission,
+  idempotent stop and metadata-only snapshots.
+- Updated Android plan/boundary/roadmap/testing/spec/beta-status docs.
+
+Verification:
+
+- Red step: `tools/run_android_checks.sh --docker` failed on unresolved
+  `CoordinatedNativeVpnRunner*` types after adding tests.
+- `tools/run_android_checks.sh --docker` passed after implementation.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android raw HTTPS local cover client
 
 Goal:

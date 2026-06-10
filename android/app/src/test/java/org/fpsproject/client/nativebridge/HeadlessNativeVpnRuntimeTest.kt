@@ -13,6 +13,7 @@ import org.fpsproject.client.policy.TunFlowTuple
 import org.fpsproject.client.policy.TunProtocol
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.Socket
@@ -488,6 +489,221 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(1, coverHandle.closeCount)
         assertEquals(listOf(1L), backend.stoppedRawCarriers)
         assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedRunnerStartsProductFlowAndSchedulesTicks() {
+        val backend = FakeCoordinatorNativeBackend(
+            initialNativeEvents = listOf(leaseEvent()),
+            initialPolicyPackets = listOf(
+                NativeTunPolicyPacket(
+                    packetId = 601,
+                    packetSize = 28,
+                    flow = TunFlowTuple(TunProtocol.UDP, 0x0a420002, 53000, 0x5db8d822, 443),
+                ),
+            ),
+        )
+        val hooks = FakeAndroidHooks(
+            establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280),
+            uidForFlow = { 10042 },
+        )
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val cover = FakeLocalCoverClientStarter()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileJson, hooks, backend) },
+            coverClientStarter = cover,
+            scheduler = scheduler,
+            tickIntervalMs = 250,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        val snapshot = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.RUNNING, snapshot.state)
+        assertEquals(1, snapshot.attempts)
+        assertEquals(0, snapshot.reconnects)
+        assertEquals(0L, snapshot.nextRetryDelayMs)
+        assertNull(snapshot.lastError)
+        assertEquals(VpnRuntimeState.RUNNING, snapshot.runtime.vpn.state)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf(601L to SplitTunnelDecision.ALLOW), backend.completedPolicy)
+
+        scheduler.advanceBy(249)
+        assertEquals(1, backend.drainNativeEventsCalls)
+        scheduler.advanceBy(1)
+        assertEquals(2, backend.drainNativeEventsCalls)
+    }
+
+    @Test
+    fun coordinatedRunnerRetriesTransientResolveFailureWithBoundedBackoff() {
+        val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
+        val hooks = FakeAndroidHooks(
+            establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280),
+            resolvedEndpointSequence = ArrayDeque(
+                listOf(
+                    emptyList(),
+                    listOf(ResolvedEndpoint("203.0.113.10", 443)),
+                ),
+            ),
+        )
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val cover = FakeLocalCoverClientStarter()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileJson, hooks, backend) },
+            coverClientStarter = cover,
+            scheduler = scheduler,
+            initialBackoffMs = 1000,
+            maxBackoffMs = 30_000,
+            tickIntervalMs = 250,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        val failed = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.BACKOFF, failed.state)
+        assertEquals("server_resolve_failed", failed.lastError)
+        assertEquals(1, failed.attempts)
+        assertEquals(1, failed.reconnects)
+        assertEquals(1000L, failed.nextRetryDelayMs)
+        assertTrue(backend.stoppedHandles.contains(1L))
+        assertEquals(listOf(1L), backend.closedHandles)
+        assertEquals(emptyList<Int>(), cover.startedPorts)
+
+        scheduler.advanceBy(999)
+        assertEquals(1, backend.createdProfiles.size)
+        scheduler.advanceBy(1)
+        val recovered = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.RUNNING, recovered.state)
+        assertEquals(2, recovered.attempts)
+        assertEquals(1, recovered.reconnects)
+        assertEquals(0L, recovered.nextRetryDelayMs)
+        assertNull(recovered.lastError)
+        assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf(1L, 2L), backend.startedHandles)
+    }
+
+    @Test
+    fun coordinatedRunnerStopsRetryingWhenVpnPermissionIsMissing() {
+        val backend = FakeCoordinatorNativeBackend()
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = {
+                HeadlessNativeVpnRuntime.create(
+                    profileJson,
+                    FakeAndroidHooks(vpnPermissionGranted = false),
+                    backend,
+                )
+            },
+            coverClientStarter = FakeLocalCoverClientStarter(),
+            scheduler = scheduler,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        scheduler.advanceBy(60_000)
+        val snapshot = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.NEEDS_VPN_PERMISSION, snapshot.state)
+        assertEquals(1, snapshot.attempts)
+        assertEquals(0, snapshot.reconnects)
+        assertEquals(VpnRuntimeState.NEEDS_VPN_PERMISSION, snapshot.runtime.vpn.state)
+        assertEquals(emptyList<Long>(), backend.startedHandles)
+    }
+
+    @Test
+    fun coordinatedRunnerTreatsRuntimeFactoryFailureAsTerminalConfigError() {
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { throw IllegalArgumentException("bad profile") },
+            coverClientStarter = FakeLocalCoverClientStarter(),
+            scheduler = scheduler,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        scheduler.advanceBy(60_000)
+        val snapshot = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.FAILED, snapshot.state)
+        assertEquals("runtime_create_failed", snapshot.lastError)
+        assertEquals(1, snapshot.attempts)
+        assertEquals(0, snapshot.reconnects)
+        assertEquals(0L, snapshot.nextRetryDelayMs)
+    }
+
+    @Test
+    fun coordinatedRunnerBacksOffAndClosesCoverOnAuthFailure() {
+        val coverHandle = CountingLocalCoverClientHandle()
+        val backend = FakeCoordinatorNativeBackend(
+            initialNativeEvents = listOf(NativeRuntimeEvent(type = NATIVE_EVENT_CARRIER_AUTH_FAILED, error = "carrier_auth_failed")),
+        )
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend) },
+            coverClientStarter = FakeLocalCoverClientStarter(LocalCoverClientStartResult.started(coverHandle)),
+            scheduler = scheduler,
+            initialBackoffMs = 1000,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        val snapshot = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.BACKOFF, snapshot.state)
+        assertEquals("carrier_auth_failed", snapshot.lastError)
+        assertEquals(1, snapshot.reconnects)
+        assertEquals(1000L, snapshot.nextRetryDelayMs)
+        assertEquals(1, coverHandle.closeCount)
+        assertTrue(backend.stoppedRawCarriers.contains(1L))
+        assertTrue(backend.stoppedHandles.contains(1L))
+        assertEquals(listOf(1L), backend.closedHandles)
+    }
+
+    @Test
+    fun coordinatedRunnerStopCancelsRetryAndClosesRuntimeIdempotently() {
+        val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
+        val coverHandle = CountingLocalCoverClientHandle()
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend) },
+            coverClientStarter = FakeLocalCoverClientStarter(LocalCoverClientStartResult.started(coverHandle)),
+            scheduler = scheduler,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        runner.stop()
+        runner.stop()
+        scheduler.advanceBy(60_000)
+        val snapshot = runner.snapshot()
+
+        assertEquals(CoordinatedNativeVpnRunnerState.STOPPED, snapshot.state)
+        assertEquals(VpnRuntimeState.STOPPED, snapshot.runtime.vpn.state)
+        assertEquals(1, coverHandle.closeCount)
+        assertEquals(listOf(1L), backend.closedHandles)
+        assertEquals(1, backend.createdProfiles.size)
+    }
+
+    @Test
+    fun coordinatedRunnerSnapshotDoesNotExposeProfileOrIdentityMaterial() {
+        val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
+        val scheduler = ManualCoordinatedNativeVpnRunnerScheduler()
+        val runner = CoordinatedNativeVpnRunner(
+            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend) },
+            coverClientStarter = FakeLocalCoverClientStarter(),
+            scheduler = scheduler,
+        )
+
+        runner.start()
+        scheduler.runDue()
+        val text = runner.snapshot().toString()
+
+        assertFalse(text.contains(profileJson))
+        assertFalse(text.contains(uuid))
+        assertFalse(text.contains(key))
     }
 
     @Test
@@ -995,6 +1211,7 @@ private class FakeAndroidHooks(
     private val uidForFlow: (TunFlowTuple) -> Int = { -1 },
     private val protectSocketResult: Boolean = true,
     private val resolvedEndpointResults: List<ResolvedEndpoint> = listOf(ResolvedEndpoint("203.0.113.10", 443)),
+    private val resolvedEndpointSequence: ArrayDeque<List<ResolvedEndpoint>> = ArrayDeque(),
     private val resolveFailure: RuntimeException? = null,
 ) : AndroidPlatformHooks {
     var establishTunCalls = 0
@@ -1018,6 +1235,10 @@ private class FakeAndroidHooks(
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
         resolvedEndpoints += "$host:$port"
         resolveFailure?.let { throw it }
+        val sequenced = resolvedEndpointSequence.removeFirstOrNull()
+        if (sequenced != null) {
+            return sequenced.map { it.copy(port = port) }
+        }
         return resolvedEndpointResults.map { it.copy(port = port) }
     }
 
@@ -1059,5 +1280,55 @@ private class CountingTunHandle(override val fd: Int) : TunHandle {
 
     override fun close() {
         closeCount += 1
+    }
+}
+
+private class ManualCoordinatedNativeVpnRunnerScheduler : CoordinatedNativeVpnRunnerScheduler {
+    private data class Scheduled(
+        val dueAtMs: Long,
+        val sequence: Long,
+        var cancelled: Boolean = false,
+        val task: () -> Unit,
+    ) : CoordinatedNativeVpnScheduledTask {
+        override fun cancel() {
+            cancelled = true
+        }
+    }
+
+    private var nowMs = 0L
+    private var nextSequence = 0L
+    private val scheduled = mutableListOf<Scheduled>()
+
+    override fun nowMs() = nowMs
+
+    override fun schedule(delayMs: Long, task: () -> Unit): CoordinatedNativeVpnScheduledTask {
+        val next = Scheduled(
+            dueAtMs = nowMs + delayMs.coerceAtLeast(0),
+            sequence = nextSequence++,
+            task = task,
+        )
+        scheduled += next
+        return next
+    }
+
+    fun advanceBy(deltaMs: Long) {
+        nowMs += deltaMs
+        runDue()
+    }
+
+    fun runDue() {
+        while (true) {
+            val next = scheduled
+                .filter { !it.cancelled && it.dueAtMs <= nowMs }
+                .minWithOrNull(compareBy<Scheduled> { it.dueAtMs }.thenBy { it.sequence })
+                ?: return
+            scheduled.remove(next)
+            next.task()
+        }
+    }
+
+    override fun close() {
+        scheduled.forEach { it.cancel() }
+        scheduled.clear()
     }
 }
