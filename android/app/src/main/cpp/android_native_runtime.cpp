@@ -15,10 +15,12 @@
 #include <cstring>
 #include <deque>
 #include <future>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -29,7 +31,11 @@
 
 #include "fps/core/crypto.hpp"
 #include "fps/core/enum.hpp"
+#include "fps/core/fps_upgrade_controller.hpp"
+#include "fps/core/identity.hpp"
+#include "fps/core/tls_record_layer.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
+#include "fps/net/tun_lease_control.hpp"
 #include "fps/net/tun_packet.hpp"
 
 namespace fps::android_native {
@@ -41,8 +47,10 @@ constexpr auto kTunPumpPollInterval = 10ms;
 constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
+constexpr std::size_t kNativeEventQueueCapacity = 64;
 constexpr fps::net::CarrierId kFakeCarrierId = 1;
 constexpr auto kRawCarrierConnectTimeout = 3s;
+constexpr std::string_view kAndroidAuthSmokeProfileIdFallback{"android-auth-smoke-v5"};
 
 enum class TunPacketSinkMode {
     none,
@@ -114,6 +122,124 @@ private:
     int fd_ = -1;
 };
 
+struct ClientAuthConfig {
+    std::string profile_id;
+    fps::X25519KeyPair client_key_pair{};
+    fps::X25519PublicKey configured_server_public_key{};
+};
+
+[[nodiscard]] auto fixed_smoke_server_key_pair() -> fps::CryptoResult<fps::X25519KeyPair> {
+    fps::X25519KeyPair out;
+    for(std::size_t index = 0; index < out.private_key.size(); ++index) {
+        out.private_key[index] = static_cast<std::byte>(index + 1U);
+    }
+    auto public_key = fps::x25519_public_from_private(out.private_key);
+    if(!public_key) {
+        return fps::CryptoResult<fps::X25519KeyPair>::failure(public_key.error());
+    }
+    out.public_key = public_key.value();
+    return fps::CryptoResult<fps::X25519KeyPair>::success(out);
+}
+
+[[nodiscard]] auto parse_x25519_public_key_base64(std::string_view text) -> fps::Result<fps::X25519PublicKey, std::string> {
+    auto decoded = fps::base64_decode(text);
+    if(!decoded) {
+        return fps::Result<fps::X25519PublicKey, std::string>::failure(decoded.error());
+    }
+    if(decoded.value().size() != fps::kX25519KeySize) {
+        return fps::Result<fps::X25519PublicKey, std::string>::failure("server_public_key_base64 must decode to 32 bytes");
+    }
+    fps::X25519PublicKey out{};
+    std::copy(decoded.value().begin(), decoded.value().end(), out.begin());
+    return fps::Result<fps::X25519PublicKey, std::string>::success(out);
+}
+
+[[nodiscard]] auto parse_single_tls_record(std::span<const std::byte> wire) -> std::optional<fps::TlsRecord> {
+    fps::TlsRecordParser parser;
+    auto parsed = parser.feed(wire);
+    if(!parsed.errors.empty() || parsed.records.size() != 1U || parsed.pending_bytes != 0U) {
+        return std::nullopt;
+    }
+    return std::move(parsed.records.front());
+}
+
+[[nodiscard]] auto app_record(std::initializer_list<unsigned int> values) -> std::optional<fps::ByteVector> {
+    fps::ByteVector payload;
+    payload.reserve(values.size());
+    for(const auto value : values) {
+        payload.push_back(static_cast<std::byte>(value & 0xffU));
+    }
+    auto record = fps::build_tls_application_data_record(payload);
+    if(!record) {
+        return std::nullopt;
+    }
+    return std::move(record).value();
+}
+
+[[nodiscard]] auto client_controller_config(const ClientAuthConfig& auth, const fps::X25519KeyPair& smoke_server_key_pair) -> fps::FpsUpgradeControllerConfig {
+    const auto profile_id = auth.profile_id.empty() ? std::string{kAndroidAuthSmokeProfileIdFallback} : auth.profile_id;
+    fps::ZeroRttUpgradeConfig zero_rtt{
+        .role = fps::ZeroRttUpgradeRole::client,
+        .local_static_private = auth.client_key_pair.private_key,
+        .local_static_public = auth.client_key_pair.public_key,
+        .peer_static_public = smoke_server_key_pair.public_key,
+        .allowed_client_public_keys = {},
+        .profile_id = profile_id,
+        .version = fps::kFpsWireVersion,
+        .capabilities = 1,
+        .max_padding_size = 64,
+    };
+    return fps::FpsUpgradeControllerConfig{
+        .zero_rtt = std::move(zero_rtt),
+        .parser_options = {},
+        .record_options = {},
+        .profile_id = profile_id,
+        .upgrade_direction = fps::Direction::client_to_server,
+        .min_records_before_trial = 1,
+    };
+}
+
+[[nodiscard]] auto server_controller_config(const ClientAuthConfig& auth, const fps::X25519KeyPair& smoke_server_key_pair) -> fps::FpsUpgradeControllerConfig {
+    const auto profile_id = auth.profile_id.empty() ? std::string{kAndroidAuthSmokeProfileIdFallback} : auth.profile_id;
+    fps::ZeroRttUpgradeConfig zero_rtt{
+        .role = fps::ZeroRttUpgradeRole::server,
+        .local_static_private = smoke_server_key_pair.private_key,
+        .local_static_public = smoke_server_key_pair.public_key,
+        .peer_static_public = std::nullopt,
+        .allowed_client_public_keys = {auth.client_key_pair.public_key},
+        .profile_id = profile_id,
+        .version = fps::kFpsWireVersion,
+        .capabilities = 1,
+        .max_padding_size = 64,
+    };
+    return fps::FpsUpgradeControllerConfig{
+        .zero_rtt = std::move(zero_rtt),
+        .parser_options = {},
+        .record_options = {},
+        .profile_id = profile_id,
+        .upgrade_direction = fps::Direction::client_to_server,
+        .min_records_before_trial = 1,
+    };
+}
+
+[[nodiscard]] auto observe_wire(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) -> bool {
+    auto record = parse_single_tls_record(wire);
+    if(!record) {
+        return false;
+    }
+    auto observed = controller.observe_tls_record(direction, *record);
+    return observed.parse_errors.empty() && observed.record_errors.empty();
+}
+
+[[nodiscard]] auto process_wire(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire)
+    -> std::optional<fps::FpsUpgradeProcessResult> {
+    auto record = parse_single_tls_record(wire);
+    if(!record) {
+        return std::nullopt;
+    }
+    return controller.process_inbound_record(direction, *record);
+}
+
 class AndroidNativeRuntime {
 public:
     explicit AndroidNativeRuntime(std::string profile_text)
@@ -170,6 +296,10 @@ public:
         stop_raw_carrier_on_worker_no_error();
         clear_fake_carrier_on_worker_no_error();
         stop_tun_pump_no_error();
+        {
+            std::lock_guard lock{native_events_mutex_};
+            native_events_.clear();
+        }
         work_guard_.reset();
         io_context_.stop();
         if(worker_thread_.joinable()) {
@@ -429,6 +559,110 @@ public:
         return snapshot();
     }
 
+    [[nodiscard]] auto configure_client_auth(std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
+        -> NativeRuntimeSnapshotFields {
+        const auto fail = [&](std::string error) {
+            {
+                std::lock_guard lock{auth_mutex_};
+                client_auth_config_.reset();
+            }
+            carrier_auth_configured_.store(false);
+            last_error_ = std::move(error);
+            return snapshot();
+        };
+
+        if(profile_id.empty()) {
+            return fail("invalid_profile_id");
+        }
+        auto client_key_pair = fps::derive_client_key_pair_from_uuid(client_uuid);
+        if(!client_key_pair) {
+            return fail("invalid_client_uuid");
+        }
+        auto server_public_key = parse_x25519_public_key_base64(server_public_key_base64);
+        if(!server_public_key) {
+            return fail("invalid_server_public_key");
+        }
+
+        {
+            std::lock_guard lock{auth_mutex_};
+            client_auth_config_ = ClientAuthConfig{
+                .profile_id = std::move(profile_id),
+                .client_key_pair = client_key_pair.value(),
+                .configured_server_public_key = server_public_key.value(),
+            };
+        }
+        carrier_auth_configured_.store(true);
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto run_client_auth_smoke_for_test(bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+        carrier_auth_attempted_.fetch_add(1);
+        if(!started_ || !worker_thread_running_.load()) {
+            carrier_auth_failed_.fetch_add(1);
+            last_error_ = "runtime_stopped";
+            return snapshot();
+        }
+
+        ClientAuthConfig auth;
+        {
+            std::lock_guard lock{auth_mutex_};
+            if(!client_auth_config_.has_value()) {
+                carrier_auth_failed_.fetch_add(1);
+                last_error_ = "client_auth_not_configured";
+                return snapshot();
+            }
+            auth = *client_auth_config_;
+        }
+
+        auto done = std::make_shared<std::promise<std::optional<fps::net::TunLease>>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [auth = std::move(auth), tamper_server_accept, done] {
+            done->set_value(run_client_auth_smoke_on_worker(auth, tamper_server_accept));
+        });
+        auto lease = finished.get();
+        if(!lease.has_value()) {
+            carrier_auth_failed_.fetch_add(1);
+            last_error_ = "carrier_auth_failed";
+            push_native_event(
+                NativeRuntimeEventFields{
+                    .type = "carrier_auth_failed",
+                    .error = "carrier_auth_failed",
+                }
+            );
+            return snapshot();
+        }
+
+        carrier_auth_succeeded_.fetch_add(1);
+        carrier_lease_received_.fetch_add(1);
+        push_native_event(
+            NativeRuntimeEventFields{
+                .type = "lease_received",
+                .client_ipv4 = lease->client_ipv4,
+                .server_ipv4 = lease->server_ipv4,
+                .prefix_length = lease->prefix_length,
+                .mtu = lease->mtu,
+                .error = {},
+            }
+        );
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto drain_native_events(int max_events) -> std::vector<NativeRuntimeEventFields> {
+        if(max_events <= 0) {
+            return {};
+        }
+        std::vector<NativeRuntimeEventFields> out;
+        std::lock_guard lock{native_events_mutex_};
+        const auto limit = static_cast<std::size_t>(max_events);
+        while(!native_events_.empty() && out.size() < limit) {
+            out.push_back(std::move(native_events_.front()));
+            native_events_.pop_front();
+        }
+        return out;
+    }
+
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
         std::lock_guard tun_lock{tun_mutex_};
         tun_packet_sink_mode_ = reject_packets ? TunPacketSinkMode::capture_reject : TunPacketSinkMode::capture_accept;
@@ -513,6 +747,78 @@ private:
         std::vector<std::byte> packet;
         fps::net::TunFlowTuple flow{};
     };
+
+    [[nodiscard]] static auto run_client_auth_smoke_on_worker(const ClientAuthConfig& auth, bool tamper_server_accept) -> std::optional<fps::net::TunLease> {
+        auto smoke_server = fixed_smoke_server_key_pair();
+        if(!smoke_server) {
+            return std::nullopt;
+        }
+        if(auth.configured_server_public_key != smoke_server.value().public_key) {
+            return std::nullopt;
+        }
+        fps::FpsUpgradeController client_controller{client_controller_config(auth, smoke_server.value())};
+        fps::FpsUpgradeController server_controller{server_controller_config(auth, smoke_server.value())};
+        const auto cover_c2s = app_record({0x61, 0x6e, 0x64, 0x72});
+        const auto cover_s2c = app_record({0x66, 0x70, 0x73, 0x35});
+        if(!cover_c2s.has_value() || !cover_s2c.has_value()) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::client_to_server, *cover_c2s)) {
+            return std::nullopt;
+        }
+        auto server_cover_c2s = process_wire(server_controller, fps::Direction::client_to_server, *cover_c2s);
+        if(!server_cover_c2s.has_value() || server_cover_c2s->forward_bytes != *cover_c2s) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::server_to_client, *cover_s2c) ||
+           !observe_wire(server_controller, fps::Direction::server_to_client, *cover_s2c)) {
+            return std::nullopt;
+        }
+
+        fps::net::ClientInstanceId instance_id{};
+        for(std::size_t index = 0; index < instance_id.size(); ++index) {
+            instance_id[index] = static_cast<std::byte>(0xa0U + index);
+        }
+        auto client_auth_record = client_controller.build_client_upgrade_record(fps::net::encode_client_instance_control(instance_id));
+        if(!client_auth_record) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::client_to_server, client_auth_record.value())) {
+            return std::nullopt;
+        }
+        auto server_auth = process_wire(server_controller, fps::Direction::client_to_server, client_auth_record.value());
+        if(!server_auth.has_value() || !server_auth->client_auth_accepted) {
+            return std::nullopt;
+        }
+        auto metadata = fps::net::decode_client_instance_control(server_auth->client_auth_payload);
+        if(!metadata) {
+            return std::nullopt;
+        }
+
+        const fps::net::TunLease expected_lease{
+            .client_ipv4 = 0x0a420002U,
+            .server_ipv4 = 0x0a420001U,
+            .network_ipv4 = 0x0a420000U,
+            .prefix_length = 30,
+            .mtu = 1280,
+        };
+        auto accept_record = server_controller.build_server_accept_record(fps::net::encode_tun_lease_control(expected_lease));
+        if(!accept_record) {
+            return std::nullopt;
+        }
+        if(tamper_server_accept && !accept_record.value().empty()) {
+            accept_record.value().back() = static_cast<std::byte>(std::to_integer<unsigned int>(accept_record.value().back()) ^ 0x01U);
+        }
+        auto client_accept = process_wire(client_controller, fps::Direction::server_to_client, accept_record.value());
+        if(!client_accept.has_value() || !client_accept->server_accept_accepted) {
+            return std::nullopt;
+        }
+        auto decoded_lease = fps::net::decode_tun_lease_control(client_accept->server_accept_payload);
+        if(!decoded_lease) {
+            return std::nullopt;
+        }
+        return decoded_lease.value();
+    }
 
     [[nodiscard]] static auto hex_digest(const fps::HmacSha256& digest) -> std::string {
         constexpr char alphabet[] = "0123456789abcdef";
@@ -669,6 +975,14 @@ private:
         tun_policy_pending_.clear();
         tun_policy_in_flight_.clear();
         tun_last_drop_reason_.clear();
+    }
+
+    void push_native_event(NativeRuntimeEventFields event) {
+        std::lock_guard lock{native_events_mutex_};
+        if(native_events_.size() >= kNativeEventQueueCapacity) {
+            native_events_.pop_front();
+        }
+        native_events_.push_back(std::move(event));
     }
 
     void tun_pump_tick() {
@@ -868,6 +1182,11 @@ private:
             .raw_carrier_connect_attempted = raw_carrier_connect_attempted_.load(),
             .raw_carrier_connect_succeeded = raw_carrier_connect_succeeded_.load(),
             .raw_carrier_connect_failed = raw_carrier_connect_failed_.load(),
+            .carrier_auth_configured = carrier_auth_configured_.load(),
+            .carrier_auth_attempted = carrier_auth_attempted_.load(),
+            .carrier_auth_succeeded = carrier_auth_succeeded_.load(),
+            .carrier_auth_failed = carrier_auth_failed_.load(),
+            .carrier_lease_received = carrier_lease_received_.load(),
             .last_error = last_error_,
         };
     }
@@ -923,6 +1242,15 @@ private:
     std::atomic<std::uint64_t> raw_carrier_connect_attempted_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_succeeded_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_failed_ = 0;
+    mutable std::mutex auth_mutex_;
+    std::optional<ClientAuthConfig> client_auth_config_;
+    std::atomic_bool carrier_auth_configured_ = false;
+    std::atomic<std::uint64_t> carrier_auth_attempted_ = 0;
+    std::atomic<std::uint64_t> carrier_auth_succeeded_ = 0;
+    std::atomic<std::uint64_t> carrier_auth_failed_ = 0;
+    std::atomic<std::uint64_t> carrier_lease_received_ = 0;
+    mutable std::mutex native_events_mutex_;
+    std::deque<NativeRuntimeEventFields> native_events_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -1055,6 +1383,34 @@ public:
         return found->second->stop_raw_carrier();
     }
 
+    [[nodiscard]] auto configure_client_auth(NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
+        -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->configure_client_auth(std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64));
+    }
+
+    [[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->run_client_auth_smoke_for_test(tamper_server_accept);
+    }
+
+    [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second->drain_native_events(max_events);
+    }
+
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
         std::lock_guard lock{mutex_};
         const auto found = runtimes_.find(handle);
@@ -1160,6 +1516,19 @@ auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_al
 }
 
 auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_raw_carrier(handle); }
+
+auto configure_client_auth(NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
+    -> NativeRuntimeSnapshotFields {
+    return runtime_registry().configure_client_auth(handle, std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64));
+}
+
+auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().run_client_auth_smoke_for_test(handle, tamper_server_accept);
+}
+
+auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
+    return runtime_registry().drain_native_events(handle, max_events);
+}
 
 auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
     return runtime_registry().install_tun_packet_capture_sink_for_test(handle, reject_packets);

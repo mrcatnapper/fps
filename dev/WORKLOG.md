@@ -2,6 +2,96 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-10
+
+### Android native Zero-RTT auth smoke
+
+Goal:
+
+- Start the next Android runtime increment above protected raw carrier sockets:
+  prove that JNI/native code can reuse the C++ Zero-RTT/FPS auth core and
+  encrypted TUN lease/control codecs without implementing a parallel Kotlin
+  protocol path.
+
+Plan:
+
+- Keep this increment as an auth/linkage smoke, not a full Android VPN E2E
+  carrier. Existing `TlsTcpCarrierSession` is still a two-socket TLS/TCP bridge,
+  while Android currently owns one protected outbound socket.
+- Add a narrow JNI auth seam:
+  - Kotlin validates the Android client profile, then passes `profile_id`,
+    `client_uuid` and `server_public_key_base64` to native;
+  - native revalidates UUID/base64, derives the client X25519 keypair in C++,
+    and stores only non-secret status counters;
+  - full daemon/Boost.JSON config parsing stays out of Android native code.
+- Add an in-memory native client/server Zero-RTT smoke:
+  - use existing `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record
+    layer and `tun_lease` control codec;
+  - exchange bidirectional cover TLS records, client auth and encrypted server
+    accept carrying a deterministic test lease;
+  - emit a bounded native `lease_received` event for Kotlin.
+- Add Kotlin/JVM and instrumented tests first around:
+  - auto native auth configuration during runtime creation;
+  - invalid auth fields fail before native handle creation;
+  - auth smoke requires started runtime and configured auth;
+  - successful auth smoke emits one lease event that `HeadlessNativeVpnRuntime`
+    can apply through the existing lease-before-TUN path;
+  - tampered/wrong-client smoke emits auth failure and no lease.
+
+Verification target:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+Completed:
+
+- Added JNI/native client-auth configuration for Android profiles:
+  Kotlin passes `profile_id`, `client_uuid` and `server_public_key_base64`
+  after profile validation; native revalidates UUID/base64, derives the
+  UUID-backed X25519 client keypair in C++ and exposes only non-secret auth
+  counters in runtime snapshots.
+- Added a bounded native runtime event queue and Kotlin event handling for
+  metadata-only `lease_received` and `carrier_auth_failed` events.
+- Added an in-memory native Zero-RTT auth smoke that reuses
+  `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record slicing and
+  encrypted TUN lease/client-instance control codecs. This smoke verifies
+  auth/accept/control-codec linkage without pretending to be the production raw
+  carrier path.
+- Split Android-safe TUN lease/control payload types and codecs into
+  `include/fps/net/tun_lease_control.hpp` and `src/net/tun_lease_control.cpp`,
+  keeping the lease-file allocator and `std::filesystem` boundary out of the
+  Android native auth smoke.
+- Added JVM tests for auto auth configuration, failed auth configuration
+  cleanup, smoke success/failure counters and `HeadlessNativeVpnRuntime`
+  application of native lease/failure events.
+- Added managed-device tests for native auth configuration failure, successful
+  in-memory auth lease event and tampered accept failure.
+- During self-review, hardened repeated `configureClientAuth(...)`: any invalid
+  reconfiguration now clears the stored native auth config, so a later smoke or
+  future auth path fails closed with `client_auth_not_configured` instead of
+  reusing stale keys. The managed-device test covers valid-then-invalid reset.
+- Updated Android boundary/testing notes. The next practical step remains
+  production `TlsTcpCarrierSession` registration on the protected raw socket
+  lifecycle.
+
+Verification:
+
+- Initial Android host check found duplicate Kotlin test helper names and one
+  C++ missing designated initializer warning; both were fixed.
+- Android host check then passed, but strengthening the smoke to bind the test
+  server public key caught a `Result` access typo in C++; fixed to
+  `smoke_server.value().public_key`.
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `git diff --check`
+
 ## 2026-06-09
 
 ### Android native raw carrier lifecycle

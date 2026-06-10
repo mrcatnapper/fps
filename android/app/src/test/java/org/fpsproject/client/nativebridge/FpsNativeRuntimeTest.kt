@@ -53,9 +53,11 @@ class FpsNativeRuntimeTest {
         assertFalse(snapshot.workerThreadRunning)
         assertFalse(snapshot.tunAttached)
         assertFalse(snapshot.tunPumpRunning)
+        assertTrue(snapshot.carrierAuthConfigured)
         assertEquals(null, snapshot.tunFdOwnership)
         assertEquals(1L, backend.createdProfiles.single().first)
         assertEquals(profileJson, backend.createdProfiles.single().second)
+        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key)), backend.configuredAuth)
         assertFalse(snapshot.toString().contains(profileJson))
         assertFalse(snapshot.toString().contains(uuid))
         assertFalse(snapshot.toString().contains(key))
@@ -78,6 +80,20 @@ class FpsNativeRuntimeTest {
         assertEquals("native runtime creation failed", error.message)
         assertEquals(1, backend.createdProfiles.size)
         assertEquals(emptyList<Long>(), backend.closedHandles)
+    }
+
+    @Test
+    fun createClosesNativeHandleWhenAuthConfigurationFails() {
+        val backend = FakeNativeBackend(authConfigureError = "invalid_client_auth_config")
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            FpsNativeRuntime.create(profileJson, backend)
+        }
+
+        assertEquals("invalid_client_auth_config", error.message)
+        assertEquals(1, backend.createdProfiles.size)
+        assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key)), backend.configuredAuth)
+        assertEquals(listOf(1L), backend.closedHandles)
     }
 
     @Test
@@ -345,7 +361,70 @@ class FpsNativeRuntimeTest {
         assertFalse(snapshot.alive)
         assertEquals("runtime_closed", snapshot.lastError)
     }
+
+    @Test
+    fun clientAuthSmokeRequiresStartedRuntimeAndEmitsLeaseEvent() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        val stopped = runtime.runClientAuthSmokeForTest()
+        runtime.start()
+        val succeeded = runtime.runClientAuthSmokeForTest()
+        val events = runtime.drainNativeEvents(8)
+
+        assertEquals("runtime_stopped", stopped.lastError)
+        assertEquals(1L, stopped.carrierAuthFailed)
+        assertEquals(1L, stopped.carrierAuthAttempted)
+        assertEquals(null, succeeded.lastError)
+        assertEquals(2L, succeeded.carrierAuthAttempted)
+        assertEquals(1L, succeeded.carrierAuthSucceeded)
+        assertEquals(1L, succeeded.carrierAuthFailed)
+        assertEquals(1L, succeeded.carrierLeaseReceived)
+        assertEquals(listOf(false, false), backend.authSmokeTamperFlags)
+        assertEquals(1, events.size)
+        assertEquals(NATIVE_EVENT_LEASE_RECEIVED, events.single().type)
+        assertEquals(0x0a420002L, events.single().clientIpv4)
+        assertEquals(0x0a420001L, events.single().serverIpv4)
+        assertEquals(30, events.single().prefixLength)
+        assertEquals(1280, events.single().mtu)
+        assertEquals(leaseEvent().tunLeaseOrNull(), events.single().tunLeaseOrNull())
+    }
+
+    @Test
+    fun clientAuthSmokeFailureEmitsFailureEventWithoutLease() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJson, backend)
+
+        runtime.start()
+        val failed = runtime.runClientAuthSmokeForTest(tamperServerAccept = true)
+        val events = runtime.drainNativeEvents(8)
+
+        assertEquals("carrier_auth_failed", failed.lastError)
+        assertEquals(1L, failed.carrierAuthAttempted)
+        assertEquals(0L, failed.carrierAuthSucceeded)
+        assertEquals(1L, failed.carrierAuthFailed)
+        assertEquals(0L, failed.carrierLeaseReceived)
+        assertEquals(1, events.size)
+        assertEquals(NATIVE_EVENT_CARRIER_AUTH_FAILED, events.single().type)
+        assertEquals("carrier_auth_failed", events.single().error)
+        assertEquals(null, events.single().tunLeaseOrNull())
+    }
 }
+
+private data class RuntimeAuthConfigCall(
+    val handle: Long,
+    val profileId: String,
+    val clientUuid: String,
+    val serverPublicKeyBase64: String,
+)
+
+private fun leaseEvent() = NativeRuntimeEvent(
+    type = NATIVE_EVENT_LEASE_RECEIVED,
+    clientIpv4 = 0x0a420002L,
+    serverIpv4 = 0x0a420001L,
+    prefixLength = 30,
+    mtu = 1280,
+)
 
 private fun nativeSnapshot(
     alive: Boolean = true,
@@ -377,6 +456,11 @@ private fun nativeSnapshot(
     rawCarrierConnectAttempted: Long = 0,
     rawCarrierConnectSucceeded: Long = 0,
     rawCarrierConnectFailed: Long = 0,
+    carrierAuthConfigured: Boolean = false,
+    carrierAuthAttempted: Long = 0,
+    carrierAuthSucceeded: Long = 0,
+    carrierAuthFailed: Long = 0,
+    carrierLeaseReceived: Long = 0,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -408,11 +492,17 @@ private fun nativeSnapshot(
     rawCarrierConnectAttempted = rawCarrierConnectAttempted,
     rawCarrierConnectSucceeded = rawCarrierConnectSucceeded,
     rawCarrierConnectFailed = rawCarrierConnectFailed,
+    carrierAuthConfigured = carrierAuthConfigured,
+    carrierAuthAttempted = carrierAuthAttempted,
+    carrierAuthSucceeded = carrierAuthSucceeded,
+    carrierAuthFailed = carrierAuthFailed,
+    carrierLeaseReceived = carrierLeaseReceived,
     lastError = lastError,
 )
 
 private class FakeNativeBackend(
     private val returnZeroHandle: Boolean = false,
+    private val authConfigureError: String? = null,
     initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
 ) : FpsNativeBackend {
     private var nextHandle = 1L
@@ -425,10 +515,13 @@ private class FakeNativeBackend(
     val preparedRawCarriers = mutableListOf<Triple<Long, String, Int>>()
     val completedRawCarrierProtection = mutableListOf<Pair<Long, Boolean>>()
     val stoppedRawCarriers = mutableListOf<Long>()
+    val configuredAuth = mutableListOf<RuntimeAuthConfigCall>()
+    val authSmokeTamperFlags = mutableListOf<Boolean>()
     var drainCalls = 0
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
     private val pendingPolicy = ArrayDeque(initialPolicyPackets)
     private val inFlightPolicy = mutableSetOf<Long>()
+    private val nativeEvents = ArrayDeque<NativeRuntimeEvent>()
 
     override fun createRuntime(profileText: String): Long {
         val handle = nextHandle++
@@ -634,6 +727,74 @@ private class FakeNativeBackend(
             rawCarrierActive = false,
             lastError = null,
         ).also { snapshots[handle] = it }
+    }
+
+    override fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot {
+        configuredAuth += RuntimeAuthConfigCall(handle, profileId, clientUuid, serverPublicKeyBase64)
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (authConfigureError != null) {
+            return current.copy(
+                carrierAuthConfigured = false,
+                lastError = authConfigureError,
+            ).also { snapshots[handle] = it }
+        }
+        return current.copy(
+            carrierAuthConfigured = true,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot {
+        authSmokeTamperFlags += tamperServerAccept
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            val snapshot = current.copy(
+                carrierAuthAttempted = current.carrierAuthAttempted + 1,
+                carrierAuthFailed = current.carrierAuthFailed + 1,
+                lastError = "runtime_stopped",
+            )
+            snapshots[handle] = snapshot
+            return snapshot
+        }
+        if (!current.carrierAuthConfigured) {
+            val snapshot = current.copy(
+                carrierAuthAttempted = current.carrierAuthAttempted + 1,
+                carrierAuthFailed = current.carrierAuthFailed + 1,
+                lastError = "client_auth_not_configured",
+            )
+            snapshots[handle] = snapshot
+            return snapshot
+        }
+        if (tamperServerAccept) {
+            nativeEvents += NativeRuntimeEvent(type = NATIVE_EVENT_CARRIER_AUTH_FAILED, error = "carrier_auth_failed")
+            val snapshot = current.copy(
+                carrierAuthAttempted = current.carrierAuthAttempted + 1,
+                carrierAuthFailed = current.carrierAuthFailed + 1,
+                lastError = "carrier_auth_failed",
+            )
+            snapshots[handle] = snapshot
+            return snapshot
+        }
+        nativeEvents += leaseEvent()
+        val snapshot = current.copy(
+            carrierAuthAttempted = current.carrierAuthAttempted + 1,
+            carrierAuthSucceeded = current.carrierAuthSucceeded + 1,
+            carrierLeaseReceived = current.carrierLeaseReceived + 1,
+            lastError = null,
+        )
+        snapshots[handle] = snapshot
+        return snapshot
+    }
+
+    override fun drainNativeEvents(handle: Long, maxEvents: Int): List<NativeRuntimeEvent> {
+        if (!snapshots.containsKey(handle) || maxEvents <= 0) {
+            return emptyList()
+        }
+        val out = mutableListOf<NativeRuntimeEvent>()
+        repeat(maxEvents) {
+            out += nativeEvents.removeFirstOrNull() ?: return@repeat
+        }
+        return out
     }
 
 }

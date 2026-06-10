@@ -51,8 +51,10 @@ documentation.
   allow/drop completion, default no-carrier enqueue rejection and a capture
   sink check proving exact native-owned packet bytes reach the outbound seam.
   It also includes a debug-only fake carrier lifecycle/enqueue smoke proving
-  allowed packets route through the production `CovertDatagramTransport` path
-  and produce metadata-only frame digests.
+  allowed packets route through the production `CovertDatagramTransport` path,
+  plus an in-memory native Zero-RTT auth smoke that exercises shared
+  auth/record/control codecs and emits a metadata-only encrypted TUN lease
+  event through JNI.
   The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
@@ -238,8 +240,12 @@ Prioritize these emulator/device scenarios in order:
    - Native raw TCP socket lifecycle now has a small managed-device smoke:
      stopped-runtime and invalid endpoint rejection, protect-denied abort, and
      loopback TCP connect/stop after fd protection.
-   - Next, add native raw TLS/FPS auth against a local test origin/server on top
-     of that protected socket lifecycle.
+   - Native auth-core linkage now has an in-memory managed-device smoke:
+     Android profile auth metadata is revalidated in C++, client UUID derives a
+     native X25519 keypair, shared Zero-RTT/control codecs exchange an encrypted
+     test lease and tampering fails closed.
+   - Next, add production native raw TLS/FPS auth against a local test
+     origin/server on top of the protected socket lifecycle.
    - Keep auth as a small smoke first; full Android VPN E2E should come after
      reconnect/status behavior is observable.
 
@@ -275,6 +281,10 @@ Prioritize these emulator/device scenarios in order:
   call the protect hook, native connects only after positive protection and
   closes the socket cleanly. Edge coverage includes complete-before-prepare and
   idempotent stop before prepare, after prepare and after connect.
+- It covers the first native auth-core smoke without a real network carrier:
+  client auth metadata is configured through JNI, invalid server public key
+  encoding is rejected, a shared C++ Zero-RTT exchange returns an encrypted test
+  TUN lease event and a tampered server accept reports failure without a lease.
 
 ## Next Android Runtime Steps
 

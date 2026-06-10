@@ -212,9 +212,8 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
-extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_prepareRawCarrierSocket(
-    JNIEnv* env, jobject /* self */, jlong handle, jstring address, jint port
-) {
+extern "C" JNIEXPORT jobject JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_prepareRawCarrierSocket(JNIEnv* env, jobject /* self */, jlong handle, jstring address, jint port) {
     auto parsed_address = fps::android_jni::jstring_to_string(env, address);
     if(!parsed_address || parsed_address->empty()) {
         const auto snapshot = fps::android_native::invalid_runtime_snapshot("invalid_carrier_endpoint");
@@ -226,19 +225,46 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
-extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_completeRawCarrierProtection(
-    JNIEnv* env, jobject /* self */, jlong handle, jboolean protect_allowed
+extern "C" JNIEXPORT jobject JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_completeRawCarrierProtection(JNIEnv* env, jobject /* self */, jlong handle, jboolean protect_allowed) {
+    const auto snapshot =
+        fps::android_native::complete_raw_carrier_protection(static_cast<fps::android_native::NativeRuntimeHandle>(handle), protect_allowed == JNI_TRUE);
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_stopRawCarrier(JNIEnv* env, jobject /* self */, jlong handle) {
+    const auto snapshot = fps::android_native::stop_raw_carrier(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_configureClientAuth(
+    JNIEnv* env, jobject /* self */, jlong handle, jstring profile_id, jstring client_uuid, jstring server_public_key_base64
 ) {
-    const auto snapshot = fps::android_native::complete_raw_carrier_protection(
-        static_cast<fps::android_native::NativeRuntimeHandle>(handle), protect_allowed == JNI_TRUE
+    auto parsed_profile_id = fps::android_jni::jstring_to_string(env, profile_id);
+    auto parsed_client_uuid = fps::android_jni::jstring_to_string(env, client_uuid);
+    auto parsed_server_public_key = fps::android_jni::jstring_to_string(env, server_public_key_base64);
+    if(!parsed_profile_id || !parsed_client_uuid || !parsed_server_public_key) {
+        const auto snapshot = fps::android_native::invalid_runtime_snapshot("invalid_client_auth_config");
+        return fps::android_jni::runtime_snapshot_object(env, snapshot);
+    }
+    const auto snapshot = fps::android_native::configure_client_auth(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), std::move(parsed_profile_id.value()), std::move(parsed_client_uuid.value()),
+        std::move(parsed_server_public_key.value())
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_org_fpsproject_client_nativebridge_FpsNative_stopRawCarrier(JNIEnv* env, jobject /* self */, jlong handle) {
-    const auto snapshot = fps::android_native::stop_raw_carrier(static_cast<fps::android_native::NativeRuntimeHandle>(handle));
+Java_org_fpsproject_client_nativebridge_FpsNative_runClientAuthSmokeForTest(JNIEnv* env, jobject /* self */, jlong handle, jboolean tamper_server_accept) {
+    const auto snapshot =
+        fps::android_native::run_client_auth_smoke_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle), tamper_server_accept == JNI_TRUE);
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_nativeDrainNativeEvents(JNIEnv* env, jobject /* self */, jlong handle, jint max_events) {
+    const auto events = fps::android_native::drain_native_events(static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(max_events));
+    return fps::android_jni::native_event_array(env, events);
 }
 
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeInstallTunPacketCaptureSinkForTest(

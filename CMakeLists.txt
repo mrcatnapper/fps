@@ -117,6 +117,7 @@ target_link_libraries(fps_tls_tcp_carrier
     Boost::system)
 
 add_library(fps_tun_adapter
+  src/net/tun_lease_control.cpp
   src/net/tun_lease.cpp
   src/net/tun_packet.cpp
   src/net/tun_runtime.cpp

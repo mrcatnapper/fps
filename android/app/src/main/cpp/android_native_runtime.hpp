@@ -52,6 +52,11 @@ struct NativeRuntimeSnapshotFields {
     std::uint64_t raw_carrier_connect_attempted = 0;
     std::uint64_t raw_carrier_connect_succeeded = 0;
     std::uint64_t raw_carrier_connect_failed = 0;
+    bool carrier_auth_configured = false;
+    std::uint64_t carrier_auth_attempted = 0;
+    std::uint64_t carrier_auth_succeeded = 0;
+    std::uint64_t carrier_auth_failed = 0;
+    std::uint64_t carrier_lease_received = 0;
     std::string last_error;
 };
 
@@ -59,6 +64,15 @@ struct NativeTunPolicyPacketFields {
     std::uint64_t packet_id = 0;
     std::uint32_t packet_size = 0;
     fps::net::TunFlowTuple flow{};
+};
+
+struct NativeRuntimeEventFields {
+    std::string type;
+    std::uint32_t client_ipv4 = 0;
+    std::uint32_t server_ipv4 = 0;
+    std::uint8_t prefix_length = 0;
+    std::uint16_t mtu = 0;
+    std::string error;
 };
 
 using NativeRuntimeHandle = std::int64_t;
@@ -77,6 +91,10 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto configure_client_auth(NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64)
+    -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields>;
 [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;

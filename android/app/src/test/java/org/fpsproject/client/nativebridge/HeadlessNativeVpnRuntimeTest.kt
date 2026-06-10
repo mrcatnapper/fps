@@ -258,7 +258,67 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(VpnRuntimeState.FAILED, runtime.state)
         assertEquals("runtime_stopped", runtime.lastError)
     }
+
+    @Test
+    fun nativeLeaseEventRunsExistingLeaseBeforeTunPath() {
+        val backend = FakeCoordinatorNativeBackend(initialNativeEvents = listOf(leaseEvent()))
+        val hooks = FakeAndroidHooks(establishedTun = EstablishedTun.borrowed(fd = 77, mtu = 1280))
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val state = runtime.applyNativeEvents()
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.RUNNING, state)
+        assertEquals(1, hooks.establishTunCalls)
+        assertEquals(listOf(Triple(1L, 77, 1280)), backend.attachedTun)
+        assertEquals(listOf(1L), backend.startedTunPumps)
+        assertTrue(snapshot.vpn.tun.fdPresent)
+        assertTrue(snapshot.native.tunAttached)
+        assertTrue(snapshot.native.tunPumpRunning)
+        assertEquals(1, backend.drainNativeEventsCalls)
+    }
+
+    @Test
+    fun nativeAuthFailureEventFailsClosedWithoutTun() {
+        val backend = FakeCoordinatorNativeBackend(
+            initialNativeEvents = listOf(NativeRuntimeEvent(type = NATIVE_EVENT_CARRIER_AUTH_FAILED, error = "carrier_auth_failed")),
+        )
+        val hooks = FakeAndroidHooks()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, hooks, backend)
+
+        runtime.start()
+        val state = runtime.applyNativeEvents()
+        val snapshot = runtime.snapshot()
+
+        assertEquals(VpnRuntimeState.FAILED, state)
+        assertEquals("carrier_auth_failed", snapshot.vpn.lastError)
+        assertEquals(0, hooks.establishTunCalls)
+        assertFalse(snapshot.vpn.tun.fdPresent)
+    }
+
+    @Test
+    fun clientAuthSmokeDelegatesToNativeBackend() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(profileJson, FakeAndroidHooks(), backend)
+
+        runtime.start()
+        val succeeded = runtime.runClientAuthSmokeForTest()
+        val failed = runtime.runClientAuthSmokeForTest(tamperServerAccept = true)
+
+        assertEquals(listOf(1L to false, 1L to true), backend.clientAuthSmokeCalls)
+        assertEquals(1L, succeeded.carrierAuthSucceeded)
+        assertEquals(1L, failed.carrierAuthFailed)
+    }
 }
+
+private fun leaseEvent() = NativeRuntimeEvent(
+    type = NATIVE_EVENT_LEASE_RECEIVED,
+    clientIpv4 = 0x0a420002,
+    serverIpv4 = 0x0a420001,
+    prefixLength = 30,
+    mtu = 1280,
+)
 
 private fun coordinatorSnapshot(
     alive: Boolean = true,
@@ -290,6 +350,11 @@ private fun coordinatorSnapshot(
     rawCarrierConnectAttempted: Long = 0,
     rawCarrierConnectSucceeded: Long = 0,
     rawCarrierConnectFailed: Long = 0,
+    carrierAuthConfigured: Boolean = false,
+    carrierAuthAttempted: Long = 0,
+    carrierAuthSucceeded: Long = 0,
+    carrierAuthFailed: Long = 0,
+    carrierLeaseReceived: Long = 0,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -321,6 +386,11 @@ private fun coordinatorSnapshot(
     rawCarrierConnectAttempted = rawCarrierConnectAttempted,
     rawCarrierConnectSucceeded = rawCarrierConnectSucceeded,
     rawCarrierConnectFailed = rawCarrierConnectFailed,
+    carrierAuthConfigured = carrierAuthConfigured,
+    carrierAuthAttempted = carrierAuthAttempted,
+    carrierAuthSucceeded = carrierAuthSucceeded,
+    carrierAuthFailed = carrierAuthFailed,
+    carrierLeaseReceived = carrierLeaseReceived,
     lastError = lastError,
 )
 
@@ -338,6 +408,7 @@ private class FakeCoordinatorNativeBackend(
     private val attachResult: AttachResult = AttachResult.SUCCESS,
     private val pumpResult: PumpResult = PumpResult.SUCCESS,
     initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
+    initialNativeEvents: List<NativeRuntimeEvent> = emptyList(),
 ) : FpsNativeBackend {
     private var nextHandle = 1L
     val createdProfiles = mutableListOf<Pair<Long, String>>()
@@ -351,9 +422,13 @@ private class FakeCoordinatorNativeBackend(
     val preparedRawCarriers = mutableListOf<Triple<Long, String, Int>>()
     val completedRawCarrierProtection = mutableListOf<Pair<Long, Boolean>>()
     val stoppedRawCarriers = mutableListOf<Long>()
+    val configuredAuth = mutableListOf<CoordinatorAuthConfigCall>()
+    val clientAuthSmokeCalls = mutableListOf<Pair<Long, Boolean>>()
+    var drainNativeEventsCalls = 0
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
     private val pendingPolicy = ArrayDeque(initialPolicyPackets)
     private val inFlightPolicy = mutableSetOf<Long>()
+    private val nativeEvents = ArrayDeque(initialNativeEvents)
 
     override fun createRuntime(profileText: String): Long {
         val handle = nextHandle++
@@ -552,7 +627,62 @@ private class FakeCoordinatorNativeBackend(
         ).also { snapshots[handle] = it }
     }
 
+    override fun configureClientAuth(handle: Long, profileId: String, clientUuid: String, serverPublicKeyBase64: String): NativeRuntimeSnapshot {
+        configuredAuth += CoordinatorAuthConfigCall(handle, profileId, clientUuid, serverPublicKeyBase64)
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        return current.copy(
+            carrierAuthConfigured = true,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot {
+        clientAuthSmokeCalls += handle to tamperServerAccept
+        val current = snapshots[handle] ?: return coordinatorSnapshot(alive = false, lastError = "invalid_handle")
+        if (!current.started) {
+            return current.copy(
+                carrierAuthAttempted = current.carrierAuthAttempted + 1,
+                carrierAuthFailed = current.carrierAuthFailed + 1,
+                lastError = "runtime_stopped",
+            ).also { snapshots[handle] = it }
+        }
+        if (tamperServerAccept) {
+            nativeEvents += NativeRuntimeEvent(type = NATIVE_EVENT_CARRIER_AUTH_FAILED, error = "carrier_auth_failed")
+            return current.copy(
+                carrierAuthAttempted = current.carrierAuthAttempted + 1,
+                carrierAuthFailed = current.carrierAuthFailed + 1,
+                lastError = "carrier_auth_failed",
+            ).also { snapshots[handle] = it }
+        }
+        nativeEvents += leaseEvent()
+        return current.copy(
+            carrierAuthAttempted = current.carrierAuthAttempted + 1,
+            carrierAuthSucceeded = current.carrierAuthSucceeded + 1,
+            carrierLeaseReceived = current.carrierLeaseReceived + 1,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun drainNativeEvents(handle: Long, maxEvents: Int): List<NativeRuntimeEvent> {
+        drainNativeEventsCalls += 1
+        if (!snapshots.containsKey(handle) || maxEvents <= 0) {
+            return emptyList()
+        }
+        val out = mutableListOf<NativeRuntimeEvent>()
+        repeat(maxEvents) {
+            out += nativeEvents.removeFirstOrNull() ?: return@repeat
+        }
+        return out
+    }
+
 }
+
+private data class CoordinatorAuthConfigCall(
+    val handle: Long,
+    val profileId: String,
+    val clientUuid: String,
+    val serverPublicKeyBase64: String,
+)
 
 private class FakeAndroidHooks(
     private val vpnPermissionGranted: Boolean = true,

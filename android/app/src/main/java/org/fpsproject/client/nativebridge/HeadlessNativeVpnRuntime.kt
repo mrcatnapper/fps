@@ -138,6 +138,35 @@ class HeadlessNativeVpnRuntime private constructor(
 
     fun stopNativeCarrier(): NativeRuntimeSnapshot = nativeRuntime.stopRawCarrier()
 
+    fun runClientAuthSmokeForTest(tamperServerAccept: Boolean = false): NativeRuntimeSnapshot {
+        return nativeRuntime.runClientAuthSmokeForTest(tamperServerAccept)
+    }
+
+    fun drainNativeEvents(maxEvents: Int = 16): List<NativeRuntimeEvent> = nativeRuntime.drainNativeEvents(maxEvents)
+
+    fun applyNativeEvents(maxEvents: Int = 16): VpnRuntimeState {
+        for (event in drainNativeEvents(maxEvents)) {
+            when (event.type) {
+                NATIVE_EVENT_LEASE_RECEIVED -> {
+                    val lease = event.tunLeaseOrNull()
+                    if (lease == null) {
+                        controller.fail("native_lease_event_invalid")
+                        return controller.state
+                    }
+                    val next = onLeaseReceived(lease)
+                    if (next == VpnRuntimeState.FAILED) {
+                        return next
+                    }
+                }
+                NATIVE_EVENT_CARRIER_AUTH_FAILED -> {
+                    controller.fail(event.error ?: "native_carrier_auth_failed")
+                    return controller.state
+                }
+            }
+        }
+        return controller.state
+    }
+
     fun startCarrierProbeRunners(transportFactory: CarrierProbeTransportFactory, nowMs: Long = 0): List<CarrierProbeRuntimeStatus> {
         return controller.startCarrierProbeRunners(transportFactory, nowMs)
     }

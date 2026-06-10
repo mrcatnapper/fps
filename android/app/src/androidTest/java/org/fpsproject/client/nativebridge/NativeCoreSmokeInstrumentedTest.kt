@@ -12,10 +12,11 @@ import java.io.FileOutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.security.MessageDigest
-import java.util.Base64
 import kotlin.concurrent.thread
 
 class NativeCoreSmokeInstrumentedTest {
+    private val clientUuid = "123e4567-e89b-42d3-a456-426614174000"
+    private val serverPublicKeyBase64 = "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw="
     private val profileJson = """
         {
           "network": {"server": "fps.example.test:443"},
@@ -23,8 +24,8 @@ class NativeCoreSmokeInstrumentedTest {
             "zero_rtt": {
               "enabled": true,
               "profile_id": "android-test-v5",
-              "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
-              "server_public_key_base64": "${Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })}"
+              "client_uuid": "$clientUuid",
+              "server_public_key_base64": "$serverPublicKeyBase64"
             }
           },
           "tun": {"enabled": true, "mtu": 1280}
@@ -454,6 +455,79 @@ class NativeCoreSmokeInstrumentedTest {
             FpsNative.closeRuntime(handle)
             server.close()
             accepted.join(1_000)
+        }
+    }
+
+    @Test
+    fun nativeClientAuthConfigurationRejectsInvalidServerPublicKey() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64)
+            val rejected = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, "AAAA")
+
+            assertTrue(configured.carrierAuthConfigured)
+            assertFalse(rejected.carrierAuthConfigured)
+            assertEquals("invalid_server_public_key", rejected.lastError)
+
+            FpsNative.startRuntime(handle)
+            val smoke = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+
+            assertEquals("client_auth_not_configured", smoke.lastError)
+            assertEquals(1L, smoke.carrierAuthAttempted)
+            assertEquals(1L, smoke.carrierAuthFailed)
+        } finally {
+            FpsNative.closeRuntime(handle)
+        }
+    }
+
+    @Test
+    fun nativeClientAuthSmokeEmitsLeaseEventAndReportsTamperFailure() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64)
+            assertTrue(configured.carrierAuthConfigured)
+            assertEquals(null, configured.lastError)
+
+            val stopped = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+            assertEquals("runtime_stopped", stopped.lastError)
+            assertEquals(1L, stopped.carrierAuthAttempted)
+            assertEquals(1L, stopped.carrierAuthFailed)
+            assertEquals(0, FpsNative.nativeDrainNativeEvents(handle, 8).size)
+
+            FpsNative.startRuntime(handle)
+            val accepted = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+            val leaseEvents = FpsNative.nativeDrainNativeEvents(handle, 8).toList()
+
+            assertEquals(null, accepted.lastError)
+            assertEquals(2L, accepted.carrierAuthAttempted)
+            assertEquals(1L, accepted.carrierAuthSucceeded)
+            assertEquals(1L, accepted.carrierAuthFailed)
+            assertEquals(1L, accepted.carrierLeaseReceived)
+            assertEquals(1, leaseEvents.size)
+            assertEquals(NATIVE_EVENT_LEASE_RECEIVED, leaseEvents.single().type)
+            assertEquals(0x0a420002L, leaseEvents.single().clientIpv4)
+            assertEquals(0x0a420001L, leaseEvents.single().serverIpv4)
+            assertEquals(30, leaseEvents.single().prefixLength)
+            assertEquals(1280, leaseEvents.single().mtu)
+            assertEquals(null, leaseEvents.single().error)
+
+            val tampered = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = true)
+            val failureEvents = FpsNative.nativeDrainNativeEvents(handle, 8).toList()
+
+            assertEquals("carrier_auth_failed", tampered.lastError)
+            assertEquals(3L, tampered.carrierAuthAttempted)
+            assertEquals(1L, tampered.carrierAuthSucceeded)
+            assertEquals(2L, tampered.carrierAuthFailed)
+            assertEquals(1L, tampered.carrierLeaseReceived)
+            assertEquals(1, failureEvents.size)
+            assertEquals(NATIVE_EVENT_CARRIER_AUTH_FAILED, failureEvents.single().type)
+            assertEquals("carrier_auth_failed", failureEvents.single().error)
+        } finally {
+            FpsNative.closeRuntime(handle)
         }
     }
 

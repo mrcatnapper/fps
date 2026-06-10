@@ -19,10 +19,12 @@ when Android test infrastructure or emulator strategy changes.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI and no production native auth or
-  raw carrier I/O yet. A native TUN pump skeleton exists for
-  fd read/parse/counter validation, and connected instrumented smoke remains
-  opt-in when an external Android device or emulator is attached.
+- Keep the scaffold mostly headless: no GUI and no production native raw
+  carrier I/O yet. Native auth-core linkage is covered by an in-memory
+  Zero-RTT smoke; production carrier auth still needs `TlsTcpCarrierSession`
+  attached to the protected raw socket lifecycle. A native TUN pump skeleton
+  exists for fd read/parse/counter validation, and connected instrumented smoke
+  remains opt-in when an external Android device or emulator is attached.
 
 ## Implemented Headless Core Slice
 
@@ -87,8 +89,13 @@ Delivered:
   than silently consuming the packet. Debug-only instrumented hooks can register
   an in-process fake carrier, proving that policy-allowed packets travel
   through the production `CovertDatagramTransport` path and produce
-  metadata-only frame digests. Native auth and real raw carrier I/O are not
-  started yet.
+  metadata-only frame digests.
+- The JNI runtime can configure client auth metadata from the validated Android
+  profile, rederive the UUID-backed client X25519 keypair in C++, validate the
+  server public key encoding and run an in-memory native Zero-RTT auth smoke.
+  That smoke uses the shared C++ auth/record/control codecs and emits a
+  metadata-only encrypted TUN lease event for Kotlin. It is not the production
+  carrier path yet because no raw socket is connected to `TlsTcpCarrierSession`.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -180,8 +187,9 @@ emulator/system-image layers to rebuild.
   the runtime executor lifecycle is explicit, the first native TUN read/parse
   pump starts after fd attachment, exposes a bounded policy metadata queue and
   emulator coverage exercises real fd attach/pump/stop/revoke. The first raw
-  carrier socket lifecycle is covered through loopback TCP; starting the native
-  auth path and real carrier registration remain the next native/JNI step.
+  carrier socket lifecycle is covered through loopback TCP; native auth-core
+  linkage is covered in memory; real protected-socket carrier registration
+  remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

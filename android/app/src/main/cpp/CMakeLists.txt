@@ -77,6 +77,7 @@ set(FPS_ANDROID_CORE_SMOKE_SOURCES
   "${FPS_REPO_ROOT}/src/net/tls_tcp_carrier_adapter.cpp"
   "${FPS_REPO_ROOT}/src/net/tls_tcp_carrier_session.cpp"
   "${FPS_REPO_ROOT}/src/net/tls_tcp_carrier_session_io.cpp"
+  "${FPS_REPO_ROOT}/src/net/tun_lease_control.cpp"
   "${FPS_REPO_ROOT}/src/net/tun_packet.cpp")
 
 add_library(fps_android_core_smoke STATIC
