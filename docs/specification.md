@@ -667,14 +667,18 @@ Linux-specific runtime is separate:
   exposes bounded metadata for Kotlin split-tunnel policy decisions and records
   non-secret counters/drop reasons. Packet bytes stay in native state. A
   policy `allow` decision now attempts to hand the native-owned packet to an
-  outbound native transport seam. Until real native carrier auth/I/O is wired,
-  the default runtime has no carrier transport and reports
-  `no_carrier_transport` with explicit enqueue rejected counters instead of
-  silently treating the packet as forwarded. Debug-only Android tests can
+  outbound native transport seam. The Android runtime can also take a protected
+  raw TCP socket, expose a loopback local-cover listener and create a
+  `TlsTcpCarrierSession` that bridges the local cover socket to that protected
+  socket. The bridge now installs real client-side Zero-RTT options derived
+  from the validated Android profile, receives encrypted server-accept lease
+  metadata and reports tampered server-accept failure without registering a
+  lease. Until an authenticated carrier is attached, the default runtime
+  reports `no_carrier_transport` with explicit enqueue rejected counters instead
+  of silently treating a packet as forwarded. Debug-only Android tests can also
   register an in-process fake carrier that exercises the production
   `CovertDatagramTransport` path without opening network sockets. TUN
-  reattach/clear drops pending and in-flight policy packets from the old fd.
-  Native FPS auth and real raw carrier I/O remain follow-up work;
+  reattach/clear drops pending and in-flight policy packets from the old fd;
 - Android callbacks must not call carrier enqueue from arbitrary JNI/Kotlin
   threads. They must post work onto the FPS/carrier executor or use a future
   async adapter API.
@@ -700,16 +704,22 @@ Linux-specific runtime is separate:
   bridge that duplicates the TUN fd into a native runtime handle with explicit
   `tunFdOwnership=owned_duplicate` metadata. The native runtime can start/stop
   its Boost.Asio executor, post deterministic test commands and start/stop a
-  first TUN pump skeleton. That pump currently reads packets, parses
-  TCP/UDP 5-tuples, exposes metadata to Kotlin policy and accepts allow/drop
-  completion decisions. `ALLOW` reaches a native outbound seam and is counted
-  separately as attempted/accepted/rejected enqueue; without a carrier
-  transport it fails with `no_carrier_transport`. Instrumented debug tests can
-  attach a fake carrier to prove that the seam uses the shared
-  `CovertDatagramTransport` rather than Android-specific packet handling. The
-  runtime does not yet run native FPS auth or raw carrier I/O, so production
-  Android code must not treat policy allow as successful remote delivery until
-  the native carrier is attached.
+  first TUN pump skeleton. That pump reads packets, parses TCP/UDP 5-tuples,
+  exposes metadata to Kotlin policy and accepts allow/drop completion
+  decisions. `ALLOW` reaches a native outbound seam and is counted separately
+  as attempted/accepted/rejected enqueue. Inbound datagrams from authenticated
+  carriers go through the same shared `CovertDatagramTransport` and are written
+  back to the native-owned duplicated TUN fd with metadata-only counters.
+  Instrumented debug tests can attach fake carriers and inject inbound
+  datagrams to prove these seams use shared core paths rather than
+  Android-specific packet handling. The native runtime also has a protected raw
+  TLS/TCP bridge: after native opens and Kotlin protects the outbound socket,
+  native binds a loopback listener, accepts the app-owned cover side and starts
+  a shared `TlsTcpCarrierSession` over both sockets with real client-side
+  Zero-RTT and encrypted lease delivery. The production service now starts this
+  path through a coordinated runner with bounded retry/backoff and a raw HTTPS
+  local cover client. Android still lacks UI/foreground-service polish and raw
+  WSS cover mode.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

@@ -27,6 +27,9 @@ struct NativeRuntimeSnapshotFields {
     TunFdOwnership tun_fd_ownership = TunFdOwnership::none;
     std::uint64_t tun_packets_read = 0;
     std::uint64_t tun_bytes_read = 0;
+    std::uint64_t tun_packets_written = 0;
+    std::uint64_t tun_bytes_written = 0;
+    std::uint64_t tun_inbound_write_rejected = 0;
     std::uint64_t tun_packets_parsed = 0;
     std::uint64_t tun_packets_dropped = 0;
     std::string tun_last_drop_reason;
@@ -49,9 +52,17 @@ struct NativeRuntimeSnapshotFields {
     int raw_carrier_protect_fd = -1;
     bool raw_carrier_connecting = false;
     bool raw_carrier_active = false;
+    bool raw_carrier_bridge_listening = false;
+    int raw_carrier_bridge_listen_port = 0;
+    bool raw_carrier_bridge_active = false;
     std::uint64_t raw_carrier_connect_attempted = 0;
     std::uint64_t raw_carrier_connect_succeeded = 0;
     std::uint64_t raw_carrier_connect_failed = 0;
+    bool carrier_auth_configured = false;
+    std::uint64_t carrier_auth_attempted = 0;
+    std::uint64_t carrier_auth_succeeded = 0;
+    std::uint64_t carrier_auth_failed = 0;
+    std::uint64_t carrier_lease_received = 0;
     std::string last_error;
 };
 
@@ -59,6 +70,15 @@ struct NativeTunPolicyPacketFields {
     std::uint64_t packet_id = 0;
     std::uint32_t packet_size = 0;
     fps::net::TunFlowTuple flow{};
+};
+
+struct NativeRuntimeEventFields {
+    std::string type;
+    std::uint32_t client_ipv4 = 0;
+    std::uint32_t server_ipv4 = 0;
+    std::uint8_t prefix_length = 0;
+    std::uint16_t mtu = 0;
+    std::string error;
 };
 
 using NativeRuntimeHandle = std::int64_t;
@@ -76,12 +96,23 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto configure_client_auth(
+    NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64,
+    std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+)
+    -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields>;
 [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
+[[nodiscard]] auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string;
+[[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
+    -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native

@@ -4,15 +4,39 @@ import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.config.AndroidClientProfile
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.runtime.EstablishedTun
+import org.fpsproject.client.runtime.TunLease
 import org.fpsproject.client.policy.TunFlowTuple
 
 const val TUN_FD_OWNERSHIP_OWNED_DUPLICATE = "owned_duplicate"
+const val NATIVE_EVENT_LEASE_RECEIVED = "lease_received"
+const val NATIVE_EVENT_CARRIER_AUTH_FAILED = "carrier_auth_failed"
 
 data class NativeTunPolicyPacket(
     val packetId: Long,
     val packetSize: Int,
     val flow: TunFlowTuple,
 )
+
+data class NativeRuntimeEvent(
+    val type: String,
+    val clientIpv4: Long = 0,
+    val serverIpv4: Long = 0,
+    val prefixLength: Int = 0,
+    val mtu: Int = 0,
+    val error: String? = null,
+) {
+    fun tunLeaseOrNull(): TunLease? {
+        if (type != NATIVE_EVENT_LEASE_RECEIVED) {
+            return null
+        }
+        return TunLease(
+            clientIpv4 = clientIpv4,
+            serverIpv4 = serverIpv4,
+            prefixLength = prefixLength,
+            mtu = mtu,
+        )
+    }
+}
 
 data class NativeRuntimeSnapshot(
     val alive: Boolean,
@@ -25,6 +49,9 @@ data class NativeRuntimeSnapshot(
     val tunFdOwnership: String?,
     val tunPacketsRead: Long,
     val tunBytesRead: Long,
+    val tunPacketsWritten: Long,
+    val tunBytesWritten: Long,
+    val tunInboundWriteRejected: Long,
     val tunPacketsParsed: Long,
     val tunPacketsDropped: Long,
     val tunLastDropReason: String?,
@@ -47,9 +74,17 @@ data class NativeRuntimeSnapshot(
     val rawCarrierProtectFd: Int = -1,
     val rawCarrierConnecting: Boolean = false,
     val rawCarrierActive: Boolean = false,
+    val rawCarrierBridgeListening: Boolean = false,
+    val rawCarrierBridgeListenPort: Int = 0,
+    val rawCarrierBridgeActive: Boolean = false,
     val rawCarrierConnectAttempted: Long = 0,
     val rawCarrierConnectSucceeded: Long = 0,
     val rawCarrierConnectFailed: Long = 0,
+    val carrierAuthConfigured: Boolean = false,
+    val carrierAuthAttempted: Long = 0,
+    val carrierAuthSucceeded: Long = 0,
+    val carrierAuthFailed: Long = 0,
+    val carrierLeaseReceived: Long = 0,
     val lastError: String?,
 )
 
@@ -80,7 +115,24 @@ interface FpsNativeBackend {
 
     fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
 
+    fun startRawCarrierBridge(handle: Long): NativeRuntimeSnapshot
+
     fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
+
+    fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot
+
+    fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
+
+    fun drainNativeEvents(handle: Long, maxEvents: Int): List<NativeRuntimeEvent>
 }
 
 class FpsNativeRuntime private constructor(
@@ -95,11 +147,25 @@ class FpsNativeRuntime private constructor(
 
         internal fun createForValidatedProfile(
             profileText: String,
-            @Suppress("UNUSED_PARAMETER") profile: AndroidClientProfile,
+            profile: AndroidClientProfile,
             backend: FpsNativeBackend = FpsNative,
         ): FpsNativeRuntime {
             val handle = backend.createRuntime(profileText)
             require(handle != 0L) { "native runtime creation failed" }
+            val configured = backend.configureClientAuth(
+                handle = handle,
+                profileId = profile.zeroRtt.profileId,
+                clientUuid = profile.zeroRtt.clientUuid,
+                serverPublicKeyBase64 = profile.zeroRtt.serverPublicKeyBase64,
+                clientUpgradeDelayMs = profile.zeroRtt.clientUpgradeDelayMs,
+                clientUpgradeDelaySigmaMs = profile.zeroRtt.clientUpgradeDelaySigmaMs,
+                maxFramePayload = profile.codec.maxFramePayload,
+                maxFramePadding = profile.codec.maxFramePadding,
+            )
+            if (!configured.alive || !configured.carrierAuthConfigured) {
+                backend.closeRuntime(handle)
+                throw IllegalArgumentException(configured.lastError ?: "native auth configuration failed")
+            }
             return FpsNativeRuntime(handle, backend)
         }
     }
@@ -118,6 +184,9 @@ class FpsNativeRuntime private constructor(
                 tunFdOwnership = null,
                 tunPacketsRead = 0,
                 tunBytesRead = 0,
+                tunPacketsWritten = 0,
+                tunBytesWritten = 0,
+                tunInboundWriteRejected = 0,
                 tunPacketsParsed = 0,
                 tunPacketsDropped = 0,
                 tunLastDropReason = null,
@@ -219,12 +288,36 @@ class FpsNativeRuntime private constructor(
         return backend.completeRawCarrierProtection(activeHandle, protectAllowed)
     }
 
+    fun startRawCarrierBridge(): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.startRawCarrierBridge(activeHandle)
+    }
+
     fun stopRawCarrier(): NativeRuntimeSnapshot {
         val activeHandle = handle
         if (activeHandle == 0L) {
             return snapshot()
         }
         return backend.stopRawCarrier(activeHandle)
+    }
+
+    fun runClientAuthSmokeForTest(tamperServerAccept: Boolean = false): NativeRuntimeSnapshot {
+        val activeHandle = handle
+        if (activeHandle == 0L) {
+            return snapshot()
+        }
+        return backend.runClientAuthSmokeForTest(activeHandle, tamperServerAccept)
+    }
+
+    fun drainNativeEvents(maxEvents: Int): List<NativeRuntimeEvent> {
+        val activeHandle = handle
+        if (activeHandle == 0L || maxEvents <= 0) {
+            return emptyList()
+        }
+        return backend.drainNativeEvents(activeHandle, maxEvents)
     }
 
     override fun close() {
@@ -282,6 +375,27 @@ object FpsNative : FpsNativeBackend {
 
     external override fun completeRawCarrierProtection(handle: Long, protectAllowed: Boolean): NativeRuntimeSnapshot
 
+    external override fun startRawCarrierBridge(handle: Long): NativeRuntimeSnapshot
+
     external override fun stopRawCarrier(handle: Long): NativeRuntimeSnapshot
+
+    external override fun configureClientAuth(
+        handle: Long,
+        profileId: String,
+        clientUuid: String,
+        serverPublicKeyBase64: String,
+        clientUpgradeDelayMs: Long,
+        clientUpgradeDelaySigmaMs: Long,
+        maxFramePayload: Int,
+        maxFramePadding: Int,
+    ): NativeRuntimeSnapshot
+
+    external override fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
+
+    external fun nativeDrainNativeEvents(handle: Long, maxEvents: Int): Array<NativeRuntimeEvent>
+
+    override fun drainNativeEvents(handle: Long, maxEvents: Int): List<NativeRuntimeEvent> {
+        return nativeDrainNativeEvents(handle, maxEvents).toList()
+    }
 
 }

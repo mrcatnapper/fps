@@ -19,10 +19,13 @@ when Android test infrastructure or emulator strategy changes.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the scaffold mostly headless: no GUI and no production native auth or
-  raw carrier I/O yet. A native TUN pump skeleton exists for
-  fd read/parse/counter validation, and connected instrumented smoke remains
-  opt-in when an external Android device or emulator is attached.
+- Keep the application headless while product behavior is still incomplete.
+  The next Android milestone is not more isolated smoke coverage; it is a
+  production-like runtime path that composes the existing pieces into one VPN
+  lifecycle. The current raw carrier bridge now runs real client-side Zero-RTT
+  over `TlsTcpCarrierSession` and emits encrypted lease metadata, but native
+  TUN read/policy/enqueue exists only in the outbound direction and
+  `FpsVpnService` does not yet drive carrier/lease/TUN/policy loops by itself.
 
 ## Implemented Headless Core Slice
 
@@ -82,17 +85,88 @@ Delivered:
   metadata for Kotlin split-tunnel policy decisions. Packet bytes remain in
   native-owned state. Kotlin can complete packets as allow/drop and update
   non-secret counters. In this bridge, `allow` now attempts the native outbound
-  packet seam. With no real carrier transport installed yet, the default path
-  returns `no_carrier_transport` and increments enqueue rejected counters rather
-  than silently consuming the packet. Debug-only instrumented hooks can register
-  an in-process fake carrier, proving that policy-allowed packets travel
-  through the production `CovertDatagramTransport` path and produce
-  metadata-only frame digests. Native auth and real raw carrier I/O are not
-  started yet.
+  packet seam. With no authenticated carrier transport installed yet, the
+  default path returns `no_carrier_transport` and increments enqueue rejected
+  counters rather than silently consuming the packet. Debug-only instrumented
+  hooks can register an in-process fake carrier, proving that policy-allowed
+  packets travel through the production `CovertDatagramTransport` path and
+  produce metadata-only frame digests. The same datagram transport now delivers
+  inbound server-to-client datagrams back to the native-owned duplicated TUN fd,
+  exposing only non-secret write/drop counters.
+- The JNI runtime can configure client auth metadata from the validated Android
+  profile, rederive the UUID-backed client X25519 keypair in C++, validate the
+  server public key encoding and run an in-memory native Zero-RTT auth smoke.
+  That smoke uses the shared C++ auth/record/control codecs and emits a
+  metadata-only encrypted TUN lease event for Kotlin. The native runtime can
+  also bridge a protected raw carrier socket to a loopback local-cover socket
+  through `TlsTcpCarrierSession` with real client-side Zero-RTT options. Managed
+  emulator coverage verifies successful encrypted lease delivery and tampered
+  server-accept failure on this bridge.
+- `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
+  surface. It starts the native executor, resolves the FPS server through the
+  underlying-network hook, prepares/protects/connects the raw carrier socket,
+  starts the native bridge, starts a local cover-client hook against that
+  bridge, drains native lease/auth events, establishes/attaches TUN, starts the
+  pump and applies pending split-tunnel policy decisions.
+- `CoordinatedNativeVpnRunner` wraps that one-attempt coordinator in a
+  service-owned retry loop. It owns a runtime instance, the raw local cover
+  starter and a scheduler; transient resolve/connect/bridge/cover/auth
+  failures close the runtime and enter bounded exponential backoff, while
+  missing VPN permission and invalid carrier profile remain terminal. The
+  production `FpsVpnService` now starts this runner with
+  `RawHttpsLocalCoverClientStarter`.
+- `RawHttpsLocalCoverClientStarter` is the first real local cover-client
+  implementation. It uses the first configured Android carrier profile, opens a
+  TLS HTTPS GET keep-alive loop through the native loopback bridge and preserves
+  raw TLS bytes for `TlsTcpCarrierSession`. It is separate from OkHttp probes,
+  which still terminate TLS and remain health/probe support machinery.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
   checks stay opt-in.
+
+## Product-Focused Next Plan
+
+The project has enough Android "brick" tests for the current boundary. New
+Android work should now prefer product-shaped integration checks over isolated
+proofs unless an isolated test is needed to make a failing contract precise.
+
+Target headless product flow:
+
+```text
+profile
+  -> native runtime
+  -> protected raw TCP socket
+  -> local cover-client connection into native bridge
+  -> TlsTcpCarrierSession with real Zero-RTT options
+  -> encrypted server accept / TUN lease event
+  -> VpnService TUN fd establishment
+  -> outbound TUN policy
+  -> CovertDatagramTransport enqueue
+  -> inbound datagram write back to TUN
+```
+
+Tactical implementation order:
+
+1. **WSS local cover client.**
+   Add a raw WSS local cover mode only after the HTTPS GET loop is wired through
+   the coordinator/service path. It must still feed raw TLS bytes to the native
+   loopback bridge and must not reuse OkHttp as an FPS wire carrier.
+
+2. **Production surface cleanup.**
+   Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
+   and then add operator/UI-facing lifecycle/status features. Do this after the
+   headless product path works, so cleanup does not harden the wrong API shape.
+
+Testing expectation:
+
+- JVM tests validate coordinator sequencing, retry/backoff, service-runner
+  lifecycle and fail-closed branches with fake platform/native backends.
+- Managed-device tests should validate the smallest production-shaped flow that
+  needs real Android framework behavior: protected fd, real `VpnService` fd and
+  native bridge/auth/TUN wiring.
+- Do not add more "2 + 2" tests around already-stable helpers unless they
+  protect a newly integrated product contract.
 
 ## Environment
 
@@ -158,10 +232,12 @@ emulator/system-image layers to rebuild.
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
   maintains HTTPS/WSS carrier traffic itself.
-- Carrier probe requests are configured at the Android layer: for example a
-  periodic HTTPS GET or a WSS stream probe. The current headless probe runner
-  tests lifecycle with fake transports, and the OkHttp probe transport factory
-  provides live HTTPS/WSS keepalive sockets without changing the FPS protocol.
+- Carrier/cover requests are configured at the Android layer: for example a
+  periodic HTTPS GET or a WSS stream. The existing OkHttp code is support
+  machinery for app-owned cover traffic only. It must not become a direct FPS
+  wire carrier because OkHttp terminates TLS and does not expose raw TLS record
+  bytes. Production cover traffic should feed the native loopback bridge so
+  `TlsTcpCarrierSession` remains the single FPS wire implementation.
 - Real FPS carrier traffic must use native raw TCP/TLS stream handling through
   `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
   wire protocol. The native runtime already exposes the first protected raw TCP
@@ -180,8 +256,9 @@ emulator/system-image layers to rebuild.
   the runtime executor lifecycle is explicit, the first native TUN read/parse
   pump starts after fd attachment, exposes a bounded policy metadata queue and
   emulator coverage exercises real fd attach/pump/stop/revoke. The first raw
-  carrier socket lifecycle is covered through loopback TCP; starting the native
-  auth path and real carrier registration remain the next native/JNI step.
+  carrier socket lifecycle is covered through loopback TCP; native auth-core
+  linkage is covered in memory; real protected-socket carrier registration
+  remains the next native/JNI step.
 - Split tunnel is the default. Full tunnel is an explicit advanced mode.
 - Policy enforcement is fail-closed: parse TCP/UDP 5-tuples, resolve the owning
   UID with Android platform APIs, allow configured UIDs only, and drop malformed

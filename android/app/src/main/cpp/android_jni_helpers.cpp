@@ -155,13 +155,59 @@ auto tun_policy_packet_array(JNIEnv* env, const std::vector<fps::android_native:
     return array;
 }
 
+auto native_event_array(JNIEnv* env, const std::vector<fps::android_native::NativeRuntimeEventFields>& events) -> jobjectArray {
+    auto event_class = find_local_class(env, "org/fpsproject/client/nativebridge/NativeRuntimeEvent");
+    if(event_class.get() == nullptr) {
+        return nullptr;
+    }
+    auto* constructor = env->GetMethodID(event_class.get(), "<init>", "(Ljava/lang/String;JJIILjava/lang/String;)V");
+    if(constructor == nullptr) {
+        return nullptr;
+    }
+    auto* array = env->NewObjectArray(static_cast<jsize>(events.size()), event_class.get(), nullptr);
+    if(array == nullptr) {
+        return nullptr;
+    }
+
+    for(std::size_t index = 0; index < events.size(); ++index) {
+        auto type = new_optional_string(env, events[index].type);
+        if(type.get() == nullptr) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+        auto error = new_optional_string(env, events[index].error);
+        if(!events[index].error.empty() && error.get() == nullptr) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+        auto event = LocalRef<jobject>{
+            env,
+            env->NewObject(
+                event_class.get(), constructor, type.get(), static_cast<jlong>(events[index].client_ipv4), static_cast<jlong>(events[index].server_ipv4),
+                static_cast<jint>(events[index].prefix_length), static_cast<jint>(events[index].mtu), error.get()
+            ),
+        };
+        if(event.get() == nullptr) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+        env->SetObjectArrayElement(array, static_cast<jsize>(index), event.get());
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            env->DeleteLocalRef(array);
+            return nullptr;
+        }
+    }
+    return array;
+}
+
 auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRuntimeSnapshotFields& snapshot) -> jobject {
     auto snapshot_class = find_local_class(env, "org/fpsproject/client/nativebridge/NativeRuntimeSnapshot");
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor =
-        env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZJJJLjava/lang/String;)V");
+    auto* constructor = env->GetMethodID(
+        snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZZIZJJJZJJJJLjava/lang/String;)V"
+    );
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -184,7 +230,8 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         snapshot_class.get(), constructor, static_cast<jboolean>(snapshot.alive), static_cast<jboolean>(snapshot.started),
         static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jboolean>(snapshot.tun_pump_running),
         static_cast<jint>(snapshot.tun_fd), static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.tun_packets_read),
-        static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
+        static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_written), static_cast<jlong>(snapshot.tun_bytes_written),
+        static_cast<jlong>(snapshot.tun_inbound_write_rejected), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
         tun_drop_reason_string.get(), static_cast<jlong>(snapshot.tun_policy_pending), static_cast<jlong>(snapshot.tun_policy_in_flight),
         static_cast<jlong>(snapshot.tun_policy_allowed), static_cast<jlong>(snapshot.tun_policy_dropped), static_cast<jlong>(snapshot.tun_policy_queue_full),
         static_cast<jlong>(snapshot.tun_covert_enqueue_attempted), static_cast<jlong>(snapshot.tun_covert_enqueue_accepted),
@@ -193,8 +240,12 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         static_cast<jlong>(snapshot.carrier_frames_enqueued), static_cast<jlong>(snapshot.carrier_frame_bytes_enqueued),
         static_cast<jlong>(snapshot.carrier_enqueue_rejected), static_cast<jint>(snapshot.raw_carrier_protect_fd),
         static_cast<jboolean>(snapshot.raw_carrier_connecting), static_cast<jboolean>(snapshot.raw_carrier_active),
+        static_cast<jboolean>(snapshot.raw_carrier_bridge_listening), static_cast<jint>(snapshot.raw_carrier_bridge_listen_port),
+        static_cast<jboolean>(snapshot.raw_carrier_bridge_active),
         static_cast<jlong>(snapshot.raw_carrier_connect_attempted), static_cast<jlong>(snapshot.raw_carrier_connect_succeeded),
-        static_cast<jlong>(snapshot.raw_carrier_connect_failed), error_string.get()
+        static_cast<jlong>(snapshot.raw_carrier_connect_failed), static_cast<jboolean>(snapshot.carrier_auth_configured),
+        static_cast<jlong>(snapshot.carrier_auth_attempted), static_cast<jlong>(snapshot.carrier_auth_succeeded),
+        static_cast<jlong>(snapshot.carrier_auth_failed), static_cast<jlong>(snapshot.carrier_lease_received), error_string.get()
     );
 }
 

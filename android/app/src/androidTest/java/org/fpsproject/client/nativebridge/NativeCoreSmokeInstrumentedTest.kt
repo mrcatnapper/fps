@@ -5,17 +5,23 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertArrayEquals
 import org.junit.Test
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
+import java.io.FileInputStream
+import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.security.MessageDigest
-import java.util.Base64
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class NativeCoreSmokeInstrumentedTest {
+    private val clientUuid = "123e4567-e89b-42d3-a456-426614174000"
+    private val serverPublicKeyBase64 = "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw="
     private val profileJson = """
         {
           "network": {"server": "fps.example.test:443"},
@@ -23,10 +29,27 @@ class NativeCoreSmokeInstrumentedTest {
             "zero_rtt": {
               "enabled": true,
               "profile_id": "android-test-v5",
-              "client_uuid": "123e4567-e89b-42d3-a456-426614174000",
-              "server_public_key_base64": "${Base64.getEncoder().encodeToString(ByteArray(32) { it.toByte() })}"
+              "client_uuid": "$clientUuid",
+              "server_public_key_base64": "$serverPublicKeyBase64"
             }
           },
+          "tun": {"enabled": true, "mtu": 1280}
+        }
+    """.trimIndent()
+    private val zeroDelayProfileJson = """
+        {
+          "network": {"server": "fps.example.test:443"},
+          "security": {
+            "zero_rtt": {
+              "enabled": true,
+              "profile_id": "android-test-v5",
+              "client_uuid": "$clientUuid",
+              "server_public_key_base64": "$serverPublicKeyBase64",
+              "client_upgrade_delay_ms": 0,
+              "client_upgrade_delay_sigma_ms": 0
+            }
+          },
+          "codec": {"max_frame_payload": 1024, "max_frame_padding": 64},
           "tun": {"enabled": true, "mtu": 1280}
         }
     """.trimIndent()
@@ -458,6 +481,175 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
+    fun nativeRawCarrierBridgePassesTlsRecordsBetweenLocalCoverAndRemote() {
+        val clientRecord = tlsApplicationDataRecord("android-cover-client".encodeToByteArray())
+        val serverRecord = tlsApplicationDataRecord("android-cover-server".encodeToByteArray())
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val remoteError = AtomicReference<Throwable?>(null)
+        val accepted = thread(start = true) {
+            try {
+                server.accept().use { socket ->
+                    assertArrayEquals(clientRecord, readExact(socket.getInputStream(), clientRecord.size))
+                    socket.getOutputStream().write(serverRecord)
+                    socket.getOutputStream().flush()
+                    Thread.sleep(100)
+                }
+            } catch (throwable: Throwable) {
+                remoteError.set(throwable)
+            }
+        }
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64, 0, 0, 1024, 64)
+            assertTrue(configured.carrierAuthConfigured)
+            val stoppedRuntime = FpsNative.startRawCarrierBridge(handle)
+            assertEquals("runtime_stopped", stoppedRuntime.lastError)
+
+            FpsNative.startRuntime(handle)
+            val notConnected = FpsNative.startRawCarrierBridge(handle)
+            assertEquals("raw_carrier_not_connected", notConnected.lastError)
+            assertFalse(notConnected.rawCarrierBridgeListening)
+
+            FpsNative.prepareRawCarrierSocket(handle, "127.0.0.1", server.localPort)
+            val connected = FpsNative.completeRawCarrierProtection(handle, protectAllowed = true)
+            assertTrue(connected.rawCarrierActive)
+
+            val listening = FpsNative.startRawCarrierBridge(handle)
+            assertTrue(listening.rawCarrierBridgeListening)
+            assertTrue(listening.rawCarrierBridgeListenPort > 0)
+            assertFalse(listening.rawCarrierBridgeActive)
+
+            Socket("127.0.0.1", listening.rawCarrierBridgeListenPort).use { localCover ->
+                localCover.getOutputStream().write(clientRecord)
+                localCover.getOutputStream().flush()
+                assertArrayEquals(serverRecord, readExact(localCover.getInputStream(), serverRecord.size))
+            }
+            accepted.join(1_000)
+            remoteError.get()?.let { throw AssertionError("remote bridge endpoint failed", it) }
+
+            val bridged = awaitSnapshot(handle) { it.rawCarrierBridgeActive || it.carrierStarted == 1L }
+            assertEquals(1L, bridged.carrierStarted)
+            val stopped = FpsNative.stopRawCarrier(handle)
+            assertFalse(stopped.rawCarrierBridgeListening)
+            assertEquals(0, stopped.rawCarrierBridgeListenPort)
+            assertFalse(stopped.rawCarrierBridgeActive)
+        } finally {
+            FpsNative.closeRuntime(handle)
+            server.close()
+            accepted.join(1_000)
+        }
+    }
+
+    @Test
+    fun nativeRawCarrierBridgeAuthenticatesAndEmitsLeaseEvent() {
+        val result = runRawCarrierBridgeAuthScenario(tamperServerAccept = false)
+
+        assertEquals("ok", result.peerResult)
+        assertEquals(null, result.peerError)
+        assertEquals(null, result.snapshot.lastError)
+        assertEquals(1L, result.snapshot.carrierAuthAttempted)
+        assertEquals(1L, result.snapshot.carrierAuthSucceeded)
+        assertEquals(0L, result.snapshot.carrierAuthFailed)
+        assertEquals(1L, result.snapshot.carrierLeaseReceived)
+        assertEquals(1, result.events.size)
+        assertEquals(NATIVE_EVENT_LEASE_RECEIVED, result.events.single().type)
+        assertEquals(0x0a420002L, result.events.single().clientIpv4)
+        assertEquals(0x0a420001L, result.events.single().serverIpv4)
+        assertEquals(30, result.events.single().prefixLength)
+        assertEquals(1280, result.events.single().mtu)
+        assertEquals(null, result.events.single().error)
+    }
+
+    @Test
+    fun nativeRawCarrierBridgeReportsTamperedServerAccept() {
+        val result = runRawCarrierBridgeAuthScenario(tamperServerAccept = true)
+
+        assertEquals("ok", result.peerResult)
+        assertEquals(null, result.peerError)
+        assertTrue(result.snapshot.carrierAuthAttempted >= 1L)
+        assertEquals(0L, result.snapshot.carrierAuthSucceeded)
+        assertTrue(result.snapshot.carrierAuthFailed >= 1L)
+        assertEquals(0L, result.snapshot.carrierLeaseReceived)
+        assertTrue(result.events.any { it.type == NATIVE_EVENT_CARRIER_AUTH_FAILED })
+        assertTrue(result.events.none { it.type == NATIVE_EVENT_LEASE_RECEIVED })
+    }
+
+    @Test
+    fun nativeClientAuthConfigurationRejectsInvalidServerPublicKey() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64, 0, 0, 1024, 64)
+            val rejected = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, "AAAA", 0, 0, 1024, 64)
+
+            assertTrue(configured.carrierAuthConfigured)
+            assertFalse(rejected.carrierAuthConfigured)
+            assertEquals("invalid_server_public_key", rejected.lastError)
+
+            FpsNative.startRuntime(handle)
+            val smoke = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+
+            assertEquals("client_auth_not_configured", smoke.lastError)
+            assertEquals(1L, smoke.carrierAuthAttempted)
+            assertEquals(1L, smoke.carrierAuthFailed)
+        } finally {
+            FpsNative.closeRuntime(handle)
+        }
+    }
+
+    @Test
+    fun nativeClientAuthSmokeEmitsLeaseEventAndReportsTamperFailure() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64, 0, 0, 1024, 64)
+            assertTrue(configured.carrierAuthConfigured)
+            assertEquals(null, configured.lastError)
+
+            val stopped = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+            assertEquals("runtime_stopped", stopped.lastError)
+            assertEquals(1L, stopped.carrierAuthAttempted)
+            assertEquals(1L, stopped.carrierAuthFailed)
+            assertEquals(0, FpsNative.nativeDrainNativeEvents(handle, 8).size)
+
+            FpsNative.startRuntime(handle)
+            val accepted = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = false)
+            val leaseEvents = FpsNative.nativeDrainNativeEvents(handle, 8).toList()
+
+            assertEquals(null, accepted.lastError)
+            assertEquals(2L, accepted.carrierAuthAttempted)
+            assertEquals(1L, accepted.carrierAuthSucceeded)
+            assertEquals(1L, accepted.carrierAuthFailed)
+            assertEquals(1L, accepted.carrierLeaseReceived)
+            assertEquals(1, leaseEvents.size)
+            assertEquals(NATIVE_EVENT_LEASE_RECEIVED, leaseEvents.single().type)
+            assertEquals(0x0a420002L, leaseEvents.single().clientIpv4)
+            assertEquals(0x0a420001L, leaseEvents.single().serverIpv4)
+            assertEquals(30, leaseEvents.single().prefixLength)
+            assertEquals(1280, leaseEvents.single().mtu)
+            assertEquals(null, leaseEvents.single().error)
+
+            val tampered = FpsNative.runClientAuthSmokeForTest(handle, tamperServerAccept = true)
+            val failureEvents = FpsNative.nativeDrainNativeEvents(handle, 8).toList()
+
+            assertEquals("carrier_auth_failed", tampered.lastError)
+            assertEquals(3L, tampered.carrierAuthAttempted)
+            assertEquals(1L, tampered.carrierAuthSucceeded)
+            assertEquals(2L, tampered.carrierAuthFailed)
+            assertEquals(1L, tampered.carrierLeaseReceived)
+            assertEquals(1, failureEvents.size)
+            assertEquals(NATIVE_EVENT_CARRIER_AUTH_FAILED, failureEvents.single().type)
+            assertEquals("carrier_auth_failed", failureEvents.single().error)
+        } finally {
+            FpsNative.closeRuntime(handle)
+        }
+    }
+
+    @Test
     fun nativeTunPolicyAllowRoutesThroughFakeCarrierTransport() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)
@@ -570,6 +762,110 @@ class NativeCoreSmokeInstrumentedTest {
         writeEnd.close()
     }
 
+    @Test
+    fun nativeInboundDatagramWritesExactBytesToAttachedTunFd() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+
+        val packet = validUdpPacket()
+        val injected = FpsNativeTestHooks.injectInboundDatagram(handle, packet)
+        val input = FileInputStream(readEnd.fileDescriptor)
+        val received = readExact(input, packet.size)
+
+        assertArrayEquals(packet, received)
+        assertEquals(1L, injected.tunPacketsWritten)
+        assertEquals(packet.size.toLong(), injected.tunBytesWritten)
+        assertEquals(0L, injected.tunInboundWriteRejected)
+        assertEquals(0L, injected.tunPacketsDropped)
+        assertEquals(null, injected.tunLastDropReason)
+        assertEquals(null, injected.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundDatagramRejectsMissingTunAndEmptyPayload() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+
+        val missingTun = FpsNativeTestHooks.injectInboundDatagram(handle, validUdpPacket())
+        assertEquals(0L, missingTun.tunPacketsWritten)
+        assertEquals(1L, missingTun.tunInboundWriteRejected)
+        assertEquals(1L, missingTun.tunPacketsDropped)
+        assertEquals("tun_not_attached", missingTun.tunLastDropReason)
+        assertEquals("tun_not_attached", missingTun.lastError)
+
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+        val empty = FpsNativeTestHooks.injectInboundDatagram(handle, byteArrayOf())
+        assertEquals(0L, empty.tunPacketsWritten)
+        assertEquals(2L, empty.tunInboundWriteRejected)
+        assertEquals(2L, empty.tunPacketsDropped)
+        assertEquals("tun_datagram_empty", empty.tunLastDropReason)
+        assertEquals("tun_datagram_empty", empty.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundFragmentedDatagramReassemblesBeforeTunWrite() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+
+        val packet = validUdpPacket() + "fragmented-android-inbound".encodeToByteArray()
+        val injected = FpsNativeTestHooks.injectInboundDatagram(handle, packet, fragmentPayloadBytes = 7)
+        val input = FileInputStream(readEnd.fileDescriptor)
+        val received = readExact(input, packet.size)
+
+        assertArrayEquals(packet, received)
+        assertEquals(1L, injected.tunPacketsWritten)
+        assertEquals(packet.size.toLong(), injected.tunBytesWritten)
+        assertEquals(0L, injected.tunInboundWriteRejected)
+        assertEquals(null, injected.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundDatagramAfterStopDoesNotWriteToTunFd() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+        FpsNative.stopRuntime(handle)
+
+        val stopped = FpsNativeTestHooks.injectInboundDatagram(handle, validUdpPacket())
+        assertEquals("runtime_stopped", stopped.lastError)
+        assertEquals(0L, stopped.tunPacketsWritten)
+        assertEquals(0L, stopped.tunInboundWriteRejected)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
     private fun awaitSnapshot(handle: Long, predicate: (NativeRuntimeSnapshot) -> Boolean): NativeRuntimeSnapshot {
         var snapshot = FpsNative.runtimeSnapshot(handle)
         repeat(100) {
@@ -591,6 +887,98 @@ class NativeCoreSmokeInstrumentedTest {
         0xcf.toByte(), 0x08, 0x01, 0xbb.toByte(),
         0x00, 0x08, 0x00, 0x00,
     )
+
+    private fun tlsApplicationDataRecord(payload: ByteArray): ByteArray {
+        require(payload.size <= 0xffff)
+        return byteArrayOf(
+            0x17,
+            0x03,
+            0x03,
+            ((payload.size ushr 8) and 0xff).toByte(),
+            (payload.size and 0xff).toByte(),
+        ) + payload
+    }
+
+    private fun readExact(input: InputStream, size: Int): ByteArray {
+        val out = ByteArray(size)
+        var offset = 0
+        while (offset < size) {
+            val read = input.read(out, offset, size - offset)
+            if (read < 0) {
+                throw AssertionError("unexpected EOF after $offset of $size bytes")
+            }
+            offset += read
+        }
+        return out
+    }
+
+    private data class RawCarrierBridgeAuthResult(
+        val snapshot: NativeRuntimeSnapshot,
+        val events: List<NativeRuntimeEvent>,
+        val peerResult: String?,
+        val peerError: Throwable?,
+    )
+
+    private fun runRawCarrierBridgeAuthScenario(tamperServerAccept: Boolean): RawCarrierBridgeAuthResult {
+        val firstClientRecord = tlsApplicationDataRecord("android-auth-cover-1".encodeToByteArray())
+        val secondClientRecord = tlsApplicationDataRecord("android-auth-cover-2".encodeToByteArray())
+        val serverCoverRecord = tlsApplicationDataRecord(byteArrayOf(0x66, 0x70, 0x73, 0x35))
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val peerResult = AtomicReference<String?>(null)
+        val peerError = AtomicReference<Throwable?>(null)
+        val accepted = thread(start = true) {
+            try {
+                server.accept().use { socket ->
+                    socket.soTimeout = 5000
+                    ParcelFileDescriptor.fromSocket(socket).use { descriptor ->
+                        peerResult.set(
+                            FpsNativeTestHooks.runZeroRttServerPeer(
+                                descriptor.fd,
+                                "android-test-v5",
+                                clientUuid,
+                                tamperServerAccept,
+                            ),
+                        )
+                    }
+                    Thread.sleep(100)
+                }
+            } catch (throwable: Throwable) {
+                peerError.set(throwable)
+            }
+        }
+        val handle = FpsNative.createRuntime(zeroDelayProfileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientAuth(handle, "android-test-v5", clientUuid, serverPublicKeyBase64, 0, 0, 1024, 64)
+            assertTrue(configured.carrierAuthConfigured)
+            FpsNative.startRuntime(handle)
+            FpsNative.prepareRawCarrierSocket(handle, "127.0.0.1", server.localPort)
+            val connected = FpsNative.completeRawCarrierProtection(handle, protectAllowed = true)
+            assertTrue(connected.rawCarrierActive)
+
+            val listening = FpsNative.startRawCarrierBridge(handle)
+            assertTrue(listening.rawCarrierBridgeListening)
+            assertTrue(listening.rawCarrierBridgeListenPort > 0)
+
+            Socket("127.0.0.1", listening.rawCarrierBridgeListenPort).use { localCover ->
+                localCover.getOutputStream().write(firstClientRecord)
+                localCover.getOutputStream().flush()
+                assertArrayEquals(serverCoverRecord, readExact(localCover.getInputStream(), serverCoverRecord.size))
+                localCover.getOutputStream().write(secondClientRecord)
+                localCover.getOutputStream().flush()
+
+                val snapshot = awaitSnapshot(handle) { it.carrierLeaseReceived == 1L || it.carrierAuthFailed > 0L }
+                accepted.join(1_000)
+                val events = FpsNative.nativeDrainNativeEvents(handle, 8).toList()
+                return RawCarrierBridgeAuthResult(snapshot, events, peerResult.get(), peerError.get())
+            }
+        } finally {
+            FpsNative.closeRuntime(handle)
+            server.close()
+            accepted.join(1_000)
+        }
+    }
 
     private fun sha256Hex(bytes: ByteArray): String {
         return MessageDigest.getInstance("SHA-256")

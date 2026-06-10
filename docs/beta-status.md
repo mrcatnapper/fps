@@ -77,8 +77,10 @@ and signed artifacts remain deferred.
   planning, split-tunnel UID allowlists, underlying-network endpoint resolution,
   socket-protection failure handling, deterministic fake-transport carrier
   probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS probe
-  transport tests, native-runtime wrapper tests and two-phase lease-before-TUN
-  state transitions without requiring an emulator.
+  transport tests, native-runtime wrapper tests, bidirectional native TUN data
+  movement, two-phase lease-before-TUN state transitions and the service-owned
+  raw carrier/local-cover coordinated runner with bounded backoff, without
+  requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
   dispatch input before pushing images. It publishes only two tags per run: the
@@ -171,9 +173,11 @@ Those remain release-hardening concerns.
   claim timing/size distribution resistance.
 - Android remains pre-application: the headless profile/runtime boundary,
   OkHttp app-owned HTTPS/WSS carrier probes, first `VpnService` TUN fd ownership
-  layer, split JNI native runtime handle and headless Kotlin/native lifecycle
-  bridge exist, but native raw TLS/TCP auth/pump wiring, Android lifecycle
-  resilience/status and UI are not implemented yet.
+  layer, split JNI native runtime handle, headless Kotlin/native lifecycle
+  bridge and protected raw `TlsTcpCarrierSession` with real client-side
+  Zero-RTT/lease delivery exist. Native inbound datagrams now write back to the
+  duplicated TUN fd through the shared datagram transport. Android lifecycle
+  coordination, resilience/status and UI are not implemented yet.
 
 ## Public Beta Gate
 

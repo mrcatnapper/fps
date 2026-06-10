@@ -187,11 +187,26 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add first Android native TUN outbound seam: policy-allowed packets attempt
   native outbound enqueue, no-carrier/reject paths are explicit counters, and
   instrumented tests verify exact packet bytes reach a capture sink.
-- Continue Android implementation from `dev/ANDROID_BOUNDARY.md` and
-  `dev/ANDROID_APP_PLAN.md`: replace the Android capture/default outbound seam
-  with real native carrier enqueue, implement native raw TLS/TCP auth/carrier
-  I/O, Android lifecycle resilience/status and richer native/Kotlin async
-  commands.
+- [x] Add first protected raw Android carrier bridge: native connects a
+  protected outbound TCP socket, exposes a loopback local-cover listener and
+  passes TLS-record-shaped bytes through shared `TlsTcpCarrierSession`
+  passthrough.
+- [x] Add first Android headless runtime coordinator: one carrier attempt now
+  drives native start, underlying-network resolve, socket protection/connect,
+  bridge start, fakeable cover-client hook, lease/TUN attach, pump start and
+  split-tunnel policy drain with fail-closed JVM tests.
+- [x] Add first raw Android HTTPS local cover client: configured carrier
+  profiles can now drive a TLS HTTPS GET keep-alive loop through the native
+  loopback bridge without terminating FPS wire TLS in OkHttp.
+- [x] Add Android service-owned coordinated runner: `FpsVpnService` now starts
+  the raw native carrier/local-cover path through a bounded reconnect/backoff
+  loop with metadata-only status snapshots.
+- Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
+  `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
+  product-flow bias: add raw WSS cover mode if needed and then harden
+  debug-only JNI/registry locking. Prefer integration-shaped Android tests over
+  more isolated smoke checks unless a small red test is needed to define a new
+  failure contract.
 
 ## Phase 7: Fuzzing And Soak
 

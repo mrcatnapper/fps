@@ -15,21 +15,32 @@
 #include <cstring>
 #include <deque>
 #include <future>
+#include <initializer_list>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include "fps/core/crypto.hpp"
 #include "fps/core/enum.hpp"
+#include "fps/core/fps_upgrade_controller.hpp"
+#include "fps/core/identity.hpp"
+#include "fps/core/tls_record_layer.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
+#include "fps/net/datagram_fragment.hpp"
+#include "fps/net/tls_tcp_carrier_adapter.hpp"
+#include "fps/net/tls_tcp_carrier_session.hpp"
+#include "fps/net/tun_lease_control.hpp"
 #include "fps/net/tun_packet.hpp"
 
 namespace fps::android_native {
@@ -41,8 +52,11 @@ constexpr auto kTunPumpPollInterval = 10ms;
 constexpr std::size_t kTunPumpMaxPacketSize = 65536;
 constexpr int kTunPumpMaxReadsPerTick = 16;
 constexpr std::size_t kTunPolicyQueueCapacity = 256;
+constexpr std::size_t kNativeEventQueueCapacity = 64;
 constexpr fps::net::CarrierId kFakeCarrierId = 1;
+constexpr fps::net::CarrierId kRawCarrierBridgeCarrierId = 2;
 constexpr auto kRawCarrierConnectTimeout = 3s;
+constexpr std::string_view kAndroidAuthSmokeProfileIdFallback{"android-auth-smoke-v5"};
 
 enum class TunPacketSinkMode {
     none,
@@ -114,6 +128,273 @@ private:
     int fd_ = -1;
 };
 
+struct ClientAuthConfig {
+    std::string profile_id;
+    fps::X25519KeyPair client_key_pair{};
+    fps::X25519PublicKey configured_server_public_key{};
+    std::chrono::milliseconds client_upgrade_delay{0};
+    std::chrono::milliseconds client_upgrade_delay_sigma{0};
+    std::size_t max_frame_payload_size = fps::kDefaultFramePayloadSize;
+    std::size_t max_frame_padding_size = fps::kDefaultFramePaddingSize;
+    fps::net::ClientInstanceId client_instance_id{};
+};
+
+[[nodiscard]] auto fixed_smoke_server_key_pair() -> fps::CryptoResult<fps::X25519KeyPair> {
+    fps::X25519KeyPair out;
+    for(std::size_t index = 0; index < out.private_key.size(); ++index) {
+        out.private_key[index] = static_cast<std::byte>(index + 1U);
+    }
+    auto public_key = fps::x25519_public_from_private(out.private_key);
+    if(!public_key) {
+        return fps::CryptoResult<fps::X25519KeyPair>::failure(public_key.error());
+    }
+    out.public_key = public_key.value();
+    return fps::CryptoResult<fps::X25519KeyPair>::success(out);
+}
+
+[[nodiscard]] auto parse_x25519_public_key_base64(std::string_view text) -> fps::Result<fps::X25519PublicKey, std::string> {
+    auto decoded = fps::base64_decode(text);
+    if(!decoded) {
+        return fps::Result<fps::X25519PublicKey, std::string>::failure(decoded.error());
+    }
+    if(decoded.value().size() != fps::kX25519KeySize) {
+        return fps::Result<fps::X25519PublicKey, std::string>::failure("server_public_key_base64 must decode to 32 bytes");
+    }
+    fps::X25519PublicKey out{};
+    std::copy(decoded.value().begin(), decoded.value().end(), out.begin());
+    return fps::Result<fps::X25519PublicKey, std::string>::success(out);
+}
+
+[[nodiscard]] auto parse_single_tls_record(std::span<const std::byte> wire) -> std::optional<fps::TlsRecord> {
+    fps::TlsRecordParser parser;
+    auto parsed = parser.feed(wire);
+    if(!parsed.errors.empty() || parsed.records.size() != 1U || parsed.pending_bytes != 0U) {
+        return std::nullopt;
+    }
+    return std::move(parsed.records.front());
+}
+
+[[nodiscard]] auto app_record(std::initializer_list<unsigned int> values) -> std::optional<fps::ByteVector> {
+    fps::ByteVector payload;
+    payload.reserve(values.size());
+    for(const auto value : values) {
+        payload.push_back(static_cast<std::byte>(value & 0xffU));
+    }
+    auto record = fps::build_tls_application_data_record(payload);
+    if(!record) {
+        return std::nullopt;
+    }
+    return std::move(record).value();
+}
+
+[[nodiscard]] auto client_controller_config(const ClientAuthConfig& auth, const fps::X25519KeyPair& smoke_server_key_pair) -> fps::FpsUpgradeControllerConfig {
+    const auto profile_id = auth.profile_id.empty() ? std::string{kAndroidAuthSmokeProfileIdFallback} : auth.profile_id;
+    fps::ZeroRttUpgradeConfig zero_rtt{
+        .role = fps::ZeroRttUpgradeRole::client,
+        .local_static_private = auth.client_key_pair.private_key,
+        .local_static_public = auth.client_key_pair.public_key,
+        .peer_static_public = smoke_server_key_pair.public_key,
+        .allowed_client_public_keys = {},
+        .profile_id = profile_id,
+        .version = fps::kFpsWireVersion,
+        .capabilities = 1,
+        .max_padding_size = 64,
+    };
+    return fps::FpsUpgradeControllerConfig{
+        .zero_rtt = std::move(zero_rtt),
+        .parser_options = {},
+        .record_options = {},
+        .profile_id = profile_id,
+        .upgrade_direction = fps::Direction::client_to_server,
+        .min_records_before_trial = 1,
+    };
+}
+
+[[nodiscard]] auto server_controller_config(const ClientAuthConfig& auth, const fps::X25519KeyPair& smoke_server_key_pair) -> fps::FpsUpgradeControllerConfig {
+    const auto profile_id = auth.profile_id.empty() ? std::string{kAndroidAuthSmokeProfileIdFallback} : auth.profile_id;
+    fps::ZeroRttUpgradeConfig zero_rtt{
+        .role = fps::ZeroRttUpgradeRole::server,
+        .local_static_private = smoke_server_key_pair.private_key,
+        .local_static_public = smoke_server_key_pair.public_key,
+        .peer_static_public = std::nullopt,
+        .allowed_client_public_keys = {auth.client_key_pair.public_key},
+        .profile_id = profile_id,
+        .version = fps::kFpsWireVersion,
+        .capabilities = 1,
+        .max_padding_size = 64,
+    };
+    return fps::FpsUpgradeControllerConfig{
+        .zero_rtt = std::move(zero_rtt),
+        .parser_options = {},
+        .record_options = {},
+        .profile_id = profile_id,
+        .upgrade_direction = fps::Direction::client_to_server,
+        .min_records_before_trial = 1,
+    };
+}
+
+[[nodiscard]] auto android_client_controller_config(const ClientAuthConfig& auth) -> fps::FpsUpgradeControllerConfig {
+    fps::ZeroRttUpgradeConfig zero_rtt{
+        .role = fps::ZeroRttUpgradeRole::client,
+        .local_static_private = auth.client_key_pair.private_key,
+        .local_static_public = auth.client_key_pair.public_key,
+        .peer_static_public = auth.configured_server_public_key,
+        .allowed_client_public_keys = {},
+        .profile_id = auth.profile_id,
+        .version = fps::kFpsWireVersion,
+        .capabilities = 1,
+        .max_padding_size = auth.max_frame_padding_size,
+    };
+    return fps::FpsUpgradeControllerConfig{
+        .zero_rtt = std::move(zero_rtt),
+        .parser_options = {},
+        .record_options = {},
+        .profile_id = auth.profile_id,
+        .upgrade_direction = fps::Direction::client_to_server,
+        .min_records_before_trial = 1,
+    };
+}
+
+[[nodiscard]] auto random_client_instance_id() -> fps::CryptoResult<fps::net::ClientInstanceId> {
+    auto bytes = fps::random_bytes(fps::net::kClientInstanceIdSize);
+    if(!bytes) {
+        return fps::CryptoResult<fps::net::ClientInstanceId>::failure(bytes.error());
+    }
+    fps::net::ClientInstanceId id{};
+    std::copy(bytes.value().begin(), bytes.value().end(), id.begin());
+    return fps::CryptoResult<fps::net::ClientInstanceId>::success(id);
+}
+
+[[nodiscard]] auto android_zero_rtt_options(const ClientAuthConfig& auth) -> fps::net::TlsTcpCarrierZeroRttOptions {
+    return fps::net::TlsTcpCarrierZeroRttOptions{
+        .controller_config = android_client_controller_config(auth),
+        .client_upgrade_padding = fps::net::encode_client_instance_control(auth.client_instance_id),
+        .client_ephemeral_key_pair = std::nullopt,
+        .auto_start_client = true,
+        .client_upgrade_delay = auth.client_upgrade_delay,
+        .client_upgrade_delay_sigma = auth.client_upgrade_delay_sigma,
+        .max_inner_tls_bytes = 64U * 1024U,
+        .max_frame_payload_size = auth.max_frame_payload_size,
+        .max_frame_padding_size = auth.max_frame_padding_size,
+        .max_envelope_padding_size = auth.max_frame_padding_size,
+        .max_envelope_frames = fps::kDefaultEnvelopeFrameLimit,
+    };
+}
+
+[[nodiscard]] auto observe_wire(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire) -> bool {
+    auto record = parse_single_tls_record(wire);
+    if(!record) {
+        return false;
+    }
+    auto observed = controller.observe_tls_record(direction, *record);
+    return observed.parse_errors.empty() && observed.record_errors.empty();
+}
+
+[[nodiscard]] auto process_wire(fps::FpsUpgradeController& controller, fps::Direction direction, std::span<const std::byte> wire)
+    -> std::optional<fps::FpsUpgradeProcessResult> {
+    auto record = parse_single_tls_record(wire);
+    if(!record) {
+        return std::nullopt;
+    }
+    return controller.process_inbound_record(direction, *record);
+}
+
+[[nodiscard]] auto wait_fd_ready_for_test(int fd, short events, std::string& error) -> bool {
+    pollfd descriptor{
+        .fd = fd,
+        .events = events,
+        .revents = 0,
+    };
+    while(true) {
+        const auto ready = ::poll(&descriptor, 1, 5000);
+        if(ready > 0) {
+            if((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 && (descriptor.revents & events) == 0) {
+                error = "fd_closed";
+                return false;
+            }
+            return (descriptor.revents & events) != 0;
+        }
+        if(ready == 0) {
+            error = "fd_timeout";
+            return false;
+        }
+        if(errno != EINTR) {
+            error = "fd_poll_failed";
+            return false;
+        }
+    }
+}
+
+[[nodiscard]] auto read_exact_for_test(int fd, std::span<std::byte> out, std::string& error) -> bool {
+    std::size_t offset = 0;
+    while(offset < out.size()) {
+        if(!wait_fd_ready_for_test(fd, POLLIN, error)) {
+            return false;
+        }
+        const auto read_size = ::read(fd, out.data() + static_cast<std::ptrdiff_t>(offset), out.size() - offset);
+        if(read_size > 0) {
+            offset += static_cast<std::size_t>(read_size);
+            continue;
+        }
+        if(read_size == 0) {
+            error = "fd_eof";
+            return false;
+        }
+        if(errno != EINTR) {
+            error = "fd_read_failed";
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] auto read_tls_record_from_fd_for_test(int fd, std::string& error) -> std::optional<fps::ByteVector> {
+    std::array<std::byte, 5> header{};
+    if(!read_exact_for_test(fd, header, error)) {
+        return std::nullopt;
+    }
+    const auto payload_size = (std::to_integer<std::size_t>(header[3]) << 8U) | std::to_integer<std::size_t>(header[4]);
+    fps::ByteVector wire;
+    wire.resize(header.size() + payload_size);
+    std::copy(header.begin(), header.end(), wire.begin());
+    if(payload_size > 0U && !read_exact_for_test(fd, std::span<std::byte>{wire.data() + static_cast<std::ptrdiff_t>(header.size()), payload_size}, error)) {
+        return std::nullopt;
+    }
+    return wire;
+}
+
+[[nodiscard]] auto write_all_for_test(int fd, std::span<const std::byte> bytes, std::string& error) -> bool {
+    std::size_t offset = 0;
+    while(offset < bytes.size()) {
+        if(!wait_fd_ready_for_test(fd, POLLOUT, error)) {
+            return false;
+        }
+        const auto write_size = ::write(fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
+        if(write_size > 0) {
+            offset += static_cast<std::size_t>(write_size);
+            continue;
+        }
+        if(write_size == 0) {
+            error = "fd_write_zero";
+            return false;
+        }
+        if(errno != EINTR) {
+            error = "fd_write_failed";
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] auto passthrough_pipelines() -> fps::net::TlsTcpCarrierSessionPipelines {
+    return fps::net::TlsTcpCarrierSessionPipelines{
+        .inbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
+        .inbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
+        .outbound_client_to_server = fps::CoverSessionPipeline::passthrough(),
+        .outbound_server_to_client = fps::CoverSessionPipeline::passthrough(),
+    };
+}
+
 class AndroidNativeRuntime {
 public:
     explicit AndroidNativeRuntime(std::string profile_text)
@@ -122,7 +403,15 @@ public:
         , datagram_transport_{fps::net::CovertDatagramTransportConfig{
               .role = fps::RelayRole::client,
               .max_datagram_size = kTunPumpMaxPacketSize,
-          }} {}
+          },
+              fps::net::CovertDatagramHandlers{
+                  .on_datagram = [this](fps::net::CarrierId carrier_id, fps::ByteVector datagram) {
+                      handle_inbound_datagram(carrier_id, std::move(datagram));
+                  },
+                  .on_event = [this](fps::net::CovertDatagramEvent event) {
+                      reject_inbound_datagram(std::string{"covert_datagram_"} + std::string{fps::enum_name_or(event)});
+                  },
+              }} {}
 
     ~AndroidNativeRuntime() { static_cast<void>(stop()); }
 
@@ -170,6 +459,10 @@ public:
         stop_raw_carrier_on_worker_no_error();
         clear_fake_carrier_on_worker_no_error();
         stop_tun_pump_no_error();
+        {
+            std::lock_guard lock{native_events_mutex_};
+            native_events_.clear();
+        }
         work_guard_.reset();
         io_context_.stop();
         if(worker_thread_.joinable()) {
@@ -423,10 +716,151 @@ public:
         return snapshot();
     }
 
+    [[nodiscard]] auto start_raw_carrier_bridge() -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<std::string>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, done] {
+            done->set_value(start_raw_carrier_bridge_on_worker());
+        });
+
+        last_error_ = finished.get();
+        return snapshot();
+    }
+
     [[nodiscard]] auto stop_raw_carrier() -> NativeRuntimeSnapshotFields {
         stop_raw_carrier_on_worker_no_error();
         last_error_.clear();
         return snapshot();
+    }
+
+    [[nodiscard]] auto configure_client_auth(
+        std::string profile_id, std::string client_uuid, std::string server_public_key_base64, std::int64_t client_upgrade_delay_ms,
+        std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+    )
+        -> NativeRuntimeSnapshotFields {
+        const auto fail = [&](std::string error) {
+            {
+                std::lock_guard lock{auth_mutex_};
+                client_auth_config_.reset();
+            }
+            carrier_auth_configured_.store(false);
+            last_error_ = std::move(error);
+            return snapshot();
+        };
+
+        if(profile_id.empty()) {
+            return fail("invalid_profile_id");
+        }
+        if(client_upgrade_delay_ms < 0 || client_upgrade_delay_sigma_ms < 0) {
+            return fail("invalid_client_upgrade_delay");
+        }
+        if(max_frame_payload <= 0 || max_frame_padding < 0) {
+            return fail("invalid_codec_limits");
+        }
+        auto client_key_pair = fps::derive_client_key_pair_from_uuid(client_uuid);
+        if(!client_key_pair) {
+            return fail("invalid_client_uuid");
+        }
+        auto server_public_key = parse_x25519_public_key_base64(server_public_key_base64);
+        if(!server_public_key) {
+            return fail("invalid_server_public_key");
+        }
+        auto client_instance_id = random_client_instance_id();
+        if(!client_instance_id) {
+            return fail("client_instance_id_failed");
+        }
+
+        {
+            std::lock_guard lock{auth_mutex_};
+            client_auth_config_ = ClientAuthConfig{
+                .profile_id = std::move(profile_id),
+                .client_key_pair = client_key_pair.value(),
+                .configured_server_public_key = server_public_key.value(),
+                .client_upgrade_delay = std::chrono::milliseconds{client_upgrade_delay_ms},
+                .client_upgrade_delay_sigma = std::chrono::milliseconds{client_upgrade_delay_sigma_ms},
+                .max_frame_payload_size = static_cast<std::size_t>(max_frame_payload),
+                .max_frame_padding_size = static_cast<std::size_t>(max_frame_padding),
+                .client_instance_id = client_instance_id.value(),
+            };
+        }
+        carrier_auth_configured_.store(true);
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto run_client_auth_smoke_for_test(bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+        carrier_auth_attempted_.fetch_add(1);
+        if(!started_ || !worker_thread_running_.load()) {
+            carrier_auth_failed_.fetch_add(1);
+            last_error_ = "runtime_stopped";
+            return snapshot();
+        }
+
+        ClientAuthConfig auth;
+        {
+            std::lock_guard lock{auth_mutex_};
+            if(!client_auth_config_.has_value()) {
+                carrier_auth_failed_.fetch_add(1);
+                last_error_ = "client_auth_not_configured";
+                return snapshot();
+            }
+            auth = *client_auth_config_;
+        }
+
+        auto done = std::make_shared<std::promise<std::optional<fps::net::TunLease>>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [auth = std::move(auth), tamper_server_accept, done] {
+            done->set_value(run_client_auth_smoke_on_worker(auth, tamper_server_accept));
+        });
+        auto lease = finished.get();
+        if(!lease.has_value()) {
+            carrier_auth_failed_.fetch_add(1);
+            last_error_ = "carrier_auth_failed";
+            push_native_event(
+                NativeRuntimeEventFields{
+                    .type = "carrier_auth_failed",
+                    .error = "carrier_auth_failed",
+                }
+            );
+            return snapshot();
+        }
+
+        carrier_auth_succeeded_.fetch_add(1);
+        const auto& decoded_lease = lease.value();
+        carrier_lease_received_.fetch_add(1);
+        push_native_event(
+            NativeRuntimeEventFields{
+                .type = "lease_received",
+                .client_ipv4 = decoded_lease.client_ipv4,
+                .server_ipv4 = decoded_lease.server_ipv4,
+                .prefix_length = decoded_lease.prefix_length,
+                .mtu = decoded_lease.mtu,
+                .error = {},
+            }
+        );
+        last_error_.clear();
+        return snapshot();
+    }
+
+    [[nodiscard]] auto drain_native_events(int max_events) -> std::vector<NativeRuntimeEventFields> {
+        if(max_events <= 0) {
+            return {};
+        }
+        std::vector<NativeRuntimeEventFields> out;
+        std::lock_guard lock{native_events_mutex_};
+        const auto limit = static_cast<std::size_t>(max_events);
+        while(!native_events_.empty() && out.size() < limit) {
+            out.push_back(std::move(native_events_.front()));
+            native_events_.pop_front();
+        }
+        return out;
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -507,12 +941,100 @@ public:
         return captured_fake_carrier_frame_digests_;
     }
 
+    [[nodiscard]] auto inject_inbound_datagram_for_test(std::vector<std::byte> datagram, int fragment_payload_bytes) -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, datagram = std::move(datagram), fragment_payload_bytes, done]() mutable {
+            inject_inbound_datagram_on_worker(std::move(datagram), fragment_payload_bytes);
+            done->set_value();
+        });
+        finished.wait();
+        return snapshot();
+    }
+
 private:
     struct PendingTunPacket {
         std::uint64_t packet_id = 0;
         std::vector<std::byte> packet;
         fps::net::TunFlowTuple flow{};
     };
+
+    [[nodiscard]] static auto run_client_auth_smoke_on_worker(const ClientAuthConfig& auth, bool tamper_server_accept) -> std::optional<fps::net::TunLease> {
+        auto smoke_server = fixed_smoke_server_key_pair();
+        if(!smoke_server) {
+            return std::nullopt;
+        }
+        if(auth.configured_server_public_key != smoke_server.value().public_key) {
+            return std::nullopt;
+        }
+        fps::FpsUpgradeController client_controller{client_controller_config(auth, smoke_server.value())};
+        fps::FpsUpgradeController server_controller{server_controller_config(auth, smoke_server.value())};
+        const auto cover_c2s = app_record({0x61, 0x6e, 0x64, 0x72});
+        const auto cover_s2c = app_record({0x66, 0x70, 0x73, 0x35});
+        if(!cover_c2s.has_value() || !cover_s2c.has_value()) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::client_to_server, *cover_c2s)) {
+            return std::nullopt;
+        }
+        auto server_cover_c2s = process_wire(server_controller, fps::Direction::client_to_server, *cover_c2s);
+        if(!server_cover_c2s.has_value() || server_cover_c2s->forward_bytes != *cover_c2s) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::server_to_client, *cover_s2c) ||
+           !observe_wire(server_controller, fps::Direction::server_to_client, *cover_s2c)) {
+            return std::nullopt;
+        }
+
+        fps::net::ClientInstanceId instance_id{};
+        for(std::size_t index = 0; index < instance_id.size(); ++index) {
+            instance_id[index] = static_cast<std::byte>(0xa0U + index);
+        }
+        auto client_auth_record = client_controller.build_client_upgrade_record(fps::net::encode_client_instance_control(instance_id));
+        if(!client_auth_record) {
+            return std::nullopt;
+        }
+        if(!observe_wire(client_controller, fps::Direction::client_to_server, client_auth_record.value())) {
+            return std::nullopt;
+        }
+        auto server_auth = process_wire(server_controller, fps::Direction::client_to_server, client_auth_record.value());
+        if(!server_auth.has_value() || !server_auth->client_auth_accepted) {
+            return std::nullopt;
+        }
+        auto metadata = fps::net::decode_client_instance_control(server_auth->client_auth_payload);
+        if(!metadata) {
+            return std::nullopt;
+        }
+
+        const fps::net::TunLease expected_lease{
+            .client_ipv4 = 0x0a420002U,
+            .server_ipv4 = 0x0a420001U,
+            .network_ipv4 = 0x0a420000U,
+            .prefix_length = 30,
+            .mtu = 1280,
+        };
+        auto accept_record = server_controller.build_server_accept_record(fps::net::encode_tun_lease_control(expected_lease));
+        if(!accept_record) {
+            return std::nullopt;
+        }
+        if(tamper_server_accept && !accept_record.value().empty()) {
+            accept_record.value().back() = static_cast<std::byte>(std::to_integer<unsigned int>(accept_record.value().back()) ^ 0x01U);
+        }
+        auto client_accept = process_wire(client_controller, fps::Direction::server_to_client, accept_record.value());
+        if(!client_accept.has_value() || !client_accept->server_accept_accepted) {
+            return std::nullopt;
+        }
+        auto decoded_lease = fps::net::decode_tun_lease_control(client_accept->server_accept_payload);
+        if(!decoded_lease) {
+            return std::nullopt;
+        }
+        return decoded_lease.value();
+    }
 
     [[nodiscard]] static auto hex_digest(const fps::HmacSha256& digest) -> std::string {
         constexpr char alphabet[] = "0123456789abcdef";
@@ -600,11 +1122,328 @@ private:
         finished.wait();
     }
 
+    void register_carrier_auth_success() {
+        if(raw_carrier_auth_terminal_) {
+            return;
+        }
+        raw_carrier_auth_terminal_ = true;
+        carrier_auth_succeeded_.fetch_add(1);
+        last_error_.clear();
+    }
+
+    void register_carrier_auth_failure(std::string error) {
+        if(raw_carrier_auth_terminal_) {
+            return;
+        }
+        raw_carrier_auth_terminal_ = true;
+        carrier_auth_failed_.fetch_add(1);
+        last_error_ = error;
+        push_native_event(
+            NativeRuntimeEventFields{
+                .type = "carrier_auth_failed",
+                .error = std::move(error),
+            }
+        );
+    }
+
+    void handle_raw_bridge_covert_frame(fps::Direction direction, const fps::DecodedFrame& frame) {
+        if(frame.frame_type != fps::FrameType::control) {
+            datagram_transport_.handle_covert_frame(kRawCarrierBridgeCarrierId, direction, frame);
+            return;
+        }
+        if(direction != fps::Direction::server_to_client) {
+            last_error_ = "unexpected_control_direction";
+            return;
+        }
+
+        auto lease = fps::net::decode_tun_lease_control(frame.payload);
+        if(!lease) {
+            register_carrier_auth_failure("tun_lease_control_decode_failed");
+            return;
+        }
+        if(raw_carrier_auth_pending_success_) {
+            register_carrier_auth_success();
+            raw_carrier_auth_pending_success_ = false;
+        }
+        const auto& lease_value = lease.value();
+        carrier_lease_received_.fetch_add(1);
+        push_native_event(
+            NativeRuntimeEventFields{
+                .type = "lease_received",
+                .client_ipv4 = lease_value.client_ipv4,
+                .server_ipv4 = lease_value.server_ipv4,
+                .prefix_length = lease_value.prefix_length,
+                .mtu = lease_value.mtu,
+                .error = {},
+            }
+        );
+        last_error_.clear();
+    }
+
+    void handle_inbound_datagram(fps::net::CarrierId, fps::ByteVector datagram) {
+        if(datagram.empty()) {
+            reject_inbound_datagram("tun_datagram_empty");
+            return;
+        }
+        if(datagram.size() > kTunPumpMaxPacketSize) {
+            reject_inbound_datagram("tun_datagram_too_large");
+            return;
+        }
+
+        std::lock_guard tun_lock{tun_mutex_};
+        if(!tun_attached_ || tun_fd_.get() < 0) {
+            tun_inbound_write_rejected_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "tun_not_attached";
+            last_error_ = "tun_not_attached";
+            return;
+        }
+
+        std::size_t offset = 0;
+        while(offset < datagram.size()) {
+            const auto remaining = datagram.size() - offset;
+            const auto written = ::write(tun_fd_.get(), datagram.data() + static_cast<std::ptrdiff_t>(offset), remaining);
+            if(written > 0) {
+                offset += static_cast<std::size_t>(written);
+                continue;
+            }
+            if(written == 0) {
+                reject_inbound_datagram_locked("tun_write_failed");
+                return;
+            }
+            if(errno == EINTR) {
+                continue;
+            }
+            if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                reject_inbound_datagram_locked("tun_write_would_block");
+                return;
+            }
+            reject_inbound_datagram_locked("tun_write_failed");
+            return;
+        }
+
+        tun_packets_written_.fetch_add(1);
+        tun_bytes_written_.fetch_add(static_cast<std::uint64_t>(datagram.size()));
+        tun_last_drop_reason_.clear();
+        last_error_.clear();
+    }
+
+    void reject_inbound_datagram(std::string_view reason) {
+        std::lock_guard tun_lock{tun_mutex_};
+        reject_inbound_datagram_locked(reason);
+    }
+
+    void reject_inbound_datagram_locked(std::string_view reason) {
+        tun_inbound_write_rejected_.fetch_add(1);
+        tun_packets_dropped_.fetch_add(1);
+        tun_last_drop_reason_ = std::string{reason};
+        last_error_ = std::string{reason};
+    }
+
+    void inject_inbound_datagram_on_worker(std::vector<std::byte> datagram, int fragment_payload_bytes) {
+        if(fragment_payload_bytes <= 0) {
+            const fps::DecodedFrame frame{
+                .frame_type = fps::FrameType::opaque_datagram,
+                .payload = std::move(datagram),
+            };
+            datagram_transport_.handle_covert_frame(fps::Direction::server_to_client, frame);
+            return;
+        }
+
+        const auto chunk_size = static_cast<std::size_t>(fragment_payload_bytes);
+        const auto fragment_count = fps::net::fragment_count_for_size(datagram.size(), chunk_size);
+        if(fragment_count == 0U || fragment_count > std::numeric_limits<std::uint16_t>::max() || datagram.size() > std::numeric_limits<std::uint32_t>::max()) {
+            reject_inbound_datagram("tun_datagram_too_large");
+            return;
+        }
+        for(std::size_t index = 0, offset = 0; offset < datagram.size(); ++index) {
+            const auto bytes_remaining = datagram.size() - offset;
+            const auto chunk_bytes = std::min(chunk_size, bytes_remaining);
+            auto payload = fps::net::make_datagram_fragment_payload(
+                1U, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), static_cast<std::uint32_t>(datagram.size()),
+                std::span<const std::byte>{datagram.data() + static_cast<std::ptrdiff_t>(offset), chunk_bytes}
+            );
+            const fps::DecodedFrame frame{
+                .frame_type = fps::FrameType::opaque_datagram_fragment,
+                .payload = std::move(payload),
+            };
+            datagram_transport_.handle_covert_frame(fps::Direction::server_to_client, frame);
+            offset += chunk_bytes;
+        }
+    }
+
+    [[nodiscard]] auto start_raw_carrier_bridge_on_worker() -> std::string {
+        if(!raw_carrier_socket_ || !raw_carrier_active_.load()) {
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            raw_carrier_bridge_active_.store(false);
+            return "raw_carrier_not_connected";
+        }
+        if(raw_carrier_bridge_acceptor_ || raw_carrier_bridge_active_.load()) {
+            return {};
+        }
+        if(carrier_active_.load() != 0U) {
+            return "carrier_already_active";
+        }
+
+        auto acceptor = std::make_shared<boost::asio::ip::tcp::acceptor>(io_context_);
+        boost::system::error_code error;
+        const boost::asio::ip::tcp::endpoint endpoint{boost::asio::ip::address_v4::loopback(), 0};
+        acceptor->open(endpoint.protocol(), error);
+        if(error) {
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->set_option(boost::asio::socket_base::reuse_address(true), error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->bind(endpoint, error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        acceptor->listen(boost::asio::socket_base::max_listen_connections, error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+        const auto local_endpoint = acceptor->local_endpoint(error);
+        if(error) {
+            boost::system::error_code ignored;
+            acceptor->close(ignored);
+            return "raw_carrier_bridge_listen_failed";
+        }
+
+        raw_carrier_bridge_acceptor_ = acceptor;
+        raw_carrier_bridge_listening_.store(true);
+        raw_carrier_bridge_listen_port_.store(static_cast<int>(local_endpoint.port()));
+        raw_carrier_bridge_active_.store(false);
+
+        auto local_socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context_);
+        acceptor->async_accept(*local_socket, [this, acceptor, local_socket](const boost::system::error_code& accept_error) {
+            handle_raw_carrier_bridge_accept(acceptor, local_socket, accept_error);
+        });
+        return {};
+    }
+
+    void handle_raw_carrier_bridge_accept(
+        const std::shared_ptr<boost::asio::ip::tcp::acceptor>& acceptor, const std::shared_ptr<boost::asio::ip::tcp::socket>& local_socket,
+        const boost::system::error_code& accept_error
+    ) {
+        if(raw_carrier_bridge_acceptor_ == acceptor) {
+            raw_carrier_bridge_acceptor_.reset();
+        }
+        raw_carrier_bridge_listening_.store(false);
+        raw_carrier_bridge_listen_port_.store(0);
+        boost::system::error_code ignored;
+        acceptor->close(ignored);
+
+        if(accept_error) {
+            if(accept_error != boost::asio::error::operation_aborted) {
+                last_error_ = "raw_carrier_bridge_accept_failed";
+            }
+            return;
+        }
+        if(!raw_carrier_socket_ || !raw_carrier_active_.load()) {
+            local_socket->close(ignored);
+            last_error_ = "raw_carrier_not_connected";
+            return;
+        }
+        ClientAuthConfig auth;
+        {
+            std::lock_guard lock{auth_mutex_};
+            if(!client_auth_config_.has_value()) {
+                local_socket->close(ignored);
+                last_error_ = "client_auth_not_configured";
+                register_carrier_auth_failure("client_auth_not_configured");
+                return;
+            }
+            auth = *client_auth_config_;
+        }
+
+        auto remote_socket = std::move(*raw_carrier_socket_);
+        raw_carrier_socket_.reset();
+        raw_carrier_protect_fd_.store(-1);
+        raw_carrier_auth_terminal_ = false;
+        raw_carrier_auth_pending_success_ = false;
+        carrier_auth_attempted_.fetch_add(1);
+
+        fps::net::TlsTcpCarrierSessionHandlers handlers;
+        handlers.on_covert_frame = [this](fps::Direction direction, const fps::DecodedFrame& frame) {
+            handle_raw_bridge_covert_frame(direction, frame);
+        };
+        handlers.on_zero_rtt_authenticated = [this](const fps::SessionKeys&, const std::optional<fps::X25519PublicKey>&) { raw_carrier_auth_pending_success_ = true; };
+        handlers.on_zero_rtt_upgrade_error = [this](fps::Direction, fps::ZeroRttUpgradeError error) {
+            register_carrier_auth_failure(std::string{"zero_rtt_"} + std::string{fps::enum_name_or(error)});
+        };
+        handlers.on_classified_record_error = [this](fps::Direction, fps::FpsClassifiedRecordError error) {
+            last_error_ = std::string{"classified_record_"} + std::string{fps::enum_name_or(error)};
+        };
+        handlers.on_closed = [this](const fps::net::TlsTcpCarrierSessionStats&) {
+            static_cast<void>(datagram_transport_.remove_carrier_if(kRawCarrierBridgeCarrierId));
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            raw_carrier_bridge_active_.store(false);
+            raw_carrier_active_.store(false);
+            raw_carrier_connecting_.store(false);
+            raw_carrier_protect_fd_.store(-1);
+            if(carrier_active_.exchange(0) != 0U) {
+                carrier_stopped_.fetch_add(1);
+            }
+        };
+
+        auto session = fps::net::TlsTcpCarrierSession::create(
+            std::move(*local_socket), std::move(remote_socket), passthrough_pipelines(), std::move(handlers),
+            fps::net::TlsTcpCarrierSessionConfig{
+                .read_buffer_size = 64U * 1024U,
+                .max_write_queue_bytes = 1024U * 1024U,
+                .shaper = nullptr,
+                .zero_rtt = android_zero_rtt_options(auth),
+            }
+        );
+        const auto added = datagram_transport_.add_carrier(fps::net::make_tls_tcp_carrier_adapter(kRawCarrierBridgeCarrierId, session));
+        if(!added) {
+            session->stop();
+            raw_carrier_active_.store(false);
+            last_error_ = "raw_carrier_bridge_add_failed";
+            return;
+        }
+
+        raw_carrier_bridge_session_ = session;
+        raw_carrier_bridge_active_.store(true);
+        raw_carrier_active_.store(true);
+        carrier_active_.store(1);
+        carrier_started_.fetch_add(1);
+        last_error_.clear();
+        session->start();
+    }
+
     void stop_raw_carrier_on_worker_no_error() {
         auto clear = [this] {
+            if(raw_carrier_bridge_acceptor_) {
+                boost::system::error_code ignored;
+                raw_carrier_bridge_acceptor_->cancel(ignored);
+                raw_carrier_bridge_acceptor_->close(ignored);
+                raw_carrier_bridge_acceptor_.reset();
+            }
+            raw_carrier_bridge_listening_.store(false);
+            raw_carrier_bridge_listen_port_.store(0);
+            if(raw_carrier_bridge_session_) {
+                auto session = std::move(raw_carrier_bridge_session_);
+                session->stop();
+            } else if(raw_carrier_bridge_active_.exchange(false) && carrier_active_.exchange(0) != 0U) {
+                carrier_stopped_.fetch_add(1);
+                static_cast<void>(datagram_transport_.remove_carrier_if(kRawCarrierBridgeCarrierId));
+            }
             raw_carrier_protect_fd_.store(-1);
             raw_carrier_connecting_.store(false);
             raw_carrier_active_.store(false);
+            raw_carrier_auth_terminal_ = false;
+            raw_carrier_auth_pending_success_ = false;
             if(raw_carrier_socket_) {
                 boost::system::error_code ignored;
                 raw_carrier_socket_->cancel(ignored);
@@ -669,6 +1508,14 @@ private:
         tun_policy_pending_.clear();
         tun_policy_in_flight_.clear();
         tun_last_drop_reason_.clear();
+    }
+
+    void push_native_event(NativeRuntimeEventFields event) {
+        std::lock_guard lock{native_events_mutex_};
+        if(native_events_.size() >= kNativeEventQueueCapacity) {
+            native_events_.pop_front();
+        }
+        native_events_.push_back(std::move(event));
     }
 
     void tun_pump_tick() {
@@ -843,6 +1690,9 @@ private:
             .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
             .tun_packets_read = tun_packets_read_.load(),
             .tun_bytes_read = tun_bytes_read_.load(),
+            .tun_packets_written = tun_packets_written_.load(),
+            .tun_bytes_written = tun_bytes_written_.load(),
+            .tun_inbound_write_rejected = tun_inbound_write_rejected_.load(),
             .tun_packets_parsed = tun_packets_parsed_.load(),
             .tun_packets_dropped = tun_packets_dropped_.load(),
             .tun_last_drop_reason = tun_last_drop_reason_,
@@ -865,9 +1715,17 @@ private:
             .raw_carrier_protect_fd = raw_carrier_protect_fd_.load(),
             .raw_carrier_connecting = raw_carrier_connecting_.load(),
             .raw_carrier_active = raw_carrier_active_.load(),
+            .raw_carrier_bridge_listening = raw_carrier_bridge_listening_.load(),
+            .raw_carrier_bridge_listen_port = raw_carrier_bridge_listen_port_.load(),
+            .raw_carrier_bridge_active = raw_carrier_bridge_active_.load(),
             .raw_carrier_connect_attempted = raw_carrier_connect_attempted_.load(),
             .raw_carrier_connect_succeeded = raw_carrier_connect_succeeded_.load(),
             .raw_carrier_connect_failed = raw_carrier_connect_failed_.load(),
+            .carrier_auth_configured = carrier_auth_configured_.load(),
+            .carrier_auth_attempted = carrier_auth_attempted_.load(),
+            .carrier_auth_succeeded = carrier_auth_succeeded_.load(),
+            .carrier_auth_failed = carrier_auth_failed_.load(),
+            .carrier_lease_received = carrier_lease_received_.load(),
             .last_error = last_error_,
         };
     }
@@ -891,6 +1749,9 @@ private:
     std::atomic_bool tun_pump_running_ = false;
     std::atomic<std::uint64_t> tun_packets_read_ = 0;
     std::atomic<std::uint64_t> tun_bytes_read_ = 0;
+    std::atomic<std::uint64_t> tun_packets_written_ = 0;
+    std::atomic<std::uint64_t> tun_bytes_written_ = 0;
+    std::atomic<std::uint64_t> tun_inbound_write_rejected_ = 0;
     std::atomic<std::uint64_t> tun_packets_parsed_ = 0;
     std::atomic<std::uint64_t> tun_packets_dropped_ = 0;
     std::string tun_last_drop_reason_;
@@ -916,13 +1777,29 @@ private:
     mutable std::mutex carrier_capture_mutex_;
     std::vector<std::string> captured_fake_carrier_frame_digests_;
     std::shared_ptr<boost::asio::ip::tcp::socket> raw_carrier_socket_;
+    std::shared_ptr<boost::asio::ip::tcp::acceptor> raw_carrier_bridge_acceptor_;
+    std::shared_ptr<fps::net::TlsTcpCarrierSession> raw_carrier_bridge_session_;
     boost::asio::ip::tcp::endpoint raw_carrier_endpoint_;
     std::atomic<int> raw_carrier_protect_fd_ = -1;
     std::atomic_bool raw_carrier_connecting_ = false;
     std::atomic_bool raw_carrier_active_ = false;
+    std::atomic_bool raw_carrier_bridge_listening_ = false;
+    std::atomic<int> raw_carrier_bridge_listen_port_ = 0;
+    std::atomic_bool raw_carrier_bridge_active_ = false;
+    bool raw_carrier_auth_terminal_ = false;
+    bool raw_carrier_auth_pending_success_ = false;
     std::atomic<std::uint64_t> raw_carrier_connect_attempted_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_succeeded_ = 0;
     std::atomic<std::uint64_t> raw_carrier_connect_failed_ = 0;
+    mutable std::mutex auth_mutex_;
+    std::optional<ClientAuthConfig> client_auth_config_;
+    std::atomic_bool carrier_auth_configured_ = false;
+    std::atomic<std::uint64_t> carrier_auth_attempted_ = 0;
+    std::atomic<std::uint64_t> carrier_auth_succeeded_ = 0;
+    std::atomic<std::uint64_t> carrier_auth_failed_ = 0;
+    std::atomic<std::uint64_t> carrier_lease_received_ = 0;
+    mutable std::mutex native_events_mutex_;
+    std::deque<NativeRuntimeEventFields> native_events_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
     std::atomic<std::uint64_t> commands_completed_ = 0;
     std::string last_error_;
@@ -1046,6 +1923,15 @@ public:
         return found->second->complete_raw_carrier_protection(protect_allowed);
     }
 
+    [[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->start_raw_carrier_bridge();
+    }
+
     [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
         std::lock_guard lock{mutex_};
         const auto found = runtimes_.find(handle);
@@ -1053,6 +1939,40 @@ public:
             return invalid_runtime_snapshot("invalid_handle");
         }
         return found->second->stop_raw_carrier();
+    }
+
+    [[nodiscard]] auto configure_client_auth(
+        NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64,
+        std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+    )
+        -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->configure_client_auth(
+            std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64), client_upgrade_delay_ms, client_upgrade_delay_sigma_ms,
+            max_frame_payload, max_frame_padding
+        );
+    }
+
+    [[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->run_client_auth_smoke_for_test(tamper_server_accept);
+    }
+
+    [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second->drain_native_events(max_events);
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -1100,6 +2020,16 @@ public:
         return found->second->captured_fake_carrier_frame_digests_for_test();
     }
 
+    [[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
+        -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->inject_inbound_datagram_for_test(std::move(datagram), fragment_payload_bytes);
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
@@ -1112,6 +2042,79 @@ private:
 }
 
 } // namespace
+
+auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string {
+    if(fd < 0) {
+        return "invalid_fd";
+    }
+    auto server_key_pair = fixed_smoke_server_key_pair();
+    if(!server_key_pair) {
+        return "server_key_pair_failed";
+    }
+    auto client_key_pair = fps::derive_client_key_pair_from_uuid(client_uuid);
+    if(!client_key_pair) {
+        return "invalid_client_uuid";
+    }
+    ClientAuthConfig auth{
+        .profile_id = std::move(profile_id),
+        .client_key_pair = client_key_pair.value(),
+        .configured_server_public_key = server_key_pair.value().public_key,
+    };
+    fps::FpsUpgradeController server_controller{server_controller_config(auth, server_key_pair.value())};
+
+    std::string error;
+    bool sent_server_cover = false;
+    for(int record_index = 0; record_index < 16; ++record_index) {
+        auto wire = read_tls_record_from_fd_for_test(fd, error);
+        if(!wire) {
+            return error.empty() ? "read_tls_record_failed" : error;
+        }
+        auto processed = process_wire(server_controller, fps::Direction::client_to_server, *wire);
+        if(!processed.has_value()) {
+            return "server_process_failed";
+        }
+        if(!processed->parse_errors.empty() || !processed->record_errors.empty()) {
+            return "server_process_record_error";
+        }
+        if(processed->client_auth_accepted) {
+            if(!fps::net::decode_client_instance_control(processed->client_auth_payload)) {
+                return "client_instance_decode_failed";
+            }
+            const fps::net::TunLease lease{
+                .client_ipv4 = 0x0a420002U,
+                .server_ipv4 = 0x0a420001U,
+                .network_ipv4 = 0x0a420000U,
+                .prefix_length = 30,
+                .mtu = 1280,
+            };
+            auto accept = server_controller.build_server_accept_record(fps::net::encode_tun_lease_control(lease));
+            if(!accept) {
+                return "server_accept_build_failed";
+            }
+            if(tamper_server_accept && !accept.value().empty()) {
+                accept.value().back() = static_cast<std::byte>(std::to_integer<unsigned int>(accept.value().back()) ^ 0x01U);
+            }
+            if(!write_all_for_test(fd, accept.value(), error)) {
+                return error.empty() ? "server_accept_write_failed" : error;
+            }
+            return "ok";
+        }
+        if(!sent_server_cover) {
+            auto cover = app_record({0x66, 0x70, 0x73, 0x35});
+            if(!cover) {
+                return "server_cover_build_failed";
+            }
+            if(!observe_wire(server_controller, fps::Direction::server_to_client, *cover)) {
+                return "server_cover_observe_failed";
+            }
+            if(!write_all_for_test(fd, *cover, error)) {
+                return error.empty() ? "server_cover_write_failed" : error;
+            }
+            sent_server_cover = true;
+        }
+    }
+    return "client_auth_not_seen";
+}
 
 auto tun_fd_ownership_name(TunFdOwnership ownership) noexcept -> std::string_view {
     switch(ownership) {
@@ -1159,7 +2162,28 @@ auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_al
     return runtime_registry().complete_raw_carrier_protection(handle, protect_allowed);
 }
 
+auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().start_raw_carrier_bridge(handle); }
+
 auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields { return runtime_registry().stop_raw_carrier(handle); }
+
+auto configure_client_auth(
+    NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64, std::int64_t client_upgrade_delay_ms,
+    std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+)
+    -> NativeRuntimeSnapshotFields {
+    return runtime_registry().configure_client_auth(
+        handle, std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64), client_upgrade_delay_ms, client_upgrade_delay_sigma_ms,
+        max_frame_payload, max_frame_padding
+    );
+}
+
+auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().run_client_auth_smoke_for_test(handle, tamper_server_accept);
+}
+
+auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
+    return runtime_registry().drain_native_events(handle, max_events);
+}
 
 auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
     return runtime_registry().install_tun_packet_capture_sink_for_test(handle, reject_packets);
@@ -1177,6 +2201,10 @@ auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnap
 
 auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
     return runtime_registry().captured_fake_carrier_frame_digests_for_test(handle);
+}
+
+auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().inject_inbound_datagram_for_test(handle, std::move(datagram), fragment_payload_bytes);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

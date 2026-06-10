@@ -3,10 +3,13 @@ package org.fpsproject.client
 import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunner
+import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerSnapshot
+import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerState
 import org.fpsproject.client.nativebridge.HeadlessNativeVpnRuntime
 import org.fpsproject.client.nativebridge.NativeVpnRuntimeSnapshot
+import org.fpsproject.client.nativebridge.RawHttpsLocalCoverClientStarter
 import org.fpsproject.client.runtime.TunHandle
-import org.fpsproject.client.runtime.TunLease
 import org.fpsproject.client.runtime.VpnRuntimeState
 
 class FpsVpnService : VpnService() {
@@ -16,7 +19,15 @@ class FpsVpnService : VpnService() {
         const val EXTRA_PROFILE = "org.fpsproject.client.extra.PROFILE"
     }
 
-    private var runtime: HeadlessNativeVpnRuntime? = null
+    private val serviceRuntime = FpsVpnServiceRuntime { profileText ->
+        val hooks = VpnServicePlatformHooks(this)
+        CoordinatedNativeVpnServiceRunner(
+            CoordinatedNativeVpnRunner(
+                runtimeFactory = { HeadlessNativeVpnRuntime.create(profileText, hooks) },
+                coverClientStarter = RawHttpsLocalCoverClientStarter(),
+            ),
+        )
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -46,27 +57,20 @@ class FpsVpnService : VpnService() {
         super.onRevoke()
     }
 
-    internal fun startProfile(profileText: String): VpnRuntimeState {
-        val next = HeadlessNativeVpnRuntime.create(profileText, VpnServicePlatformHooks(this))
-        runtime?.close()
-        runtime = next
-        return next.start()
-    }
-
-    internal fun onLeaseReceived(lease: TunLease): VpnRuntimeState {
-        return runtime?.onLeaseReceived(lease) ?: VpnRuntimeState.FAILED
+    internal fun startProfile(profileText: String): CoordinatedNativeVpnRunnerState {
+        return serviceRuntime.startProfile(profileText)
     }
 
     internal fun stopRuntime(): VpnRuntimeState {
-        val activeRuntime = runtime ?: return VpnRuntimeState.STOPPED
-        val stopped = activeRuntime.stop()
-        activeRuntime.close()
-        runtime = null
-        return stopped
+        return serviceRuntime.stop()
+    }
+
+    internal fun runnerSnapshot(): CoordinatedNativeVpnRunnerSnapshot {
+        return serviceRuntime.runnerSnapshot()
     }
 
     internal fun snapshot(): NativeVpnRuntimeSnapshot {
-        return runtime?.snapshot() ?: NativeVpnRuntimeSnapshot.stopped()
+        return serviceRuntime.nativeSnapshot()
     }
 }
 

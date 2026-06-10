@@ -79,6 +79,16 @@ devices and future Gradle-managed emulators.
   the actual FPS path must use native `TlsTcpCarrierSession` over raw TCP/TLS
   streams so the core can parse carrier TLS records and insert classified FPS
   TLS records.
+- Added the first raw HTTPS local cover client. It connects to the native
+  loopback bridge, wraps that connection in TLS using the configured carrier
+  origin hostname and runs a simple HTTP/1.1 keep-alive GET loop. This is the
+  first app-owned Android cover path that preserves raw TLS bytes for
+  `TlsTcpCarrierSession`.
+- Added the first service-owned coordinated runner around the raw Android
+  carrier path. `CoordinatedNativeVpnRunner` drives
+  `HeadlessNativeVpnRuntime.startCoordinated(...)`, keeps ticking native
+  lease/auth/policy events, retries transient carrier/auth failures with bounded
+  backoff and is now the runtime path used by `FpsVpnService`.
 - Added the first Android `VpnService` lifecycle and TUN fd ownership layer:
   profile start, stop action, lease-triggered `VpnService.Builder`
   establishment, leased IPv4 address/route planning and idempotent
@@ -88,15 +98,14 @@ devices and future Gradle-managed emulators.
   duplicate an Android TUN fd into native-owned RAII state without taking
   ownership of the Java/Kotlin `ParcelFileDescriptor`. The JNI implementation
   is split into entrypoints, runtime registry/state and object-conversion
-  helpers so future native auth/pump wiring does not accumulate in a single
-  monolithic binding file.
+  helpers so native runtime wiring does not accumulate in a single monolithic
+  binding file.
 - Added `HeadlessNativeVpnRuntime` as the first Kotlin lifecycle bridge between
   `HeadlessVpnController` and `FpsNativeRuntime`. It validates profile text,
   owns both layers, performs lease-triggered TUN establishment and attaches the
   resulting fd to native as an owned duplicate. It starts the native TUN pump
   after attachment, and the managed emulator smoke verifies that path with a
-  real `VpnService` fd plus explicit stop/debug-revoke cleanup. It intentionally
-  does not start native auth or real raw carrier I/O yet.
+  real `VpnService` fd plus explicit stop/debug-revoke cleanup.
 - Added the first native runtime executor lifecycle. The JNI runtime can start
   and stop one Boost.Asio `io_context` worker thread, exposes non-secret
   lifecycle/counter snapshots and has a deterministic no-op posted-command
@@ -115,8 +124,17 @@ devices and future Gradle-managed emulators.
   enqueue path production carriers will use, recording only frame metadata and
   SHA-256 digests. Reattaching or clearing the TUN fd clears pending and
   in-flight policy packets so stale decisions from an old fd cannot affect a
-  new runtime state. The pump intentionally does not run FPS auth or raw
-  carrier I/O yet.
+  new runtime state. The pump intentionally does not run production FPS auth
+  yet.
+- Added the first protected raw carrier bridge. After native opens an outbound
+  TCP socket and Kotlin protects its fd, native can bind a loopback local-cover
+  listener; when the app/cover client connects, native moves the protected raw
+  socket and the accepted local socket into the shared `TlsTcpCarrierSession`.
+  Managed-device coverage verifies TLS-record-shaped bytes in both directions
+  through the real session. The bridge now installs real client-side Zero-RTT
+  options derived from the validated Android profile, emits metadata-only
+  encrypted `tun_lease` events and reports tampered server-accept failure
+  without registering a lease.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -127,47 +145,43 @@ devices and future Gradle-managed emulators.
 - Added an Android `FPS_LOG_*` macro backend over `__android_log_print`; Linux
   keeps Boost.Log behind the same project facade.
 
-## Follow-Up Increments
+## Product-Focused Follow-Up Increments
 
-- Keep Android profile parsing in Kotlin for now. It uses Android `org.json`
-  and the current `fps://v1` client profile shape instead of dragging Linux
-  daemon/Boost.JSON config paths into the app.
-- Wire allowed native pump packets into transport. Current
-  `HeadlessNativeVpnRuntime` duplicates the fd into native-owned RAII state,
-  starts the `io_context` worker thread, drains native pump metadata through
-  Kotlin split-tunnel policy and completes packets as allow/drop for testable
-  fail-closed accounting. Allowed packets now reach a native outbound packet
-  seam. The default runtime has no real carrier transport yet, so it reports
-  `no_carrier_transport` and increments enqueue rejected counters. Debug-only
-  tests can install either an exact-packet capture sink or an in-process fake
-  carrier. The fake carrier is the current proof that allowed packets enter
-  `CovertDatagramTransport` rather than a parallel Android-only path.
-- Continue native raw TLS/TCP carrier wiring. The Android native runtime now has
-  a two-phase raw TCP socket lifecycle: native opens the socket, exposes the fd
-  to Kotlin for `VpnService.protect(fd)`, then native connects or aborts before
-  any `connect`. Instrumented coverage verifies stopped-runtime rejection,
-  invalid endpoint rejection, protect-denied abort and loopback TCP
-  connect/stop. The next layer is to attach `TlsTcpCarrierSession`, Zero-RTT
-  auth and lease handling to this protected socket lifecycle.
-- Use the opt-in Gradle Managed Device lane described in
-  [`ANDROID_TESTING_PLAN.md`](./ANDROID_TESTING_PLAN.md) before relying on
-  emulator behavior for PR gating. The lane is launched through
-  `Dockerfile.android-emulator` plus `/dev/kvm`; current tests cover native
-  smoke and real `VpnService` full-runtime fd attach/pump/stop/revoke. Next
-  emulator tests should stay small and focus on protect-before-connect,
-  underlying-network DNS and policy integration.
+The Android boundary is now mature enough that new work should extend the
+headless VPN lifecycle instead of adding more isolated proof points. Keep small
+TDD tests when a contract is ambiguous, but make each increment advance the
+product flow.
+
+1. **One coordinator owns the product lifecycle.**
+   - `FpsVpnService` now starts a `CoordinatedNativeVpnRunner` instead of the
+     lower-level one-shot runtime. The runner owns native start, underlying
+     network resolve, protect/connect, raw bridge, local cover client, native
+     event ticks, lease-triggered TUN setup and policy drain.
+   - Transient carrier/auth failures enter bounded retry/backoff after closing
+     the old runtime; VPN permission and invalid profile remain terminal.
+   - Tests for this layer are integration-shaped: ordered lifecycle,
+     reconnect/backoff, fail-closed branches and observable counters, not
+     individual helper arithmetic.
+
+2. **Harden the API surface after the product path exists.**
+   - Gate debug-only JNI hooks out of production variants.
+   - Reduce native runtime registry mutex scope so registry locks are not held
+     while runtime methods post to Asio, wait on futures or stop threads.
+   - Add UI/foreground-service/status work only after the headless path can
+     authenticate, lease, establish TUN and move packets both ways.
 
 ## Accepted Android Direction
 
 - First Android beta should use app-owned carrier sessions. The Android app
   opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
-- Carrier probe behavior is app-configurable at the Android profile/runtime
-  layer. The current headless model supports HTTPS GET and WSS probe metadata
-  plus a fake-transport runner and a live OkHttp-backed HTTPS/WSS probe
-  transport factory plus first `VpnService` TUN fd ownership. The next step is
-  native raw TLS/TCP auth/pump wiring and Android lifecycle resilience, not
-  changing protocol core.
+- Carrier behavior is app-configurable at the Android profile/runtime layer.
+  The current headless model supports HTTPS GET and WSS metadata, fake
+  transport coverage, live OkHttp cover traffic support, first `VpnService` TUN
+  fd ownership and a native raw TLS/TCP bridge with real Zero-RTT lease
+  delivery. Native TUN movement is bidirectional through the shared
+  `CovertDatagramTransport`; the next step is one lifecycle coordinator, not
+  changing protocol core and not adding another wire carrier path.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets now use a two-phase fd hook, and
   OkHttp-owned sockets use the Java `Socket` hook before the socket can be
@@ -181,9 +195,12 @@ devices and future Gradle-managed emulators.
   creation/ownership, native-owned duplicate attachment
   (`tunFdOwnership=owned_duplicate`), a Kotlin/native lifecycle bridge and
   explicit native `io_context` executor lifecycle plus a non-protocol native
-  TUN read/parse pump with non-secret runtime snapshots. Managed-device
-  coverage exercises that path with a real Android TUN fd; native auth and raw
-  carrier I/O wiring are next.
+  TUN read/parse pump with non-secret runtime snapshots. Native auth-core
+  linkage is covered by an in-memory smoke that can deliver an encrypted test
+  lease event to Kotlin. Managed-device coverage exercises that path, a real
+  Android TUN fd and a protected raw `TlsTcpCarrierSession` bridge with real
+  client-side Zero-RTT, encrypted lease delivery and inbound datagram-to-TUN
+  writes. Lifecycle coordination is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

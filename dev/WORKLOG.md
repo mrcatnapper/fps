@@ -2,6 +2,517 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-10
+
+### Android service runner seam hardening
+
+Goal:
+
+- Make the `FpsVpnService` runner ownership behavior testable in ordinary JVM
+  tests without Robolectric or real Android framework classes.
+
+Plan:
+
+1. Extract a small pure-Kotlin service runtime owner with an injectable runner
+   factory.
+2. Keep `FpsVpnService` as the Android shell that supplies platform hooks and
+   the production `CoordinatedNativeVpnRunner`.
+3. Add JVM tests for start, restart, factory failure preserving the old runner,
+   stop idempotency and metadata-only snapshots.
+4. Run Android Docker/JVM checks and local sanity checks, then commit.
+
+Completed:
+
+- Extracted `FpsVpnServiceRuntime`, a pure-Kotlin owner for the active
+  service runner. `FpsVpnService` now only supplies Android platform hooks and
+  the production `CoordinatedNativeVpnRunner` factory.
+- Added `FpsVpnServiceRuntimeTest` for start/restart, factory-failure
+  preservation of the active runner, idempotent stop, stopped snapshots and
+  profile/identity secrecy in snapshots.
+- Updated Android testing docs. No Robolectric dependency was needed.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android coordinated runner reconnect/backoff
+
+Goal:
+
+- Turn the one-shot Android coordinated runtime into a service-owned runtime
+  loop that can retry carrier/auth failures without introducing another wire
+  carrier path.
+
+Plan:
+
+1. Add JVM tests for a small coordinated runner around
+   `HeadlessNativeVpnRuntime`: initial product-flow success, transient
+   DNS/connect/cover/auth failures entering bounded backoff, retry after delay,
+   backoff reset after success, missing VPN permission as terminal and
+   idempotent stop cleanup.
+2. Implement the runner with injectable runtime factory, cover-client starter
+   and scheduler; production uses a single background scheduled executor,
+   tests use a deterministic manual scheduler.
+3. Wire `FpsVpnService` to the runner and the real
+   `RawHttpsLocalCoverClientStarter`, keeping status snapshots metadata-only.
+4. Update Android developer notes and run Android Docker/JVM checks plus local
+   source/script/C++ sanity checks.
+
+Completed:
+
+- Added `CoordinatedNativeVpnRunner`, a service-owned Kotlin runner around
+  `HeadlessNativeVpnRuntime.startCoordinated(...)`. It owns the raw local cover
+  starter and scheduler, ticks native lease/auth/policy events, treats missing
+  VPN permission and invalid carrier profiles as terminal states, and retries
+  transient resolve/connect/bridge/cover/auth failures with bounded exponential
+  backoff.
+- Wired `FpsVpnService` to start the coordinated runner with
+  `RawHttpsLocalCoverClientStarter`; the lower-level one-shot runtime remains
+  available for focused tests and debug harnesses.
+- Added JVM coverage for successful product-flow startup, scheduled ticks,
+  transient DNS retry, auth-failure cleanup/backoff, terminal VPN permission,
+  idempotent stop and metadata-only snapshots.
+- Updated Android plan/boundary/roadmap/testing/spec/beta-status docs.
+
+Verification:
+
+- Red step: `tools/run_android_checks.sh --docker` failed on unresolved
+  `CoordinatedNativeVpnRunner*` types after adding tests.
+- `tools/run_android_checks.sh --docker` passed after implementation.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android raw HTTPS local cover client
+
+Goal:
+
+- Replace the fake coordinator cover hook with the first real headless Android
+  local cover client that preserves raw TLS bytes for the native
+  `TlsTcpCarrierSession` bridge.
+
+Plan:
+
+1. Extend the local cover starter contract to receive the selected
+   `CarrierProbeRuntimePlan`; coordinator uses the first configured carrier and
+   fails closed when none exists.
+2. Add a raw HTTPS GET local cover client that connects to the native loopback
+   bridge, wraps that socket in TLS using the carrier origin hostname and keeps
+   a simple HTTP/1.1 keep-alive GET loop.
+3. Cover the starter with JVM tests through a local TCP bridge and TLS
+   `MockWebServer`, plus coordinator tests for missing carrier profile and plan
+   handoff.
+4. Update Android docs/worklog and run Android Docker/JVM checks plus ordinary
+   local regression checks.
+
+Completed:
+
+- Extended the local cover starter contract to receive the selected
+  `CarrierProbeRuntimePlan`; the coordinator now fails closed with
+  `carrier_profile_missing` when a product-flow profile has no carrier.
+- Added `RawHttpsLocalCoverClientStarter`: it connects to the native loopback
+  bridge, wraps that socket in TLS with the configured carrier origin hostname,
+  performs an initial HTTPS GET and keeps a background HTTP/1.1 keep-alive GET
+  loop until closed.
+- Added JVM coverage with a local TCP byte bridge plus TLS `MockWebServer`:
+  repeated GETs reach the origin through the bridge, unsupported WSS mode fails
+  without network use, HTTP status failures and TLS failures return non-secret
+  metadata errors.
+- Updated Android plan/boundary/roadmap/testing docs. Next Android work is
+  coordinator reconnect/backoff plus service-runner integration; raw WSS can
+  follow if needed.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the import/test-fixture
+  compile-fix iterations.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android headless runtime coordinator
+
+Goal:
+
+- Compose the existing Android runtime bricks into one headless product-flow
+  lifecycle before adding UI/service status work.
+
+Plan:
+
+1. Add a small Kotlin coordinator surface on `HeadlessNativeVpnRuntime`.
+2. Keep the cover-client side fakeable through a narrow local bridge starter
+   hook; do not introduce a second wire carrier path.
+3. Cover ordered success and fail-closed branches with JVM tests:
+   permission, DNS, socket protect, native bridge, cover start, auth failure,
+   lease/TUN attach and policy drain.
+4. Update Android developer notes and run Android Docker/JVM checks plus the
+   usual source/script sanity checks.
+
+Completed:
+
+- Added a `HeadlessNativeVpnRuntime` coordinator surface for one product-shaped
+  carrier attempt: native start, underlying-network resolve, raw socket
+  protect/connect, native bridge, fakeable local cover-client hook, native
+  event drain, lease-triggered TUN attach/pump and split-tunnel policy drain.
+- Added a narrow `LocalCoverClientStarter` / `LocalCoverClientHandle` hook so
+  the next Android increment can plug in a real app-owned cover client without
+  creating a second FPS wire carrier path.
+- Added JVM tests for the successful ordered flow and fail-closed branches:
+  missing VPN permission, empty/throwing DNS, socket protection failure, bridge
+  failure, cover start failure/exception and native auth failure cleanup.
+- Updated Android plan/boundary/roadmap/testing docs to mark the single-attempt
+  coordinator done and keep real cover-client plus reconnect/backoff as next
+  work.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the initial compile-fix
+  iteration.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android bidirectional TUN/data path
+
+Goal:
+
+- Close the next Android product-flow gap after protected bridge Zero-RTT:
+  inbound opaque datagrams from authenticated carriers must write back to the
+  native-owned duplicated TUN fd through the shared `CovertDatagramTransport`
+  path, not through a Kotlin packet copy or an Android-specific transport.
+
+Plan:
+
+1. Add metadata counters and debug-only test hooks for inbound datagram
+   delivery.
+2. Wire `CovertDatagramTransport::on_datagram` to a native TUN writer.
+3. Cover missing TUN, exact pipe-fd writes, empty datagrams and fragmented
+   reassembly before write in managed-device tests.
+4. Update Android boundary/testing docs and run Android/core regression checks.
+
+Completed:
+
+- Added native snapshot counters for TUN packets/bytes written and inbound
+  write rejects.
+- Connected Android native `CovertDatagramTransport` inbound delivery to the
+  duplicated TUN fd writer, with metadata-only drop reasons for missing TUN,
+  empty/oversized datagrams and write failures.
+- Added a debug-only JNI hook that injects inbound datagrams or fragments
+  through `CovertDatagramTransport::handle_covert_frame(...)`, so tests use the
+  same path as authenticated carrier frames.
+- Added managed-device tests for exact inbound writes to a pipe fd,
+  missing-TUN/empty rejects, runtime-stopped behavior and fragment reassembly.
+- Updated Android app/boundary/testing notes and public testing/spec beta
+  status text. The next Android product-flow increment is now the lifecycle
+  coordinator.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed with 26/26 instrumented tests.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `git diff --check` passed.
+
+### Android protected bridge Zero-RTT implementation
+
+Goal:
+
+- Implement the first product-flow Android increment: protected raw bridge must
+  stop being passthrough-only and run real client-side Zero-RTT over
+  `TlsTcpCarrierSession`, producing encrypted lease/control events through the
+  existing native event queue.
+
+Plan:
+
+1. Add tests first around the production-shaped bridge auth path and failure
+   handling.
+2. Build Android bridge `TlsTcpCarrierZeroRttOptions` from validated native
+   auth config and Android profile limits/delay.
+3. Decode server accept `control` frames as TUN lease events, preserve
+   metadata-only auth/error counters, and keep covert frames on
+   `CovertDatagramTransport`.
+4. Update Android dev docs/worklog and run Android Docker plus emulator checks.
+
+Completed:
+
+- Extended Android profile/JNI auth config to pass upgrade delay, randomized
+  delay sigma and codec frame/padding limits into native.
+- Replaced protected raw bridge passthrough-only mode with
+  `TlsTcpCarrierSession` client Zero-RTT options built from validated UUID and
+  server public key material.
+- Added native handling for encrypted server accept control frames: valid
+  `tun_lease` payloads emit metadata-only `lease_received` native events and
+  other covert frames continue through `CovertDatagramTransport`.
+- Added a debug-only native peer hook and instrumented tests for successful
+  raw-bridge Zero-RTT lease delivery plus tampered server-accept failure.
+- Tightened Android auth accounting so raw bridge success is counted after the
+  encrypted lease payload is decoded, not merely after cryptographic accept.
+
+Verification:
+
+- `tools/run_android_checks.sh --host` failed early as expected in this
+  workspace because `/opt/android-sdk` is absent; Android checks are Dockerized.
+- `tools/run_android_checks.sh --docker` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed with 22/22 instrumented tests.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android product-flow implementation plan
+
+Goal:
+
+- Align Android development plans after the source-first architecture review:
+  keep headless testability, but stop treating isolated smoke checks as the
+  main deliverable. The next Android work must assemble a real VPN lifecycle
+  from already-tested core pieces.
+
+Decisions:
+
+- Updated `dev/ANDROID_APP_PLAN.md`, `dev/ANDROID_BOUNDARY.md`,
+  `dev/ANDROID_TESTING_PLAN.md` and `dev/ROADMAP.md`.
+- The next milestone is a production-like headless flow:
+  profile -> native runtime -> protected raw TCP socket -> local cover-client
+  bridge -> `TlsTcpCarrierSession` with real Zero-RTT -> encrypted lease event
+  -> Android `VpnService` TUN -> outbound policy -> covert datagram enqueue ->
+  inbound datagram write back to TUN.
+- New Android tests should prefer lifecycle/data-flow properties over isolated
+  helper checks. Small red tests are still expected when they define a new
+  failure contract before implementation.
+
+Tactical order:
+
+1. Replace protected bridge passthrough with real Zero-RTT auth/lease
+   registration.
+2. Add inbound datagram-to-TUN writes.
+3. Add a headless coordinator that drives carrier/auth/lease/TUN/policy loops.
+4. Gate debug-only JNI hooks and reduce registry lock scope after the product
+   path exists.
+
+Verification:
+
+- Documentation-only change.
+- `git diff --check` passed.
+- Stale-plan search found no remaining active standalone DNS/auth-smoke
+  blockers outside the updated roadmap pointer.
+
+### Android architecture review snapshot
+
+Goal:
+
+- Pause Android feature work and record a source-first review of whether the
+  Android client is still moving toward a real FPS VPN client that reuses shared
+  C++ core rather than duplicating protocol logic in Kotlin.
+
+Decisions:
+
+- Added a dedicated ad hoc review file:
+  `dev/ANDROID_ARCH_REVIEW_2026-06-10.md`.
+- No runtime/code behavior changes in this step.
+- Treat the current Android state as a strong boundary/testing scaffold, not a
+  working VPN client yet.
+
+Key findings:
+
+- `FpsVpnService` does not yet run the production daemon loop.
+- The protected raw carrier bridge currently uses passthrough
+  `TlsTcpCarrierSession` without Zero-RTT/classified-record config.
+- Android native runtime has outbound TUN read/enqueue coverage, but no inbound
+  datagram-to-TUN write path.
+- OkHttp carrier probes are useful support code but must not become the real
+  FPS wire carrier path.
+- Test-only native hooks should be gated before production APK work.
+- Registry mutex scope should be reduced before lifecycle complexity grows.
+
+Verification:
+
+- Documentation-only change.
+- `git diff --check` passed.
+
+### Android protected raw carrier bridge
+
+Goal:
+
+- Build the next Android runtime layer above protected raw socket connect:
+  prove that native can give `TlsTcpCarrierSession` both TCP endpoints on
+  Android without inventing a parallel Kotlin wire protocol.
+
+Scope:
+
+- Add a loopback local-cover listener in native runtime after a protected raw
+  carrier socket has connected.
+- When the Android app/client connects to that local listener, native creates a
+  `TlsTcpCarrierSession` with:
+  - local cover socket as the browser/app side;
+  - the already protected raw carrier socket as the remote FPS link side.
+- First increment is passthrough only: no Zero-RTT server accept/lease
+  registration on this bridge yet. The previous in-memory auth smoke already
+  proves native auth-core linkage; this increment proves production socket
+  ownership and byte flow through the real TLS/TCP carrier session.
+
+Plan:
+
+- Add snapshot fields and JNI/Kotlin API for `startRawCarrierBridge()`:
+  local listen port, listening flag and bridge-active flag.
+- TDD first:
+  - JVM fake backend checks closed/stopped wrapper behavior and snapshot fields;
+  - instrumented native test checks start before raw connect fails closed;
+  - instrumented native test connects a local cover TCP client to the native
+    listener and verifies TLS-record-shaped bytes pass to a loopback remote
+    server and back through `TlsTcpCarrierSession`.
+- Implement native loopback acceptor and session ownership:
+  - require started runtime and connected/protected raw socket;
+  - bind `127.0.0.1:0`;
+  - move the protected raw socket into `TlsTcpCarrierSession` after accept;
+  - close acceptor/session from `stopRawCarrier()` and runtime stop.
+- Update Android boundary/testing notes and complete this worklog section after
+  verification.
+
+Verification target:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `git diff --check`
+
+Completed:
+
+- Added `rawCarrierBridgeListening`, `rawCarrierBridgeListenPort` and
+  `rawCarrierBridgeActive` to native snapshots, plus
+  `startRawCarrierBridge()` through Kotlin, JNI and fake test backends.
+- Added JVM coverage for direct `FpsNativeRuntime` bridge delegation and
+  `HeadlessNativeVpnRuntime` delegation.
+- Added managed-device coverage for the production-shaped socket path:
+  stopped runtime and raw-not-connected failures are explicit, then native
+  connects a protected raw loopback socket, binds a `127.0.0.1:0` local-cover
+  listener, accepts a local cover client and passes TLS-record-shaped bytes in
+  both directions through `TlsTcpCarrierSession`.
+- Implemented native loopback acceptor/session ownership. On accept, native
+  moves the already protected raw socket and accepted local socket into the
+  shared `TlsTcpCarrierSession`, registers it as a `CovertCarrier` through the
+  existing adapter, and cleans listener/session state from `stopRawCarrier()`
+  and runtime stop.
+- Kept this increment passthrough-only. Native Zero-RTT/lease registration on
+  the protected bridge remains the next Android production step.
+- Updated Android boundary, testing, beta-status, roadmap and specification
+  notes to reflect the protected raw carrier bridge.
+
+Verification:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- stale-doc scan:
+  `rg -n 'no real carrier transport|raw carrier socket lifecycle is present|stops below TLS|native raw TLS/TCP auth/pump wiring|production raw carrier I/O|not yet run native FPS auth|raw carrier I/O remain' docs dev -g '*.md'`
+
+### Android native Zero-RTT auth smoke
+
+Goal:
+
+- Start the next Android runtime increment above protected raw carrier sockets:
+  prove that JNI/native code can reuse the C++ Zero-RTT/FPS auth core and
+  encrypted TUN lease/control codecs without implementing a parallel Kotlin
+  protocol path.
+
+Plan:
+
+- Keep this increment as an auth/linkage smoke, not a full Android VPN E2E
+  carrier. Existing `TlsTcpCarrierSession` is still a two-socket TLS/TCP bridge,
+  while Android currently owns one protected outbound socket.
+- Add a narrow JNI auth seam:
+  - Kotlin validates the Android client profile, then passes `profile_id`,
+    `client_uuid` and `server_public_key_base64` to native;
+  - native revalidates UUID/base64, derives the client X25519 keypair in C++,
+    and stores only non-secret status counters;
+  - full daemon/Boost.JSON config parsing stays out of Android native code.
+- Add an in-memory native client/server Zero-RTT smoke:
+  - use existing `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record
+    layer and `tun_lease` control codec;
+  - exchange bidirectional cover TLS records, client auth and encrypted server
+    accept carrying a deterministic test lease;
+  - emit a bounded native `lease_received` event for Kotlin.
+- Add Kotlin/JVM and instrumented tests first around:
+  - auto native auth configuration during runtime creation;
+  - invalid auth fields fail before native handle creation;
+  - auth smoke requires started runtime and configured auth;
+  - successful auth smoke emits one lease event that `HeadlessNativeVpnRuntime`
+    can apply through the existing lease-before-TUN path;
+  - tampered/wrong-client smoke emits auth failure and no lease.
+
+Verification target:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build -L local --output-on-failure`
+- `git diff --check`
+
+Completed:
+
+- Added JNI/native client-auth configuration for Android profiles:
+  Kotlin passes `profile_id`, `client_uuid` and `server_public_key_base64`
+  after profile validation; native revalidates UUID/base64, derives the
+  UUID-backed X25519 client keypair in C++ and exposes only non-secret auth
+  counters in runtime snapshots.
+- Added a bounded native runtime event queue and Kotlin event handling for
+  metadata-only `lease_received` and `carrier_auth_failed` events.
+- Added an in-memory native Zero-RTT auth smoke that reuses
+  `FpsUpgradeController`, `ZeroRttUpgradeEngine`, TLS record slicing and
+  encrypted TUN lease/client-instance control codecs. This smoke verifies
+  auth/accept/control-codec linkage without pretending to be the production raw
+  carrier path.
+- Split Android-safe TUN lease/control payload types and codecs into
+  `include/fps/net/tun_lease_control.hpp` and `src/net/tun_lease_control.cpp`,
+  keeping the lease-file allocator and `std::filesystem` boundary out of the
+  Android native auth smoke.
+- Added JVM tests for auto auth configuration, failed auth configuration
+  cleanup, smoke success/failure counters and `HeadlessNativeVpnRuntime`
+  application of native lease/failure events.
+- Added managed-device tests for native auth configuration failure, successful
+  in-memory auth lease event and tampered accept failure.
+- During self-review, hardened repeated `configureClientAuth(...)`: any invalid
+  reconfiguration now clears the stored native auth config, so a later smoke or
+  future auth path fails closed with `client_auth_not_configured` instead of
+  reusing stale keys. The managed-device test covers valid-then-invalid reset.
+- Updated Android boundary/testing notes. The next practical step remains
+  production `TlsTcpCarrierSession` registration on the protected raw socket
+  lifecycle.
+
+Verification:
+
+- Initial Android host check found duplicate Kotlin test helper names and one
+  C++ missing designated initializer warning; both were fixed.
+- Android host check then passed, but strengthening the smoke to bind the test
+  server public key caught a `Result` access typo in C++; fixed to
+  `smoke_server.value().public_key`.
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host`
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+- `cmake --build build -j 2`
+- `ctest --test-dir build --output-on-failure`
+- `python3 -m py_compile tests/integration/*.py tools/*.py`
+- `bash -n tools/*.sh docker/*.sh`
+- `git diff --check`
+
 ## 2026-06-09
 
 ### Android native raw carrier lifecycle

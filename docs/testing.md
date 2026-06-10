@@ -210,10 +210,16 @@ delivery, starts the native executor lifecycle and duplicates the descriptor
 into native-owned runtime state. They also exercise the Kotlin/JNI-facing TUN
 pump lifecycle through fake backends: pump startup requires a started runtime
 and attached TUN fd, lease-triggered attach starts the pump, and stop/close are
-idempotent. They assert that lease-triggered TUN startup requires
-`tun.enabled=true` and that snapshots report only non-secret
-state/TUN/carrier-probe/native metadata. These checks still do not require an
-emulator or a real Android `VpnService` instance.
+idempotent. Current JVM tests also cover the service-owned Android coordinated
+runner: native raw carrier start, local cover-client start, lease/TUN/policy
+ticks, transient failure backoff/retry, VPN-permission terminal state and
+metadata-only snapshots. A pure JVM service-runtime owner test covers
+start/restart, factory-failure preservation of the active runner, idempotent
+stop and stopped snapshots without Robolectric or Android framework classes.
+They assert that lease-triggered TUN startup requires `tun.enabled=true` and
+that snapshots report only non-secret state/TUN/carrier-probe/native metadata.
+These checks still do not require an emulator or a real Android `VpnService`
+instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 
@@ -236,8 +242,16 @@ stop/debug-revoke cleanup. The native smoke also covers the first raw carrier
 socket lifecycle: native opens a TCP socket, exposes the pre-connect fd to
 Kotlin for `VpnService.protect(fd)`, aborts cleanly when protection is denied,
 connects to a loopback TCP server when protection succeeds and closes the socket
-without leaving carrier state active. It is opt-in because it requires a real
-Android runtime.
+without leaving carrier state active. It also starts the first protected raw
+carrier bridge: native exposes a loopback local-cover listener, accepts a local
+TCP client and verifies TLS-record-shaped bytes pass through the shared
+`TlsTcpCarrierSession` to a loopback remote endpoint and back. It also verifies
+real client-side Zero-RTT over that bridge: encrypted server-accept lease
+delivery succeeds and a tampered server accept reports failure without a lease.
+The smoke also injects inbound opaque datagrams through the shared
+`CovertDatagramTransport` path and verifies exact writes to a duplicated TUN fd,
+including missing-TUN/empty-payload rejects and fragmented datagram reassembly
+before write. It is opt-in because it requires a real Android runtime.
 
 For reproducible post-JVM checks without relying on host SDK paths, use the
 Docker-managed emulator lane:
@@ -274,16 +288,25 @@ The current Android scaffold builds `fps_android_native` for `arm64-v8a` and
 the VPN startup state machine and provides an OkHttp-backed HTTPS/WSS carrier
 probe factory for app-owned keepalive/probe sockets. OkHttp probes are not FPS
 wire carriers; real FPS carrier traffic must use native raw TCP/TLS stream
-handling. The first raw carrier socket lifecycle is present but intentionally
-stops below TLS/FPS authentication. The scaffold also has a lease-triggered
-`VpnService.Builder` TUN fd ownership layer, tested with fake builders and a
-real debug `VpnService` fd routed through the Kotlin/native runtime bridge. It
-remains guarded by explicit `tun.enabled=true` profile intent. The native smoke
-reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
+handling. The first raw carrier bridge now reaches `TlsTcpCarrierSession` over
+a protected raw socket plus a local loopback cover socket with real client-side
+Zero-RTT and encrypted lease delivery. The Kotlin layer also includes a raw
+HTTPS local cover client: it connects to the native loopback bridge, wraps that
+socket in TLS using the configured carrier origin hostname and sends
+HTTP/1.1 keep-alive GETs while preserving raw TLS bytes for the native bridge.
+OkHttp remains probe/support code, not the FPS wire carrier. The scaffold also
+has a lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with
+fake builders and a real debug `VpnService` fd routed through the Kotlin/native
+runtime bridge. It remains guarded by explicit `tun.enabled=true` profile
+intent. The native smoke reuses the FPS IPv4 TCP/UDP 5-tuple parser and links
 a reusable native core smoke library built from protocol codec/crypto, generic
 covert datagram transport and TLS/TCP carrier sources. The smoke intentionally
 excludes Linux relay/config/CLI, Linux TUN device code, Boost.Log and
 Boost.JSON-heavy operator paths.
+JVM tests also cover the first headless coordinator that composes native start,
+underlying-network DNS, protected raw socket connect, bridge start, local
+cover-client startup, encrypted lease handling, TUN attach/pump and split-tunnel
+policy drain as one fail-closed product flow.
 
 Header-only Boost.Describe/MP11/Endian are used through an isolated Boost header
 root, defaulting to `/usr/include/boost`. Do not add `/usr/include` directly to
