@@ -19,7 +19,15 @@ class FpsVpnService : VpnService() {
         const val EXTRA_PROFILE = "org.fpsproject.client.extra.PROFILE"
     }
 
-    private var runner: CoordinatedNativeVpnRunner? = null
+    private val serviceRuntime = FpsVpnServiceRuntime { profileText ->
+        val hooks = VpnServicePlatformHooks(this)
+        CoordinatedNativeVpnServiceRunner(
+            CoordinatedNativeVpnRunner(
+                runtimeFactory = { HeadlessNativeVpnRuntime.create(profileText, hooks) },
+                coverClientStarter = RawHttpsLocalCoverClientStarter(),
+            ),
+        )
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -50,30 +58,19 @@ class FpsVpnService : VpnService() {
     }
 
     internal fun startProfile(profileText: String): CoordinatedNativeVpnRunnerState {
-        val hooks = VpnServicePlatformHooks(this)
-        val next = CoordinatedNativeVpnRunner(
-            runtimeFactory = { HeadlessNativeVpnRuntime.create(profileText, hooks) },
-            coverClientStarter = RawHttpsLocalCoverClientStarter(),
-        )
-        runner?.close()
-        runner = next
-        next.start()
-        return next.snapshot().state
+        return serviceRuntime.startProfile(profileText)
     }
 
     internal fun stopRuntime(): VpnRuntimeState {
-        val activeRunner = runner ?: return VpnRuntimeState.STOPPED
-        activeRunner.close()
-        runner = null
-        return VpnRuntimeState.STOPPED
+        return serviceRuntime.stop()
     }
 
     internal fun runnerSnapshot(): CoordinatedNativeVpnRunnerSnapshot {
-        return runner?.snapshot() ?: CoordinatedNativeVpnRunnerSnapshot.stopped()
+        return serviceRuntime.runnerSnapshot()
     }
 
     internal fun snapshot(): NativeVpnRuntimeSnapshot {
-        return runnerSnapshot().runtime
+        return serviceRuntime.nativeSnapshot()
     }
 }
 

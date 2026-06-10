@@ -213,10 +213,13 @@ and attached TUN fd, lease-triggered attach starts the pump, and stop/close are
 idempotent. Current JVM tests also cover the service-owned Android coordinated
 runner: native raw carrier start, local cover-client start, lease/TUN/policy
 ticks, transient failure backoff/retry, VPN-permission terminal state and
-metadata-only snapshots. They assert that lease-triggered TUN startup requires
-`tun.enabled=true` and that snapshots report only non-secret
-state/TUN/carrier-probe/native metadata. These checks still do not require an
-emulator or a real Android `VpnService` instance.
+metadata-only snapshots. A pure JVM service-runtime owner test covers
+start/restart, factory-failure preservation of the active runner, idempotent
+stop and stopped snapshots without Robolectric or Android framework classes.
+They assert that lease-triggered TUN startup requires `tun.enabled=true` and
+that snapshots report only non-secret state/TUN/carrier-probe/native metadata.
+These checks still do not require an emulator or a real Android `VpnService`
+instance.
 
 To execute the native runtime smoke on an attached device or emulator:
 

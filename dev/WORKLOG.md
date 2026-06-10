@@ -4,6 +4,42 @@
 
 ## 2026-06-10
 
+### Android service runner seam hardening
+
+Goal:
+
+- Make the `FpsVpnService` runner ownership behavior testable in ordinary JVM
+  tests without Robolectric or real Android framework classes.
+
+Plan:
+
+1. Extract a small pure-Kotlin service runtime owner with an injectable runner
+   factory.
+2. Keep `FpsVpnService` as the Android shell that supplies platform hooks and
+   the production `CoordinatedNativeVpnRunner`.
+3. Add JVM tests for start, restart, factory failure preserving the old runner,
+   stop idempotency and metadata-only snapshots.
+4. Run Android Docker/JVM checks and local sanity checks, then commit.
+
+Completed:
+
+- Extracted `FpsVpnServiceRuntime`, a pure-Kotlin owner for the active
+  service runner. `FpsVpnService` now only supplies Android platform hooks and
+  the production `CoordinatedNativeVpnRunner` factory.
+- Added `FpsVpnServiceRuntimeTest` for start/restart, factory-failure
+  preservation of the active runner, idempotent stop, stopped snapshots and
+  profile/identity secrecy in snapshots.
+- Updated Android testing docs. No Robolectric dependency was needed.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android coordinated runner reconnect/backoff
 
 Goal:
