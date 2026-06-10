@@ -10,6 +10,7 @@ import org.junit.Test
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.policy.TunProtocol
 import java.io.FileOutputStream
+import java.io.FileInputStream
 import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -756,6 +757,110 @@ class NativeCoreSmokeInstrumentedTest {
         assertEquals(emptyList<String>(), FpsNativeTestHooks.capturedTunPacketDigests(handle))
 
         FpsNative.stopTunPump(handle)
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundDatagramWritesExactBytesToAttachedTunFd() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+
+        val packet = validUdpPacket()
+        val injected = FpsNativeTestHooks.injectInboundDatagram(handle, packet)
+        val input = FileInputStream(readEnd.fileDescriptor)
+        val received = readExact(input, packet.size)
+
+        assertArrayEquals(packet, received)
+        assertEquals(1L, injected.tunPacketsWritten)
+        assertEquals(packet.size.toLong(), injected.tunBytesWritten)
+        assertEquals(0L, injected.tunInboundWriteRejected)
+        assertEquals(0L, injected.tunPacketsDropped)
+        assertEquals(null, injected.tunLastDropReason)
+        assertEquals(null, injected.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundDatagramRejectsMissingTunAndEmptyPayload() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+
+        val missingTun = FpsNativeTestHooks.injectInboundDatagram(handle, validUdpPacket())
+        assertEquals(0L, missingTun.tunPacketsWritten)
+        assertEquals(1L, missingTun.tunInboundWriteRejected)
+        assertEquals(1L, missingTun.tunPacketsDropped)
+        assertEquals("tun_not_attached", missingTun.tunLastDropReason)
+        assertEquals("tun_not_attached", missingTun.lastError)
+
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+        val empty = FpsNativeTestHooks.injectInboundDatagram(handle, byteArrayOf())
+        assertEquals(0L, empty.tunPacketsWritten)
+        assertEquals(2L, empty.tunInboundWriteRejected)
+        assertEquals(2L, empty.tunPacketsDropped)
+        assertEquals("tun_datagram_empty", empty.tunLastDropReason)
+        assertEquals("tun_datagram_empty", empty.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundFragmentedDatagramReassemblesBeforeTunWrite() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+
+        val packet = validUdpPacket() + "fragmented-android-inbound".encodeToByteArray()
+        val injected = FpsNativeTestHooks.injectInboundDatagram(handle, packet, fragmentPayloadBytes = 7)
+        val input = FileInputStream(readEnd.fileDescriptor)
+        val received = readExact(input, packet.size)
+
+        assertArrayEquals(packet, received)
+        assertEquals(1L, injected.tunPacketsWritten)
+        assertEquals(packet.size.toLong(), injected.tunBytesWritten)
+        assertEquals(0L, injected.tunInboundWriteRejected)
+        assertEquals(null, injected.lastError)
+
+        FpsNative.closeRuntime(handle)
+        readEnd.close()
+        writeEnd.close()
+    }
+
+    @Test
+    fun nativeInboundDatagramAfterStopDoesNotWriteToTunFd() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+        FpsNative.startRuntime(handle)
+        val pipe = ParcelFileDescriptor.createPipe()
+        val readEnd = pipe[0]
+        val writeEnd = pipe[1]
+        FpsNative.attachTunFdOwnedDuplicate(handle, writeEnd.fd, 1280)
+        FpsNative.stopRuntime(handle)
+
+        val stopped = FpsNativeTestHooks.injectInboundDatagram(handle, validUdpPacket())
+        assertEquals("runtime_stopped", stopped.lastError)
+        assertEquals(0L, stopped.tunPacketsWritten)
+        assertEquals(0L, stopped.tunInboundWriteRejected)
+
         FpsNative.closeRuntime(handle)
         readEnd.close()
         writeEnd.close()

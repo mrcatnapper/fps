@@ -704,20 +704,23 @@ Linux-specific runtime is separate:
   bridge that duplicates the TUN fd into a native runtime handle with explicit
   `tunFdOwnership=owned_duplicate` metadata. The native runtime can start/stop
   its Boost.Asio executor, post deterministic test commands and start/stop a
-  first TUN pump skeleton. That pump currently reads packets, parses
-  TCP/UDP 5-tuples, exposes metadata to Kotlin policy and accepts allow/drop
-  completion decisions. `ALLOW` reaches a native outbound seam and is counted
-  separately as attempted/accepted/rejected enqueue; without a carrier
-  transport it fails with `no_carrier_transport`. Instrumented debug tests can
-  attach a fake carrier to prove that the seam uses the shared
-  `CovertDatagramTransport` rather than Android-specific packet handling. The
-  native runtime also has a first protected raw TLS/TCP bridge: after native
+  first TUN pump skeleton. That pump reads packets, parses TCP/UDP 5-tuples,
+  exposes metadata to Kotlin policy and accepts allow/drop completion
+  decisions. `ALLOW` reaches a native outbound seam and is counted separately
+  as attempted/accepted/rejected enqueue; without a carrier transport it fails
+  with `no_carrier_transport`. Inbound datagrams from authenticated carriers go
+  through the same shared `CovertDatagramTransport` and are written back to the
+  native-owned duplicated TUN fd with metadata-only counters. Instrumented
+  debug tests can attach fake carriers and inject inbound datagrams to prove
+  these seams use shared core paths rather than Android-specific packet
+  handling. The native runtime also has a first protected raw TLS/TCP bridge:
+  after native
   opens and Kotlin protects the outbound socket, native binds a loopback
   listener, accepts the app-owned cover side and starts a shared
   `TlsTcpCarrierSession` over both sockets with real client-side Zero-RTT and
   encrypted lease delivery. Production Android code must still not treat policy
   allow as successful remote delivery before an authenticated carrier is
-  available and inbound datagram-to-TUN writes are implemented.
+  available.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

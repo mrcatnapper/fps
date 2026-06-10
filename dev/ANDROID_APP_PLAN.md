@@ -90,7 +90,9 @@ Delivered:
   counters rather than silently consuming the packet. Debug-only instrumented
   hooks can register an in-process fake carrier, proving that policy-allowed
   packets travel through the production `CovertDatagramTransport` path and
-  produce metadata-only frame digests.
+  produce metadata-only frame digests. The same datagram transport now delivers
+  inbound server-to-client datagrams back to the native-owned duplicated TUN fd,
+  exposing only non-secret write/drop counters.
 - The JNI runtime can configure client auth metadata from the validated Android
   profile, rederive the UUID-backed client X25519 keypair in C++, validate the
   server public key encoding and run an in-memory native Zero-RTT auth smoke.
@@ -99,9 +101,8 @@ Delivered:
   also bridge a protected raw carrier socket to a loopback local-cover socket
   through `TlsTcpCarrierSession` with real client-side Zero-RTT options. Managed
   emulator coverage verifies successful encrypted lease delivery and tampered
-  server-accept failure on this bridge. The remaining production gap is
-  bidirectional datagram/TUN delivery and a coordinator that drives the pieces
-  as one lifecycle.
+  server-accept failure on this bridge. The remaining production gap is a
+  coordinator that drives the pieces as one lifecycle.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -130,12 +131,7 @@ profile
 
 Tactical implementation order:
 
-1. **Bidirectional TUN/data path.**
-   Add an inbound `CovertDatagramTransport::on_datagram` handler that writes
-   server-to-client packets to the native-owned duplicated TUN fd. Keep packet
-   bytes in native state and expose only non-secret counters and drop reasons.
-
-2. **Runtime coordinator.**
+1. **Runtime coordinator.**
    Add one headless coordinator owned by `FpsVpnService` or
    `HeadlessNativeVpnRuntime` that performs the product sequence: start native
    executor, resolve endpoint through the underlying-network hook, prepare and
@@ -144,7 +140,7 @@ Tactical implementation order:
    establish TUN, start the pump, drain/apply split-tunnel policy and reconnect
    carriers on close/backoff.
 
-3. **Production surface cleanup.**
+2. **Production surface cleanup.**
    Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
    and then add operator/UI-facing lifecycle/status features. Do this after the
    headless product path works, so cleanup does not harden the wrong API shape.

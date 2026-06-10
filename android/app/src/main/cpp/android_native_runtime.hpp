@@ -27,6 +27,9 @@ struct NativeRuntimeSnapshotFields {
     TunFdOwnership tun_fd_ownership = TunFdOwnership::none;
     std::uint64_t tun_packets_read = 0;
     std::uint64_t tun_bytes_read = 0;
+    std::uint64_t tun_packets_written = 0;
+    std::uint64_t tun_bytes_written = 0;
+    std::uint64_t tun_inbound_write_rejected = 0;
     std::uint64_t tun_packets_parsed = 0;
     std::uint64_t tun_packets_dropped = 0;
     std::string tun_last_drop_reason;
@@ -108,6 +111,8 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string;
+[[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
+    -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native

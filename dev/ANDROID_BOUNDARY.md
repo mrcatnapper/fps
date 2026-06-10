@@ -142,15 +142,7 @@ existing pieces instead of adding more isolated proof points. Keep small TDD
 tests when a contract is ambiguous, but make each increment advance the
 headless VPN lifecycle.
 
-1. **TUN becomes bidirectional.**
-   - Keep outbound TUN read, 5-tuple parsing and Kotlin UID policy as the
-     Android-specific side of the boundary.
-   - Add inbound datagram delivery from `CovertDatagramTransport` back to the
-     native-owned duplicated TUN fd.
-   - Reuse shared datagram/TUN semantics where possible; do not grow a second
-     Android-only packet transport.
-
-2. **One coordinator owns the product lifecycle.**
+1. **One coordinator owns the product lifecycle.**
    - `FpsVpnService` or `HeadlessNativeVpnRuntime` should own the full sequence:
      start native executor, resolve via underlying network, protect/connect raw
      socket, start bridge, start cover client, drain lease event, establish TUN,
@@ -159,7 +151,7 @@ headless VPN lifecycle.
      fail-closed branches and observable counters, not individual helper
      arithmetic.
 
-3. **Harden the API surface after the product path exists.**
+2. **Harden the API surface after the product path exists.**
    - Gate debug-only JNI hooks out of production variants.
    - Reduce native runtime registry mutex scope so registry locks are not held
      while runtime methods post to Asio, wait on futures or stop threads.
@@ -175,9 +167,9 @@ headless VPN lifecycle.
   The current headless model supports HTTPS GET and WSS metadata, fake
   transport coverage, live OkHttp cover traffic support, first `VpnService` TUN
   fd ownership and a native raw TLS/TCP bridge with real Zero-RTT lease
-  delivery. The next step is bidirectional datagram/TUN wiring and one
-  lifecycle coordinator, not changing protocol core and not adding another wire
-  carrier path.
+  delivery. Native TUN movement is bidirectional through the shared
+  `CovertDatagramTransport`; the next step is one lifecycle coordinator, not
+  changing protocol core and not adding another wire carrier path.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets now use a two-phase fd hook, and
   OkHttp-owned sockets use the Java `Socket` hook before the socket can be
@@ -195,8 +187,8 @@ headless VPN lifecycle.
   linkage is covered by an in-memory smoke that can deliver an encrypted test
   lease event to Kotlin. Managed-device coverage exercises that path, a real
   Android TUN fd and a protected raw `TlsTcpCarrierSession` bridge with real
-  client-side Zero-RTT and encrypted lease delivery; inbound datagram-to-TUN
-  writes and lifecycle coordination are next.
+  client-side Zero-RTT, encrypted lease delivery and inbound datagram-to-TUN
+  writes. Lifecycle coordination is next.
 - Android default route mode is split tunnel. Full tunnel is an explicit
   advanced option.
 - Do not rely only on `VpnService.Builder.addAllowedApplication(...)` for

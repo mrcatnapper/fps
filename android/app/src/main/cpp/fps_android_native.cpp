@@ -322,3 +322,24 @@ extern "C" JNIEXPORT jstring JNICALL Java_org_fpsproject_client_nativebridge_Fps
     );
     return env->NewStringUTF(result.c_str());
 }
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeInjectInboundDatagramForTest(
+    JNIEnv* env, jobject /* self */, jlong handle, jbyteArray datagram, jint fragment_payload_bytes
+) {
+    if(datagram == nullptr) {
+        const auto snapshot = fps::android_native::invalid_runtime_snapshot("invalid_inbound_datagram");
+        return fps::android_jni::runtime_snapshot_object(env, snapshot);
+    }
+    const auto size = env->GetArrayLength(datagram);
+    std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+    if(size > 0) {
+        env->GetByteArrayRegion(datagram, 0, size, reinterpret_cast<jbyte*>(bytes.data()));
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            return nullptr;
+        }
+    }
+    const auto snapshot = fps::android_native::inject_inbound_datagram_for_test(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), std::move(bytes), static_cast<int>(fragment_payload_bytes)
+    );
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}

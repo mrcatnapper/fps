@@ -205,8 +205,9 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     if(snapshot_class.get() == nullptr) {
         return nullptr;
     }
-    auto* constructor =
-        env->GetMethodID(snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZZIZJJJZJJJJLjava/lang/String;)V");
+    auto* constructor = env->GetMethodID(
+        snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZZIZJJJZJJJJLjava/lang/String;)V"
+    );
     if(constructor == nullptr) {
         return nullptr;
     }
@@ -229,7 +230,8 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         snapshot_class.get(), constructor, static_cast<jboolean>(snapshot.alive), static_cast<jboolean>(snapshot.started),
         static_cast<jboolean>(snapshot.worker_thread_running), static_cast<jboolean>(snapshot.tun_attached), static_cast<jboolean>(snapshot.tun_pump_running),
         static_cast<jint>(snapshot.tun_fd), static_cast<jint>(snapshot.tun_mtu), ownership_string.get(), static_cast<jlong>(snapshot.tun_packets_read),
-        static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
+        static_cast<jlong>(snapshot.tun_bytes_read), static_cast<jlong>(snapshot.tun_packets_written), static_cast<jlong>(snapshot.tun_bytes_written),
+        static_cast<jlong>(snapshot.tun_inbound_write_rejected), static_cast<jlong>(snapshot.tun_packets_parsed), static_cast<jlong>(snapshot.tun_packets_dropped),
         tun_drop_reason_string.get(), static_cast<jlong>(snapshot.tun_policy_pending), static_cast<jlong>(snapshot.tun_policy_in_flight),
         static_cast<jlong>(snapshot.tun_policy_allowed), static_cast<jlong>(snapshot.tun_policy_dropped), static_cast<jlong>(snapshot.tun_policy_queue_full),
         static_cast<jlong>(snapshot.tun_covert_enqueue_attempted), static_cast<jlong>(snapshot.tun_covert_enqueue_accepted),

@@ -29,6 +29,10 @@ object FpsNativeTestHooks {
         return nativeRunZeroRttServerPeerForTest(fd, profileId, clientUuid, tamperServerAccept)
     }
 
+    fun injectInboundDatagram(handle: Long, datagram: ByteArray, fragmentPayloadBytes: Int = 0): NativeRuntimeSnapshot {
+        return nativeInjectInboundDatagramForTest(handle, datagram, fragmentPayloadBytes)
+    }
+
     private external fun nativeInstallTunPacketCaptureSinkForTest(handle: Long, rejectPackets: Boolean): NativeRuntimeSnapshot
 
     private external fun nativeCapturedTunPacketDigestsForTest(handle: Long): Array<String>
@@ -40,4 +44,6 @@ object FpsNativeTestHooks {
     private external fun nativeCapturedFakeCarrierFrameDigestsForTest(handle: Long): Array<String>
 
     private external fun nativeRunZeroRttServerPeerForTest(fd: Int, profileId: String, clientUuid: String, tamperServerAccept: Boolean): String
+
+    private external fun nativeInjectInboundDatagramForTest(handle: Long, datagram: ByteArray, fragmentPayloadBytes: Int): NativeRuntimeSnapshot
 }

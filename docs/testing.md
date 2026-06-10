@@ -242,7 +242,10 @@ TCP client and verifies TLS-record-shaped bytes pass through the shared
 `TlsTcpCarrierSession` to a loopback remote endpoint and back. It also verifies
 real client-side Zero-RTT over that bridge: encrypted server-accept lease
 delivery succeeds and a tampered server accept reports failure without a lease.
-It is opt-in because it requires a real Android runtime.
+The smoke also injects inbound opaque datagrams through the shared
+`CovertDatagramTransport` path and verifies exact writes to a duplicated TUN fd,
+including missing-TUN/empty-payload rejects and fragmented datagram reassembly
+before write. It is opt-in because it requires a real Android runtime.
 
 For reproducible post-JVM checks without relying on host SDK paths, use the
 Docker-managed emulator lane:

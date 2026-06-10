@@ -16,6 +16,7 @@
 #include <deque>
 #include <future>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -36,6 +37,7 @@
 #include "fps/core/identity.hpp"
 #include "fps/core/tls_record_layer.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
+#include "fps/net/datagram_fragment.hpp"
 #include "fps/net/tls_tcp_carrier_adapter.hpp"
 #include "fps/net/tls_tcp_carrier_session.hpp"
 #include "fps/net/tun_lease_control.hpp"
@@ -401,7 +403,15 @@ public:
         , datagram_transport_{fps::net::CovertDatagramTransportConfig{
               .role = fps::RelayRole::client,
               .max_datagram_size = kTunPumpMaxPacketSize,
-          }} {}
+          },
+              fps::net::CovertDatagramHandlers{
+                  .on_datagram = [this](fps::net::CarrierId carrier_id, fps::ByteVector datagram) {
+                      handle_inbound_datagram(carrier_id, std::move(datagram));
+                  },
+                  .on_event = [this](fps::net::CovertDatagramEvent event) {
+                      reject_inbound_datagram(std::string{"covert_datagram_"} + std::string{fps::enum_name_or(event)});
+                  },
+              }} {}
 
     ~AndroidNativeRuntime() { static_cast<void>(stop()); }
 
@@ -931,6 +941,22 @@ public:
         return captured_fake_carrier_frame_digests_;
     }
 
+    [[nodiscard]] auto inject_inbound_datagram_for_test(std::vector<std::byte> datagram, int fragment_payload_bytes) -> NativeRuntimeSnapshotFields {
+        if(!started_ || !worker_thread_running_.load()) {
+            last_error_ = "runtime_stopped";
+            return snapshot();
+        }
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto finished = done->get_future();
+        boost::asio::post(io_context_, [this, datagram = std::move(datagram), fragment_payload_bytes, done]() mutable {
+            inject_inbound_datagram_on_worker(std::move(datagram), fragment_payload_bytes);
+            done->set_value();
+        });
+        finished.wait();
+        return snapshot();
+    }
+
 private:
     struct PendingTunPacket {
         std::uint64_t packet_id = 0;
@@ -1152,6 +1178,98 @@ private:
             }
         );
         last_error_.clear();
+    }
+
+    void handle_inbound_datagram(fps::net::CarrierId, fps::ByteVector datagram) {
+        if(datagram.empty()) {
+            reject_inbound_datagram("tun_datagram_empty");
+            return;
+        }
+        if(datagram.size() > kTunPumpMaxPacketSize) {
+            reject_inbound_datagram("tun_datagram_too_large");
+            return;
+        }
+
+        std::lock_guard tun_lock{tun_mutex_};
+        if(!tun_attached_ || tun_fd_.get() < 0) {
+            tun_inbound_write_rejected_.fetch_add(1);
+            tun_packets_dropped_.fetch_add(1);
+            tun_last_drop_reason_ = "tun_not_attached";
+            last_error_ = "tun_not_attached";
+            return;
+        }
+
+        std::size_t offset = 0;
+        while(offset < datagram.size()) {
+            const auto remaining = datagram.size() - offset;
+            const auto written = ::write(tun_fd_.get(), datagram.data() + static_cast<std::ptrdiff_t>(offset), remaining);
+            if(written > 0) {
+                offset += static_cast<std::size_t>(written);
+                continue;
+            }
+            if(written == 0) {
+                reject_inbound_datagram_locked("tun_write_failed");
+                return;
+            }
+            if(errno == EINTR) {
+                continue;
+            }
+            if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                reject_inbound_datagram_locked("tun_write_would_block");
+                return;
+            }
+            reject_inbound_datagram_locked("tun_write_failed");
+            return;
+        }
+
+        tun_packets_written_.fetch_add(1);
+        tun_bytes_written_.fetch_add(static_cast<std::uint64_t>(datagram.size()));
+        tun_last_drop_reason_.clear();
+        last_error_.clear();
+    }
+
+    void reject_inbound_datagram(std::string_view reason) {
+        std::lock_guard tun_lock{tun_mutex_};
+        reject_inbound_datagram_locked(reason);
+    }
+
+    void reject_inbound_datagram_locked(std::string_view reason) {
+        tun_inbound_write_rejected_.fetch_add(1);
+        tun_packets_dropped_.fetch_add(1);
+        tun_last_drop_reason_ = std::string{reason};
+        last_error_ = std::string{reason};
+    }
+
+    void inject_inbound_datagram_on_worker(std::vector<std::byte> datagram, int fragment_payload_bytes) {
+        if(fragment_payload_bytes <= 0) {
+            const fps::DecodedFrame frame{
+                .frame_type = fps::FrameType::opaque_datagram,
+                .payload = std::move(datagram),
+            };
+            datagram_transport_.handle_covert_frame(fps::Direction::server_to_client, frame);
+            return;
+        }
+
+        const auto chunk_size = static_cast<std::size_t>(fragment_payload_bytes);
+        const auto fragment_count = fps::net::fragment_count_for_size(datagram.size(), chunk_size);
+        if(fragment_count == 0U || fragment_count > std::numeric_limits<std::uint16_t>::max() || datagram.size() > std::numeric_limits<std::uint32_t>::max()) {
+            reject_inbound_datagram("tun_datagram_too_large");
+            return;
+        }
+        for(std::size_t index = 0, offset = 0; offset < datagram.size(); ++index) {
+            const auto bytes_remaining = datagram.size() - offset;
+            const auto chunk_bytes = std::min(chunk_size, bytes_remaining);
+            auto payload = fps::net::make_datagram_fragment_payload(
+                1U, static_cast<std::uint16_t>(index), static_cast<std::uint16_t>(fragment_count), static_cast<std::uint32_t>(datagram.size()),
+                std::span<const std::byte>{datagram.data() + static_cast<std::ptrdiff_t>(offset), chunk_bytes}
+            );
+            const fps::DecodedFrame frame{
+                .frame_type = fps::FrameType::opaque_datagram_fragment,
+                .payload = std::move(payload),
+            };
+            datagram_transport_.handle_covert_frame(fps::Direction::server_to_client, frame);
+            offset += chunk_bytes;
+        }
     }
 
     [[nodiscard]] auto start_raw_carrier_bridge_on_worker() -> std::string {
@@ -1572,6 +1690,9 @@ private:
             .tun_fd_ownership = tun_attached_ ? tun_fd_ownership_ : TunFdOwnership::none,
             .tun_packets_read = tun_packets_read_.load(),
             .tun_bytes_read = tun_bytes_read_.load(),
+            .tun_packets_written = tun_packets_written_.load(),
+            .tun_bytes_written = tun_bytes_written_.load(),
+            .tun_inbound_write_rejected = tun_inbound_write_rejected_.load(),
             .tun_packets_parsed = tun_packets_parsed_.load(),
             .tun_packets_dropped = tun_packets_dropped_.load(),
             .tun_last_drop_reason = tun_last_drop_reason_,
@@ -1628,6 +1749,9 @@ private:
     std::atomic_bool tun_pump_running_ = false;
     std::atomic<std::uint64_t> tun_packets_read_ = 0;
     std::atomic<std::uint64_t> tun_bytes_read_ = 0;
+    std::atomic<std::uint64_t> tun_packets_written_ = 0;
+    std::atomic<std::uint64_t> tun_bytes_written_ = 0;
+    std::atomic<std::uint64_t> tun_inbound_write_rejected_ = 0;
     std::atomic<std::uint64_t> tun_packets_parsed_ = 0;
     std::atomic<std::uint64_t> tun_packets_dropped_ = 0;
     std::string tun_last_drop_reason_;
@@ -1896,6 +2020,16 @@ public:
         return found->second->captured_fake_carrier_frame_digests_for_test();
     }
 
+    [[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
+        -> NativeRuntimeSnapshotFields {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return invalid_runtime_snapshot("invalid_handle");
+        }
+        return found->second->inject_inbound_datagram_for_test(std::move(datagram), fragment_payload_bytes);
+    }
+
 private:
     std::mutex mutex_;
     std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
@@ -2067,6 +2201,10 @@ auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnap
 
 auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
     return runtime_registry().captured_fake_carrier_frame_digests_for_test(handle);
+}
+
+auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().inject_inbound_datagram_for_test(handle, std::move(datagram), fragment_payload_bytes);
 }
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {

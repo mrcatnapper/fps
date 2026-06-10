@@ -50,11 +50,13 @@ documentation.
   TUN pump skeleton against a pipe fd, including policy metadata drain and
   allow/drop completion, default no-carrier enqueue rejection and a capture
   sink check proving exact native-owned packet bytes reach the outbound seam.
-  It also includes a debug-only fake carrier lifecycle/enqueue smoke proving
-  allowed packets route through the production `CovertDatagramTransport` path,
-  plus an in-memory native Zero-RTT auth smoke that exercises shared
-  auth/record/control codecs and emits a metadata-only encrypted TUN lease
-  event through JNI.
+  It also covers inbound `CovertDatagramTransport` delivery back to the
+  native-owned duplicated TUN fd, including missing-TUN/empty-payload rejects
+  and fragment reassembly before exact write. It also includes a debug-only
+  fake carrier lifecycle/enqueue smoke proving allowed packets route through
+  the production `CovertDatagramTransport` path, plus an in-memory native
+  Zero-RTT auth smoke that exercises shared auth/record/control codecs and
+  emits a metadata-only encrypted TUN lease event through JNI.
   The managed-device lane also includes a
   debug-only real `VpnService.prepare(...)` / `VpnService.Builder.establish()`
   smoke that requests consent through UI Automator when needed, verifies a real
@@ -211,15 +213,7 @@ path.
 
 Prioritize these emulator/device scenarios in order:
 
-1. **Bidirectional TUN/data path**
-   - Keep outbound packet policy checks through the native pump and Kotlin UID
-     resolver.
-   - Add inbound datagram-to-TUN write coverage using a pipe fd first, then the
-     real managed-device TUN fd when the bridge is authenticated.
-   - Assert counters distinguish accepted packets, policy drops, malformed
-     packets, no-carrier rejections and inbound write failures.
-
-2. **Headless coordinator lifecycle**
+1. **Headless coordinator lifecycle**
    - One JVM fake-backend test should drive the intended production sequence:
      start native executor, resolve through underlying network, prepare/protect
      raw fd, connect, start bridge, start app-owned cover client, apply lease,
@@ -227,12 +221,12 @@ Prioritize these emulator/device scenarios in order:
    - One managed-device smoke should validate the Android-only pieces of that
      same sequence with real `VpnService` fd ownership.
 
-4. **Socket loop-prevention and underlying-network resolution**
+2. **Socket loop-prevention and underlying-network resolution**
    - Verify these as part of the coordinator path. The production FPS carrier
      must protect sockets before connect and must not rely on native resolver
      behavior after VPN activation.
 
-5. **Split-tunnel UID policy**
+3. **Split-tunnel UID policy**
    - Use the native pump's parsed TCP/UDP 5-tuple as the bridge to Android
      policy.
    - On API 29+, `ConnectivityManager.getConnectionOwnerUid(...)` can identify
@@ -240,7 +234,7 @@ Prioritize these emulator/device scenarios in order:
      `Process.INVALID_UID` or throw if unsupported/not active; FPS must keep the
      current fail-closed policy for those cases.
 
-6. **Service revoke/stop lifecycle**
+4. **Service revoke/stop lifecycle**
    - Current managed-device coverage exercises explicit stop and a debug
      `onRevoke()` path after full runtime startup.
    - Repeat this through the coordinator once native carrier/auth startup is no
@@ -290,12 +284,10 @@ Prioritize these emulator/device scenarios in order:
 
 ## Next Android Runtime Steps
 
-1. Add inbound datagram-to-TUN writes and a bidirectional pipe-fd data-flow
-   test.
-2. Add the headless coordinator and a JVM product-flow test that includes
+1. Add the headless coordinator and a JVM product-flow test that includes
    underlying-network resolution, protect-before-connect, bridge startup, lease,
    TUN attach and policy draining.
-3. Extend the managed-device lane from fd/pump smoke to the smallest
+2. Extend the managed-device lane from fd/pump smoke to the smallest
    production-shaped flow that requires Android framework behavior.
-4. Keep managed-device CI manual/scheduled until repeated runs show it is
+3. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

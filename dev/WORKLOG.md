@@ -4,6 +4,51 @@
 
 ## 2026-06-10
 
+### Android bidirectional TUN/data path
+
+Goal:
+
+- Close the next Android product-flow gap after protected bridge Zero-RTT:
+  inbound opaque datagrams from authenticated carriers must write back to the
+  native-owned duplicated TUN fd through the shared `CovertDatagramTransport`
+  path, not through a Kotlin packet copy or an Android-specific transport.
+
+Plan:
+
+1. Add metadata counters and debug-only test hooks for inbound datagram
+   delivery.
+2. Wire `CovertDatagramTransport::on_datagram` to a native TUN writer.
+3. Cover missing TUN, exact pipe-fd writes, empty datagrams and fragmented
+   reassembly before write in managed-device tests.
+4. Update Android boundary/testing docs and run Android/core regression checks.
+
+Completed:
+
+- Added native snapshot counters for TUN packets/bytes written and inbound
+  write rejects.
+- Connected Android native `CovertDatagramTransport` inbound delivery to the
+  duplicated TUN fd writer, with metadata-only drop reasons for missing TUN,
+  empty/oversized datagrams and write failures.
+- Added a debug-only JNI hook that injects inbound datagrams or fragments
+  through `CovertDatagramTransport::handle_covert_frame(...)`, so tests use the
+  same path as authenticated carrier frames.
+- Added managed-device tests for exact inbound writes to a pipe fd,
+  missing-TUN/empty rejects, runtime-stopped behavior and fragment reassembly.
+- Updated Android app/boundary/testing notes and public testing/spec beta
+  status text. The next Android product-flow increment is now the lifecycle
+  coordinator.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed with 26/26 instrumented tests.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `git diff --check` passed.
+
 ### Android protected bridge Zero-RTT implementation
 
 Goal:
