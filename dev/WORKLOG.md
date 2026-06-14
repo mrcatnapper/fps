@@ -4,6 +4,53 @@
 
 ## 2026-06-14
 
+### Android HTTPS-only foreground/status increment
+
+Goal:
+
+- Move the Android client closer to a manually testable VPN service without
+  adding raw WSS as a second internal carrier path.
+
+Decisions:
+
+- First Android builds keep the internal app-owned carrier HTTPS-only via
+  `RawHttpsLocalCoverClientStarter`.
+- WSS remains profile/probe-support and future external-carrier research; it is
+  not implemented as an internal Android FPS wire carrier in this route.
+- Minimal foreground/status UX is more valuable now than adding another carrier
+  protocol.
+
+Completed:
+
+- Added a pure-Kotlin `FpsVpnStatusNotifier` seam and status snapshots derived
+  from `CoordinatedNativeVpnRunnerSnapshot`.
+- Wired `FpsVpnServiceRuntime` to publish metadata-only status on start,
+  snapshot polling and stop.
+- Added Android foreground-service notification support with the `specialUse`
+  service type, a low-importance `fps_vpn_status` channel and a small
+  notification icon.
+- Added JVM coverage for status transitions, repeated snapshot updates,
+  idempotent foreground cleanup and secret/UUID redaction in status metadata.
+- Added a focused product-path negative test proving a WSS-only carrier profile
+  fails closed with `cover_mode_unsupported` through the current HTTPS-only
+  local cover starter.
+- Updated Android planning docs and public beta/spec notes to remove raw WSS as
+  the next internal-carrier step.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed, 26/26 managed-device tests.
+- `git diff --check` passed.
+- Removed the opt-in `fps:android-emulator-ci` tag after the managed-device
+  smoke; kept `fps:android-ci-base` as the reusable Android build cache.
+
 ### Android Docker image size audit
 
 Goal:

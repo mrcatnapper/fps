@@ -719,8 +719,9 @@ Linux-specific runtime is separate:
   `TlsTcpCarrierSession` over both sockets with real client-side Zero-RTT and
   encrypted lease delivery. The production service now starts this path through
   a coordinated runner with bounded retry/backoff and a raw HTTPS local cover
-  client. Android still lacks UI/foreground-service polish and raw WSS cover
-  mode.
+  client. Android keeps WSS as probe-support/future external-carrier material;
+  first versions intentionally do not add a raw WSS internal carrier. Android
+  still lacks full UI polish beyond the minimal foreground/status surface.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

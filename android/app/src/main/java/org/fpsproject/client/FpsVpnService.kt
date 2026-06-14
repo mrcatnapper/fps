@@ -19,13 +19,18 @@ class FpsVpnService : VpnService() {
         const val EXTRA_PROFILE = "org.fpsproject.client.extra.PROFILE"
     }
 
-    private val serviceRuntime = FpsVpnServiceRuntime { profileText ->
-        val hooks = VpnServicePlatformHooks(this)
-        CoordinatedNativeVpnServiceRunner(
-            CoordinatedNativeVpnRunner(
-                runtimeFactory = { HeadlessNativeVpnRuntime.create(profileText, hooks) },
-                coverClientStarter = RawHttpsLocalCoverClientStarter(),
-            ),
+    private val serviceRuntime by lazy {
+        FpsVpnServiceRuntime(
+            runnerFactory = { profileText ->
+                val hooks = VpnServicePlatformHooks(this)
+                CoordinatedNativeVpnServiceRunner(
+                    CoordinatedNativeVpnRunner(
+                        runtimeFactory = { HeadlessNativeVpnRuntime.create(profileText, hooks) },
+                        coverClientStarter = RawHttpsLocalCoverClientStarter(),
+                    ),
+                )
+            },
+            statusNotifier = AndroidFpsVpnStatusNotifier(this),
         )
     }
 

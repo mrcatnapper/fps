@@ -54,6 +54,9 @@ class HeadlessNativeVpnRuntimeTest {
           "tun": {"enabled": true, "name": "fpsc0", "mtu": 1280, "auto_configure": true}
         }
     """.trimIndent()
+    private val wssOnlyProfileJson = profileJson
+        .replace("\"https_get\"", "\"wss\"")
+        .replace("\"/ping\"", "\"/stream\"")
     private val lease = TunLease(clientIpv4 = 0x0a420002, serverIpv4 = 0x0a420001, prefixLength = 30, mtu = 1280)
 
     @Test
@@ -454,6 +457,20 @@ class HeadlessNativeVpnRuntimeTest {
         assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
         assertEquals("cover_client_start_failed", snapshot.vpn.lastError)
         assertEquals(listOf(18080), cover.startedPorts)
+        assertEquals(listOf(1L), backend.stoppedRawCarriers)
+        assertEquals(listOf(1L), backend.stoppedHandles)
+    }
+
+    @Test
+    fun coordinatedProductPathFailsClosedForWssCoverProfile() {
+        val backend = FakeCoordinatorNativeBackend()
+        val runtime = HeadlessNativeVpnRuntime.create(wssOnlyProfileJson, FakeAndroidHooks(), backend)
+
+        val snapshot = runtime.startCoordinated(RawHttpsLocalCoverClientStarter(socketTimeoutMs = 250))
+
+        assertEquals(VpnRuntimeState.FAILED, snapshot.vpn.state)
+        assertEquals("cover_mode_unsupported", snapshot.vpn.lastError)
+        assertEquals(listOf(1L), backend.startedRawCarrierBridges)
         assertEquals(listOf(1L), backend.stoppedRawCarriers)
         assertEquals(listOf(1L), backend.stoppedHandles)
     }

@@ -294,10 +294,13 @@ Prioritize these emulator/device scenarios in order:
 
 ## Next Android Runtime Steps
 
-1. Add the headless coordinator and a JVM product-flow test that includes
-   underlying-network resolution, protect-before-connect, bridge startup, lease,
-   TUN attach and policy draining.
-2. Extend the managed-device lane from fd/pump smoke to the smallest
-   production-shaped flow that requires Android framework behavior.
-3. Keep managed-device CI manual/scheduled until repeated runs show it is
+1. Keep the minimal foreground-service/status surface covered by JVM tests
+   through a fake notifier/status sink and add device-level checks only where
+   Android framework behavior is required.
+2. Keep the first product carrier path HTTPS-only. WSS remains probe-support
+   code and future external-carrier research; do not add a raw WSS internal
+   carrier unless the Android product direction changes explicitly.
+3. Extend the managed-device lane from fd/pump smoke to the smallest
+   production-shaped HTTPS flow that requires Android framework behavior.
+4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

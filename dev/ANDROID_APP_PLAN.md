@@ -24,8 +24,10 @@ when Android test infrastructure or emulator strategy changes.
   production-like runtime path that composes the existing pieces into one VPN
   lifecycle. The current service-owned runner drives native carrier auth,
   encrypted lease delivery, TUN establishment, split-tunnel policy and
-  bidirectional datagram/TUN movement for a raw HTTPS cover profile. Raw WSS
-  cover and user-facing service UI remain the next product gaps.
+  bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
+  a minimal foreground/status surface. The next product gaps are HTTPS cover
+  hardening, static shaper-profile UX and later external-carrier design, not
+  another internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -153,16 +155,23 @@ profile
 
 Tactical implementation order:
 
-1. **WSS local cover client.**
-   Add a raw WSS local cover mode only after the HTTPS GET loop is wired through
-   the coordinator/service path. It must still feed raw TLS bytes to the native
-   loopback bridge and must not reuse OkHttp as an FPS wire carrier.
+Completed product step:
 
-2. **Foreground service and status UX.**
-   Add the smallest user-visible Android daemon surface: foreground
-   notification, profile start/stop/status entrypoints and non-secret error
-   reporting. Keep this after raw WSS cover unless manual testing shows HTTPS
-   cover is enough for the first APK flow.
+- **Foreground service and status UX.**
+  The smallest user-visible daemon surface exists: foreground notification,
+  start/stop/status runtime seam and non-secret error reporting.
+
+Remaining tactical implementation order:
+
+1. **HTTPS cover hardening and shaper profile UX.**
+   Keep the first app-owned internal carrier as raw HTTPS GET through the
+   native loopback bridge. Add only the profile/config pieces needed to make
+   static shaper CDF use practical on Android.
+
+2. **External carrier design.**
+   After the HTTPS path is stable, design external carrier support explicitly
+   instead of adding raw WSS as a second internal carrier. That design must
+   revisit DNS mapping, VPN-loop prevention and Android per-app routing.
 
 Testing expectation:
 
@@ -239,13 +248,15 @@ cache tags unless `FPS_ANDROID_CLEAN_TAGS=1` is set.
 ## Accepted Runtime Direction
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
-  maintains HTTPS/WSS carrier traffic itself.
+  maintains HTTPS carrier traffic itself.
 - Carrier/cover requests are configured at the Android layer: for example a
-  periodic HTTPS GET or a WSS stream. The existing OkHttp code is support
-  machinery for app-owned cover traffic only. It must not become a direct FPS
-  wire carrier because OkHttp terminates TLS and does not expose raw TLS record
-  bytes. Production cover traffic should feed the native loopback bridge so
-  `TlsTcpCarrierSession` remains the single FPS wire implementation.
+  periodic HTTPS GET. The existing OkHttp HTTPS/WSS code is support machinery
+  for app-owned cover probes only. It must not become a direct FPS wire carrier
+  because OkHttp terminates TLS and does not expose raw TLS record bytes.
+  Production cover traffic should feed the native loopback bridge so
+  `TlsTcpCarrierSession` remains the single FPS wire implementation. WSS may
+  remain as probe metadata and future external-carrier research, but it is not
+  an internal Android product carrier for the first versions.
 - Real FPS carrier traffic must use native raw TCP/TLS stream handling through
   `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
   wire protocol. The native runtime already exposes the first protected raw TCP

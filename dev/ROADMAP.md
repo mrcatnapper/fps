@@ -201,12 +201,15 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add Android service-owned coordinated runner: `FpsVpnService` now starts
   the raw native carrier/local-cover path through a bounded reconnect/backoff
   loop with metadata-only status snapshots.
+- [x] Add minimal Android foreground/status surface for the service-owned HTTPS
+  carrier path.
 - Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
   `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
-  product-flow bias: add raw WSS cover mode if needed and then harden
-  debug-only JNI/registry locking. Prefer integration-shaped Android tests over
-  more isolated smoke checks unless a small red test is needed to define a new
-  failure contract.
+  product-flow bias: keep the first app-owned internal carrier HTTPS-only,
+  add static shaper-profile UX if needed and defer WSS to future external
+  carrier design. Prefer integration-shaped Android tests over more isolated
+  smoke checks unless a small red test is needed to define a new failure
+  contract.
 
 ## Phase 7: Fuzzing And Soak
 
