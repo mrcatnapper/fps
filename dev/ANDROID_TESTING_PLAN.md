@@ -81,7 +81,8 @@ for contracts that require real Android framework behavior.
 2. **JVM Android tests**
    - Keep using ordinary JVM tests for profile parsing, carrier-probe planning,
      split-tunnel policy decisions, fake platform hooks, `VpnService.Builder`
-     planning and Kotlin/native facade lifecycle.
+     planning, stored-profile/manual-controller behavior and Kotlin/native
+     facade lifecycle.
    - These tests should remain the fastest Android signal and should run in
      every normal Android Docker check.
 
@@ -113,6 +114,10 @@ bridge bytes. New Android tests should now prefer product-shaped checks:
 
 - one test should verify a meaningful lifecycle or data-flow property, not only
   that a helper returns the obvious value;
+- UI-facing controller tests should stay framework-light where possible:
+  validate save/start/stop/clear semantics and command dispatch in JVM tests,
+  then reserve emulator/device tests for Android framework contracts such as VPN
+  consent and real `VpnService` fd ownership;
 - isolated tests are still appropriate when they define a new failure contract
   before implementation, but they should feed into a product-flow test in the
   same increment;
@@ -282,15 +287,22 @@ Prioritize these emulator/device scenarios in order:
   the native/JNI smoke and debug-only real `VpnService`
   consent/establish/full-runtime fd attach/pump/stop/revoke smoke.
 - It now also validates the first service-owned coordinator product flow:
-  protected raw socket connect, native bridge auth, encrypted TUN lease, real
-  TUN fd attach and native pump startup. The local cover side uses synthetic
-  TLS Application Data records so the test remains deterministic and does not
-  depend on external origins.
+  stored-profile startup, protected raw socket connect, native bridge auth,
+  encrypted TUN lease, real TUN fd attach and native pump startup. The local
+  cover side uses synthetic TLS Application Data records so the test remains
+  deterministic and does not depend on external origins.
+- It includes a minimal production launcher smoke: the app's launcher Activity
+  starts on a managed device, renders the no-stored-profile state and exposes
+  the manual save/start/stop/clear surface without crashing.
 - It also covers native raw TCP carrier socket lifecycle through a local
   loopback server: native exposes the pre-connect fd, Kotlin has a chance to
   call the protect hook, native connects only after positive protection and
   closes the socket cleanly. Edge coverage includes complete-before-prepare and
   idempotent stop before prepare, after prepare and after connect.
+- JVM tests cover the minimal manual controller around private profile
+  storage: save accepts JSON and `fps://v1`, invalid input does not overwrite,
+  start uses only the stored profile path, stop preserves the profile, clear
+  deletes it and all snapshots/commands remain metadata-only.
 - It covers the first native auth-core smoke without a real network carrier:
   client auth metadata is configured through JNI, invalid server public key
   encoding is rejected, a shared C++ Zero-RTT exchange returns an encrypted test
@@ -311,8 +323,11 @@ Prioritize these emulator/device scenarios in order:
    WSS remains probe-support code and future external-carrier research; do not
    add a raw WSS internal carrier unless the Android product direction changes
    explicitly.
-3. Add profile persistence/import/manual UX around the current headless service
-   path before widening carrier protocols.
+3. Profile persistence and the minimal manual import/start/stop controller are
+   now covered by JVM tests, and stored-profile startup is covered by the
+   managed-device product-flow smoke. Next UI testing should be driven by
+   real-device findings rather than expanding emulator checks around plain view
+   wiring.
 4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating, and add physical-device release validation for
    vendor VPN/background-network behavior.

@@ -28,9 +28,15 @@ data class TestCoordinatedProductFlowResult(
     val snapshot: CoordinatedNativeVpnRunnerSnapshot?,
 )
 
+data class TestProfileSaveResult(
+    val success: Boolean,
+    val error: String?,
+)
+
 object TestVpnServiceProbe {
     private val lock = Any()
     private var permissionLatch = CountDownLatch(1)
+    private var profileSavedLatch = CountDownLatch(1)
     private var establishLatch = CountDownLatch(1)
     private var closedLatch = CountDownLatch(1)
     private var nativeRuntimeStartedLatch = CountDownLatch(1)
@@ -39,6 +45,7 @@ object TestVpnServiceProbe {
     private var productFlowStoppedLatch = CountDownLatch(1)
     private var revokedLatch = CountDownLatch(1)
     private var permissionResult: TestVpnPermissionResult? = null
+    private var profileSaveResult: TestProfileSaveResult? = null
     private var establishResult: TestVpnEstablishResult? = null
     private var nativeRuntimeStartedResult: TestNativeRuntimeResult? = null
     private var nativeRuntimeStoppedSnapshot: NativeVpnRuntimeSnapshot? = null
@@ -50,6 +57,7 @@ object TestVpnServiceProbe {
     fun reset() {
         synchronized(lock) {
             permissionLatch = CountDownLatch(1)
+            profileSavedLatch = CountDownLatch(1)
             establishLatch = CountDownLatch(1)
             closedLatch = CountDownLatch(1)
             nativeRuntimeStartedLatch = CountDownLatch(1)
@@ -58,6 +66,7 @@ object TestVpnServiceProbe {
             productFlowStoppedLatch = CountDownLatch(1)
             revokedLatch = CountDownLatch(1)
             permissionResult = null
+            profileSaveResult = null
             establishResult = null
             nativeRuntimeStartedResult = null
             nativeRuntimeStoppedSnapshot = null
@@ -72,6 +81,14 @@ object TestVpnServiceProbe {
         val latch = synchronized(lock) {
             permissionResult = TestVpnPermissionResult(granted)
             permissionLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportProfileSaved(success: Boolean, error: String?) {
+        val latch = synchronized(lock) {
+            profileSaveResult = TestProfileSaveResult(success, error)
+            profileSavedLatch
         }
         latch.countDown()
     }
@@ -160,6 +177,12 @@ object TestVpnServiceProbe {
         val latch = synchronized(lock) { permissionLatch }
         latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         return synchronized(lock) { permissionResult }
+    }
+
+    fun awaitProfileSaved(timeoutMs: Long): TestProfileSaveResult? {
+        val latch = synchronized(lock) { profileSavedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { profileSaveResult }
     }
 
     fun awaitEstablished(timeoutMs: Long): TestVpnEstablishResult? {

@@ -116,18 +116,17 @@ class AndroidClientProfile(
 
 object AndroidClientProfileParser {
     fun parse(text: String): AndroidClientProfile {
-        val jsonText = if (text.trimStart().startsWith(PROFILE_URI_PREFIX)) {
-            decodeProfileUri(text.trim())
-        } else {
-            text
-        }
-        val rootObject = try {
-            JSONObject(jsonText)
-        } catch (error: JSONException) {
-            throw AndroidClientProfileParseException(error.message ?: "invalid JSON")
-        }
-        rejectServerOnlyFields(rootObject)
+        val rootObject = parseJsonObject(decodeToJsonText(text))
+        return parseProfile(rootObject)
+    }
 
+    fun normalizeJsonText(text: String): String {
+        val jsonText = decodeToJsonText(text)
+        parseProfile(parseJsonObject(jsonText))
+        return jsonText.trim()
+    }
+
+    private fun parseProfile(rootObject: JSONObject): AndroidClientProfile {
         val server = parseEndpoint(rootObject.requiredString("network.server"), "network.server")
         val zeroRttObject = rootObject.requiredObject("security.zero_rtt")
         if (!zeroRttObject.optionalBoolean("enabled", true, "security.zero_rtt.enabled")) {
@@ -158,6 +157,24 @@ object AndroidClientProfileParser {
             splitTunnel = parseSplitTunnel(rootObject.optionalObject("split_tunnel")),
             shaper = parseShaper(rootObject.optionalObject("shaper")),
         )
+    }
+
+    private fun decodeToJsonText(text: String): String {
+        val trimmed = text.trim()
+        if (trimmed.startsWith(PROFILE_URI_PREFIX)) {
+            return decodeProfileUri(trimmed)
+        }
+        return trimmed
+    }
+
+    private fun parseJsonObject(jsonText: String): JSONObject {
+        val rootObject = try {
+            JSONObject(jsonText)
+        } catch (error: JSONException) {
+            throw AndroidClientProfileParseException(error.message ?: "invalid JSON")
+        }
+        rejectServerOnlyFields(rootObject)
+        return rootObject
     }
 
     private fun decodeProfileUri(uri: String): String {

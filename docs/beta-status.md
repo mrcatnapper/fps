@@ -74,13 +74,14 @@ and signed artifacts remain deferred.
   Valgrind, coverage and bounded fuzzing.
 - Android has a reproducible Docker build/test image and a headless Kotlin/NDK
   scaffold. Current JVM tests cover client profile parsing, carrier probe
-  planning, split-tunnel UID allowlists, underlying-network endpoint resolution,
-  socket-protection failure handling, deterministic fake-transport carrier
-  probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS probe
-  transport tests, native-runtime wrapper tests, bidirectional native TUN data
-  movement, two-phase lease-before-TUN state transitions and the service-owned
-  raw carrier/local-cover coordinated runner with bounded backoff, without
-  requiring an emulator.
+  persistence, manual save/start/stop/clear controller behavior, carrier probe
+  planning, split-tunnel UID allowlists, underlying-network endpoint
+  resolution, socket-protection failure handling, deterministic fake-transport
+  carrier probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS
+  probe transport tests, native-runtime wrapper tests, bidirectional native TUN
+  data movement, two-phase lease-before-TUN state transitions and the
+  service-owned raw carrier/local-cover coordinated runner with bounded
+  backoff, without requiring an emulator.
 - A manual GHCR publishing workflow exists for Ubuntu and Alpine runtime
   images. It defaults to dry-run mode and requires an explicit `publish=true`
   dispatch input before pushing images. It publishes only two tags per run: the
@@ -171,7 +172,7 @@ Those remain release-hardening concerns.
 - Traffic-shape mimicry remains incomplete. FPS now has classified-record
   padding, adaptive CDF training and shaper-aware fragmentation, but it does not
   claim timing/size distribution resistance.
-- Android remains pre-application: the headless profile/runtime boundary,
+- Android remains a pre-beta application: the headless profile/runtime boundary,
   OkHttp app-owned HTTPS/WSS carrier probes, first `VpnService` TUN fd ownership
   layer, split JNI native runtime handle, headless Kotlin/native lifecycle
   bridge and protected raw HTTPS `TlsTcpCarrierSession` with real client-side
@@ -181,10 +182,13 @@ Those remain release-hardening concerns.
   coverage; WSS is probe-support/future external carrier material. Android
   accepts inline static shaper CDF profiles and passes them through JNI into
   the shared native shaper. The Docker-managed emulator lane now includes a
-  local service-owned coordinator product-flow smoke with protected raw socket
-  connect, native bridge auth, encrypted lease delivery, real TUN fd attach and
-  native pump startup. Android still needs broader manual UX, profile
-  persistence and physical-device release validation.
+  local service-owned coordinator product-flow smoke from a stored profile with
+  protected raw socket connect, native bridge auth, encrypted lease delivery,
+  real TUN fd attach and native pump startup. A minimal launcher can paste/save
+  client profiles, request VPN consent, start/stop the stored-profile service
+  path, clear the profile and show metadata-only local status. Android still
+  needs physical-device release validation and UI/status polish based on real
+  device failures.
 
 ## Public Beta Gate
 

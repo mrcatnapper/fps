@@ -19,17 +19,18 @@ when Android test infrastructure or emulator strategy changes.
   - the FPS IPv4 TCP/UDP 5-tuple parser for split-tunnel UID policy;
   - reusable protocol/datagram/TLS-TCP carrier sources that depend on OpenSSL
     and Boost.Asio.
-- Keep the application headless while product behavior is still incomplete.
-  The next Android milestone is not more isolated smoke coverage; it is a
-  production-like runtime path that composes the existing pieces into one VPN
-  lifecycle. The current service-owned runner drives native carrier auth,
+- The Android client now has a minimal production launcher, but product
+  behavior is still intentionally narrow. The next Android milestone is not
+  more isolated smoke coverage; it is a production-like runtime path that
+  composes the existing pieces into one VPN lifecycle. The current
+  service-owned runner drives native carrier auth,
   encrypted lease delivery, TUN establishment, split-tunnel policy and
   bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
   a minimal foreground/status surface. HTTPS cover hardening, static
-  shaper-profile UX and the first managed-device product-flow validation are
-  implemented; the next product gaps are profile persistence/manual UX,
-  real-device validation and later external-carrier design, not another
-  internal carrier protocol.
+  shaper-profile UX, private profile persistence, a minimal manual
+  paste/save/start/stop UI and the first managed-device product-flow validation
+  are implemented; the next product gaps are real-device validation and later
+  external-carrier design, not another internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -37,6 +38,14 @@ Delivered:
 
 - Android parses the current `fps://v1/<base64url-json>` client profile format
   and raw client JSON into a Kotlin `AndroidClientProfile`.
+- Android can save a validated raw JSON or `fps://v1` profile into private app
+  storage and start `FpsVpnService` from that stored profile. Explicit profile
+  starts overwrite the stored profile; stop does not delete it.
+- A minimal launcher `Activity` exists for production/debug use. It lets a user
+  paste a raw JSON or `fps://v1` profile, save it to private storage, request
+  Android VPN consent, start/stop the stored-profile service path, clear the
+  stored profile and view a small non-secret local status string. It does not
+  display stored profile text after saving.
 - Parsing accepts only client-side fields needed by the Android runtime:
   `network.server`, `security.zero_rtt.client_uuid`,
   `security.zero_rtt.server_public_key_base64`, optional codec, TUN, ops,
@@ -114,12 +123,12 @@ Delivered:
   self-contained.
 - The Docker-managed emulator lane now includes a debug-only product-flow smoke
   around the production coordinator shape. It starts a real Android
-  `VpnService`, protects a raw carrier socket, runs the native TLS/TCP bridge,
-  completes client-side Zero-RTT against a local test FPS server peer, receives
-  an encrypted TUN lease, establishes a real TUN fd, attaches it to native and
-  starts the native pump. The local cover side uses synthetic TLS Application
-  Data records so the test remains deterministic and does not require an
-  external origin.
+  `VpnService` from a stored profile, protects a raw carrier socket, runs the
+  native TLS/TCP bridge, completes client-side Zero-RTT against a local test FPS
+  server peer, receives an encrypted TUN lease, establishes a real TUN fd,
+  attaches it to native and starts the native pump. The local cover side uses
+  synthetic TLS Application Data records so the test remains deterministic and
+  does not require an external origin.
 - `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
   surface. It starts the native executor, resolves the FPS server through the
   underlying-network hook, prepares/protects/connects the raw carrier socket,
@@ -185,18 +194,26 @@ Completed product step:
   The Docker-managed emulator lane validates the service-owned coordinator
   through protected raw socket connect, native bridge auth, encrypted lease,
   real `VpnService` fd attach and native pump startup.
+- **Profile persistence.**
+  Android stores validated JSON/`fps://v1` profiles in private app storage and
+  can start `FpsVpnService` from the stored profile without carrying the full
+  profile in every start intent.
+- **Minimal manual UX.**
+  A production launcher Activity can save/import a client profile, request VPN
+  permission, start/stop the stored-profile service path, clear the profile and
+  show metadata-only local status without exposing the stored profile text.
 
 Remaining tactical implementation order:
 
-1. **Profile persistence and manual UX.**
-   Add the smallest practical profile storage/import surface and manual test
-   flow so the current headless service path can be exercised like a user-facing
-   client.
-
-2. **Real-device release validation.**
+1. **Real-device release validation.**
    Run the same HTTPS-only product path on at least one physical device to
    catch vendor VPN, background-service, network-switching and battery-policy
    differences that managed devices cannot model.
+
+2. **Manual UI/status polish.**
+   Keep the launcher simple, but improve status once real-device feedback shows
+   which failures are hard to diagnose. Avoid adding management features before
+   the runtime path is validated on hardware.
 
 3. **External carrier design.**
    After the HTTPS path is stable, design external carrier support explicitly

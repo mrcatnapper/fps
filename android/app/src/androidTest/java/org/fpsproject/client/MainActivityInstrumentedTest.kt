@@ -1,0 +1,49 @@
+package org.fpsproject.client
+
+import android.content.Context
+import android.content.Intent
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
+import org.junit.Assert.assertNotNull
+import org.junit.Test
+import java.util.regex.Pattern
+
+class MainActivityInstrumentedTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val targetContext: Context = instrumentation.targetContext
+
+    @Test
+    fun launcherStartsAndReportsNoStoredProfile() {
+        clearStoredProfile()
+
+        val launchIntent = targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
+        assertNotNull("Launcher intent is missing", launchIntent)
+        targetContext.startActivity(launchIntent!!.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+
+        val device = UiDevice.getInstance(instrumentation)
+        assertNotNull("Main activity title was not visible", device.wait(Until.findObject(By.text("FPS Android")), 10_000))
+        assertNotNull(
+            "Save button was not visible",
+            device.wait(Until.findObject(By.text(Pattern.compile("(?i)Save Profile"))), 5_000),
+        )
+        assertNotNull(
+            "Initial no-profile status was not visible",
+            device.wait(Until.findObject(By.textContains("state=NO_PROFILE")), 5_000),
+        )
+        assertNotNull(
+            "Profile refresh label should describe stored-profile state",
+            device.wait(Until.findObject(By.text(Pattern.compile("(?i)Refresh Profile Status"))), 5_000),
+        )
+    }
+
+    private fun clearStoredProfile() {
+        targetContext.getSharedPreferences("fps_vpn_profile", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
+    }
+}

@@ -4,6 +4,7 @@ import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunner
 import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerSnapshot
 import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerState
 import org.fpsproject.client.nativebridge.NativeVpnRuntimeSnapshot
+import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.runtime.VpnRuntimeState
 
 internal interface FpsVpnServiceRunner : AutoCloseable {
@@ -19,6 +20,7 @@ internal fun interface FpsVpnServiceRunnerFactory {
 internal class FpsVpnServiceRuntime(
     private val runnerFactory: FpsVpnServiceRunnerFactory,
     private val statusNotifier: FpsVpnStatusNotifier = NoopFpsVpnStatusNotifier,
+    private val profileRepository: FpsVpnProfileRepository? = null,
 ) {
     private var runner: FpsVpnServiceRunner? = null
 
@@ -31,6 +33,32 @@ internal class FpsVpnServiceRuntime(
         val snapshot = next.snapshot()
         statusNotifier.show(FpsVpnStatusSnapshot.fromRunner(snapshot))
         return snapshot.state
+    }
+
+    fun saveAndStartProfile(profileText: String): CoordinatedNativeVpnRunnerState {
+        val normalized = try {
+            profileRepository?.saveProfile(profileText)
+                ?: AndroidClientProfileParser.normalizeJsonText(profileText)
+        } catch (_: IllegalArgumentException) {
+            return failStart("profile_invalid")
+        }
+        return startProfile(normalized)
+    }
+
+    fun startSavedProfile(): CoordinatedNativeVpnRunnerState {
+        val stored = try {
+            profileRepository?.loadProfile()
+        } catch (_: IllegalArgumentException) {
+            return failStart("profile_invalid")
+        }
+        if (stored == null) {
+            return failStart("profile_missing")
+        }
+        return startProfile(stored)
+    }
+
+    fun clearProfile() {
+        profileRepository?.clearProfile()
     }
 
     fun stop(): VpnRuntimeState {
@@ -55,6 +83,11 @@ internal class FpsVpnServiceRuntime(
 
     fun nativeSnapshot(): NativeVpnRuntimeSnapshot {
         return runnerSnapshot().runtime
+    }
+
+    private fun failStart(error: String): CoordinatedNativeVpnRunnerState {
+        statusNotifier.show(FpsVpnStatusSnapshot.failed(error))
+        return CoordinatedNativeVpnRunnerState.FAILED
     }
 }
 
