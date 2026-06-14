@@ -289,7 +289,7 @@ def main():
             "FPS_ANDROID_BASE_IMAGE",
             "FPS_ANDROID_BASE_TARGET",
             "android-gradle-base",
-            "FPS_ANDROID_REUSE_DOCKER_IMAGE",
+            "FPS_ANDROID_FORCE_DOCKER_REBUILD",
             "FPS_ANDROID_EMULATOR_IMAGE",
             "FPS_ANDROID_EMULATOR_DOCKERFILE",
             "FPS_ANDROID_MANAGED_DEVICE_TASK",
@@ -297,6 +297,8 @@ def main():
             "fpsApi30AtdDebugAndroidTest",
             "/dev/kvm",
             "ensure_docker_image",
+            "docker_remove_image_tag",
+            "image rm --no-prune",
         ],
         "Android check helper",
     )

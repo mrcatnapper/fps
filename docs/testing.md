@@ -94,8 +94,10 @@ Local non-Docker Python runtime dependencies are pinned in
 Android Docker helpers reuse existing tagged Android images by default and build
 only missing tags. Use `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` after Dockerfile
 layer, apt/sdk package or base-image changes when the existing tag must be
-rebuilt. Android cleanup is an explicit action through
-`tools/run_android_checks.sh --clean-images`.
+rebuilt. A forced base-image rebuild also removes the stale
+`fps:android-emulator-ci` tag, because the emulator image extends that base and
+must be recreated from the new parent. Android cleanup is an explicit action
+through `tools/run_android_checks.sh --clean-images`.
 
 If you only need to inspect or smoke-test an already built image, run it
 directly instead of rebuilding:

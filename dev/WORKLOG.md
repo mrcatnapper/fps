@@ -37,6 +37,11 @@ Completed:
   the helper help text; default reuse no longer needs a compatibility flag.
 - Added `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` for intentional tag rebuilds after
   Dockerfile layer, apt/sdk package or base-image changes.
+- Made forced base-image rebuilds remove the stale emulator child tag before
+  rebuilding, so `fps:android-emulator-ci` is recreated from the new parent
+  instead of keeping an outdated child image around.
+- Updated the Docker artifact regression test to assert the new force-rebuild
+  contract instead of the removed reuse flag.
 - Updated testing/developer docs to state that both `fps:android-ci-base` and
   `fps:android-emulator-ci` are expected cache tags after a clean build.
 - Fully reset local Docker images and build cache with `docker system prune -af`
@@ -49,6 +54,9 @@ Verification:
 
 - `bash -n tools/*.sh docker/*.sh` passed.
 - `git diff --check` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
 - `tools/run_android_checks.sh --docker` passed after full Docker reset,
   rebuilding `fps:android-ci-base` from zero.
 - `tools/run_android_checks.sh --docker-managed-device` passed after full
@@ -61,6 +69,14 @@ Verification:
 - Docker inventory after verification contains only the expected Android tags:
   `fps:android-ci-base` (~6.8GB) and `fps:android-emulator-ci` (~12.5GB), with
   no dangling images or stopped containers.
+- `FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh --docker`
+  passed; it removed the stale emulator tag first, removed/rebuilt the base tag
+  from Docker cache and completed Android host checks.
+- `tools/run_android_checks.sh --docker-managed-device` then rebuilt
+  `fps:android-emulator-ci` from the current base and passed, 26/26
+  managed-device tests.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` reused
+  `fps:android-emulator-ci` and passed, 26/26 managed-device tests.
 
 ### Android HTTPS-only foreground/status increment
 

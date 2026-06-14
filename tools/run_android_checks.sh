@@ -143,6 +143,16 @@ docker_build_image() {
   fi
 }
 
+docker_remove_image_tag() {
+  local image="$1"
+  shift
+
+  if docker_image_exists "$image" "$@"; then
+    log "Remove existing Android Docker image tag before rebuild: $image"
+    run "$@" image rm --no-prune "$image"
+  fi
+}
+
 ensure_docker_image() {
   local image="$1"
   local dockerfile_path="$2"
@@ -151,6 +161,9 @@ ensure_docker_image() {
   if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$image" "$@"; then
     log "Reuse existing Android Docker image: $image"
     return 0
+  fi
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+    docker_remove_image_tag "$image" "$@"
   fi
 
   docker_build_image "$image" "$dockerfile_path" "$@"
@@ -308,6 +321,7 @@ run_docker_checks() {
   local image="${FPS_ANDROID_DOCKER_IMAGE:-fps:android-ci}"
   local android_base_image="${FPS_ANDROID_BASE_IMAGE:-fps:android-ci-base}"
   local android_base_target="${FPS_ANDROID_BASE_TARGET:-android-gradle-base}"
+  local emulator_image="${FPS_ANDROID_EMULATOR_IMAGE:-fps:android-emulator-ci}"
   local dockerfile="${FPS_ANDROID_DOCKERFILE:-Dockerfile.android}"
   local dockerfile_path
   if [[ "$dockerfile" = /* ]]; then
@@ -341,6 +355,12 @@ run_docker_checks() {
   fi
 
   log "Ensure source-free Android base Docker image"
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+    # The managed-device image extends this base. A forced base rebuild makes
+    # the old emulator image stale, so remove its tag before rebuilding the
+    # parent image and let the next managed-device run recreate it.
+    docker_remove_image_tag "$emulator_image" "${docker_cmd[@]}"
+  fi
   docker_build_args=(--target "$android_base_target")
   ensure_docker_image "$android_base_image" "$dockerfile_path" "${docker_cmd[@]}"
 
@@ -398,6 +418,13 @@ run_docker_managed_device_checks() {
   if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
     log "Reuse existing Android emulator Docker image: $emulator_image"
   else
+    if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+      # The emulator image is a child of the base image. Remove it first so the
+      # subsequent forced base rebuild does not leave the old base held alive by
+      # the old child image.
+      docker_remove_image_tag "$emulator_image" "${docker_cmd[@]}"
+    fi
+
     log "Ensure Android source-free base Docker image"
     docker_build_args=(--target "$android_base_target")
     ensure_docker_image "$android_base_image" "$base_dockerfile_path" "${docker_cmd[@]}"

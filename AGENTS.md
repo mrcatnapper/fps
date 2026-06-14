@@ -157,6 +157,14 @@ Scope: the whole repository from the directory that contains this file.
   example after source `COPY` changes or image-stage reshaping. Otherwise Docker
   leaves untagged images that are not referenced as cache parents and gradually
   consume disk space.
+- For Android checks, treat `fps:android-ci-base` and
+  `fps:android-emulator-ci` as useful cache tags after the first clean build.
+  Do not remove `fps:android-emulator-ci` after a managed-device smoke if
+  emulator tests remain part of the local workflow. Use
+  `FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh ...` only
+  when Dockerfile layers, apt/sdk packages or Android base images intentionally
+  changed. After a forced rebuild, check for dangling images or run
+  `tools/run_android_checks.sh --clean-images`.
 - If a check only needs an already built image, run that image directly with
   `docker run --rm ...` instead of rebuilding it. When current workspace files
   are needed inside the container, bind-mount the workspace explicitly and run

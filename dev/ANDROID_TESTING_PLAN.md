@@ -201,8 +201,9 @@ Android OpenSSL base and adds the Android emulator plus the API 30 AOSP ATD
 x86_64 system image. Keep it tagged when managed-device tests are part of the
 local workflow; rebuilding it on every run wastes network, disk and time. Use
 `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only when the image contents intentionally
-changed. Do not create parallel emulator tags unless a specific experiment
-needs them.
+changed. A forced base-image rebuild intentionally removes the old emulator tag
+because that child image must be recreated from the new base. Do not create
+parallel emulator tags unless a specific experiment needs them.
 Keep this lane opt-in until repeated local/agent runs show it is stable enough
 for scheduled CI.
 
