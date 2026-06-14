@@ -4,6 +4,66 @@
 
 ## 2026-06-14
 
+### Android Docker image hygiene refactor
+
+Goal:
+
+- Stop routine Android checks from creating heavy dangling source-copied Docker
+  images and make local/CI Android image caching predictable.
+
+Plan:
+
+1. Change `tools/run_android_checks.sh --docker` to build the source-free
+   `android-gradle-base` target as `fps:android-ci-base` and run host checks
+   through a bind-mounted workspace.
+2. Keep the source-containing `fps:android-ci` image only behind an explicit
+   opt-in environment flag.
+3. Remove automatic pre-build tag deletion and add an explicit Android image
+   cleanup mode that prunes dangling images by default and removes known FPS
+   Android tags only when explicitly requested.
+4. Update the GitHub Android CI job and Android testing docs to match the
+   source-free base image model.
+5. Run syntax, Android Docker and local regression checks.
+
+Completed:
+
+- Changed ordinary `tools/run_android_checks.sh --docker` to build
+  `Dockerfile.android --target android-gradle-base` as `fps:android-ci-base`
+  and run `--host` checks through a bind-mounted workspace.
+- Kept the full source-containing `fps:android-ci` path behind
+  `FPS_ANDROID_SOURCE_IMAGE=1`.
+- Removed automatic pre-build tag deletion from Android image builds.
+- Added `--clean-images`: default prunes dangling images only; setting
+  `FPS_ANDROID_CLEAN_TAGS=1` also removes known FPS Android image tags.
+- Updated the Android GitHub CI job to build only the source-free base target
+  with GHA cache scope `fps-android-base-v1`, then run checks through a bind
+  mount.
+- Removed the obsolete local `fps:android-ci` source-containing tag after the
+  new base-image path passed, leaving `fps:android-ci-base` and
+  `fps:android-emulator-ci` as the useful Android cache images.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `FPS_ANDROID_CLEAN_DRY_RUN=1 tools/run_android_checks.sh --clean-images`
+  passed.
+- `tools/run_android_checks.sh --docker` passed through
+  `fps:android-ci-base` with a bind-mounted workspace.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  reused `fps:android-ci-base` and passed.
+- `tools/run_android_checks.sh --clean-images` passed and preserved useful
+  Android image tags.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  still fails in the Gradle managed-device setup because the Android emulator
+  cannot start and reports an empty emulator process error. `/dev/kvm` is
+  present and `emulator -accel-check` inside the image reports KVM usable, so
+  this remains an existing emulator-infra lane issue rather than a regression in
+  the source-free base image refactor.
+
 ### Android native surface hardening
 
 Goal:

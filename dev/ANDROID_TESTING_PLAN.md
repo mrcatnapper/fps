@@ -24,8 +24,8 @@ documentation.
 ## Current Baseline
 
 - Default Android verification is still Docker/JVM-first:
-  `tools/run_android_checks.sh` builds the Android CI image and runs host
-  Gradle checks inside it.
+  `tools/run_android_checks.sh` builds the source-free Android base image and
+  runs host Gradle checks inside it with the current workspace bind-mounted.
 - `tools/run_android_checks.sh --host` runs JVM tests plus debug APK, release
   APK and instrumented-test APK assembly. It requires an Android SDK but no
   emulator. The release APK smoke verifies that debug-only native test hooks do
@@ -36,9 +36,9 @@ documentation.
   Android Docker image tags with `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`; use this
   for fast reruns after the base/emulator images have already been built.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
-  image. It installs SDK/NDK/vcpkg Android OpenSSL and prewarms Gradle
-  dependencies in the source-free `android-gradle-base` stage, before the full
-  source `COPY`.
+  image. Its `android-gradle-base` stage installs SDK/NDK/vcpkg Android OpenSSL
+  and prewarms Gradle dependencies without copying the full source tree. The
+  source-containing final stage is opt-in only.
 - `Dockerfile.android-emulator` extends the Android build image with the
   Android emulator and the API 30 x86_64 AOSP ATD system image. It is opt-in
   and requires host `/dev/kvm` passthrough. It must inherit from the
@@ -181,19 +181,22 @@ tools/run_android_checks.sh --docker-managed-device
 FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
-The helper builds the base image first, builds the emulator image from that
-local tag, then runs the managed-device task in a container with `/dev/kvm`
-passed through and the current workspace bind-mounted. The base image is built
-from the source-free `android-gradle-base` target. With
+The helper builds the source-free base image first, builds the emulator image
+from that local tag, then runs the managed-device task in a container with
+`/dev/kvm` passed through and the current workspace bind-mounted. The base image
+is built from the `android-gradle-base` target. With
 `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing default tags are used directly and
 only missing images are built:
 
-- `fps:android-ci`
 - `fps:android-ci-base`
 - `fps:android-emulator-ci`
 
 Avoid long-lived custom local tags for routine Android checks. They make it too
 easy to build a second independent SDK/emulator image set and waste disk space.
+Use `tools/run_android_checks.sh --clean-images` for allowlisted Android image
+cleanup; by default it prunes dangling images and keeps useful Android cache
+tags. Set `FPS_ANDROID_CLEAN_TAGS=1` only when intentionally resetting Android
+images. Do not use broad Docker prunes as part of routine checks.
 Keep this lane opt-in until repeated local/agent runs show it is stable enough
 for scheduled CI.
 

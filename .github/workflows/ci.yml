@@ -84,10 +84,16 @@ jobs:
         run: |
           docker buildx build --load \
             -f Dockerfile.android \
-            -t fps:android-ci \
-            --cache-from type=gha,scope=fps-android \
-            --cache-to type=gha,mode=max,scope=fps-android \
+            --target android-gradle-base \
+            -t fps:android-ci-base \
+            --cache-from type=gha,scope=fps-android-base-v1 \
+            --cache-to type=gha,mode=max,scope=fps-android-base-v1 \
             .
 
       - name: Run Android unit and assemble checks
-        run: docker run --rm fps:android-ci
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspaces" \
+            -w /workspaces \
+            fps:android-ci-base \
+            tools/run_android_checks.sh --host

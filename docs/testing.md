@@ -91,20 +91,17 @@ Useful environment variables:
 Local non-Docker Python runtime dependencies are pinned in
 `requirements-runtime.txt`.
 
-The Docker helpers remove an existing image with the selected output tag before
-rebuilding it, using `docker image rm --no-prune`. This prevents stale untagged
-final images from accumulating when the new build does not descend from the
-previous tagged image, while keeping parent layers available for classic Docker
-builder cache.
+Android Docker helpers do not remove existing tags before rebuilds. Docker owns
+cache reuse for repeated `docker build -t same-tag ...` runs; Android cleanup is
+an explicit action through `tools/run_android_checks.sh --clean-images`.
 
 If you only need to inspect or smoke-test an already built image, run it
 directly instead of rebuilding:
 
 ```sh
 docker run --rm fps:local fps_client --help
-docker run --rm fps:android-ci tools/run_android_checks.sh --host
 docker run --rm -v "$PWD:/workspaces" -w /workspaces \
-  fps:android-ci tools/run_android_checks.sh --host
+  fps:android-ci-base tools/run_android_checks.sh --host
 ```
 
 The bind-mounted form uses the current working tree while reusing the toolchain
@@ -119,6 +116,16 @@ exist and you only want to rerun Gradle/tests:
 ```sh
 FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker
 FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
+```
+
+To reclaim Android image space, use the allowlisted cleanup mode instead of a
+global Docker prune. By default it only prunes dangling images and preserves
+useful Android cache tags:
+
+```sh
+FPS_ANDROID_CLEAN_DRY_RUN=1 tools/run_android_checks.sh --clean-images
+tools/run_android_checks.sh --clean-images
+FPS_ANDROID_CLEAN_TAGS=1 tools/run_android_checks.sh --clean-images
 ```
 
 ## Android Bootstrap Checks
@@ -174,11 +181,13 @@ and encoding tasks. Client profile parsing uses Android's `org.json`; JVM unit
 tests get the same API through a test-only dependency so they stay headless.
 
 `Dockerfile.android` prewarms Gradle in the source-free `android-gradle-base`
-stage before the full source `COPY`: it copies only the Gradle wrapper, build
-files and minimal Android project metadata, sets a stable `GRADLE_USER_HOME`,
-runs a dependency-resolution task, and only then copies the full source tree in
-the final `ci` stage. This keeps Android SDK/NDK/vcpkg and Gradle dependency
-layers separate from source changes.
+stage: it copies only the Gradle wrapper, build files and minimal Android
+project metadata, sets a stable `GRADLE_USER_HOME` and runs a
+dependency-resolution task. Ordinary `--docker` checks build this target as
+`fps:android-ci-base` and bind-mount the current workspace into the container,
+so source edits do not create a new heavy source-copied image. The final
+source-containing `ci` stage remains available only for explicit image-shape
+experiments.
 
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
@@ -262,10 +271,10 @@ ls -l /dev/kvm
 tools/run_android_checks.sh --docker-managed-device
 ```
 
-This builds `Dockerfile.android`, then builds `Dockerfile.android-emulator`
-to the source-free `android-gradle-base` target, then builds
-`Dockerfile.android-emulator` from that local base image. The emulator image
-adds Android's `emulator` package, `platforms;android-30` and
+This builds `Dockerfile.android` to the source-free `android-gradle-base`
+target as `fps:android-ci-base`, then builds `Dockerfile.android-emulator` from
+that local base image. The emulator image adds Android's `emulator` package,
+`platforms;android-30` and
 `system-images;android-30;aosp_atd;x86_64`, then runs the Gradle Managed Device
 task `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm`
 passed through and the current workspace bind-mounted at `/workspaces`. The

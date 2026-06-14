@@ -215,13 +215,12 @@ tools/run_android_checks.sh --docker
 ```
 
 `Dockerfile.android` is a CI/build image, not an Android emulator image and not
-the Linux product runtime image. It installs the Android SDK/NDK and Android
-OpenSSL triplets, then runs the host Android checks inside the container.
-Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
-SDK use must be requested explicitly with `--host`. The source-free
-`android-gradle-base` stage owns SDK/NDK/vcpkg plus Gradle dependency cache;
-the final `ci` stage is the only Android stage that copies the whole
-repository.
+the Linux product runtime image. Its source-free `android-gradle-base` stage
+installs the Android SDK/NDK, Android OpenSSL triplets and Gradle dependency
+cache. Outside Docker, `tools/run_android_checks.sh` defaults to building that
+base image and running host Android checks with the current workspace
+bind-mounted; host SDK use must be requested explicitly with `--host`. The final
+source-containing `ci` stage is kept only for explicit image-shape experiments.
 
 Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
 that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
@@ -232,7 +231,10 @@ runs after the images have already been built, set
 base/emulator images. The emulator image inherits from the source-free
 `android-gradle-base` image and receives the current source tree through the
 test container bind mount, so ordinary source edits do not force the
-emulator/system-image layers to rebuild.
+emulator/system-image layers to rebuild. Use
+`tools/run_android_checks.sh --clean-images` for allowlisted Android image
+cleanup instead of broad Docker prunes or pre-build tag deletion; it preserves
+cache tags unless `FPS_ANDROID_CLEAN_TAGS=1` is set.
 
 ## Accepted Runtime Direction
 
