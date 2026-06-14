@@ -223,9 +223,10 @@ emulator. The release APK smoke checks the release native library's exported
 symbols so debug-only JNI test hooks cannot become an accidental production
 dependency. The JVM tests cover Android client-profile
 parsing, private profile persistence/start-from-stored-profile behavior,
-fail-closed split-tunnel policy, the headless VPN runtime state machine and the
-headless carrier probe runner with fake platform hooks/transports. They also
-cover profile-driven carrier probe planning,
+minimal manual save/start/stop/clear controller behavior, fail-closed
+split-tunnel policy, the headless VPN runtime state machine and the headless
+carrier probe runner with fake platform hooks/transports. They also cover
+profile-driven carrier probe planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
 HTTPS/WSS carrier probe transport factory through MockWebServer. They also

@@ -4,6 +4,48 @@
 
 ## 2026-06-14
 
+### Android minimal manual UX
+
+Goal:
+
+- Add the smallest production/manual Android surface over the stored-profile
+  path: paste/import a client profile, save it, request VPN permission, start
+  the stored-profile service, stop, clear and inspect safe local status.
+
+Decisions:
+
+- Keep the UI intentionally plain and dependency-free for this increment:
+  programmatic Android views, no Compose/AppCompat, no QR/import tooling yet.
+- Keep profile text secret after import. The launcher stores validated JSON via
+  the repository and displays only metadata (`state`, `profile_saved`,
+  `message`).
+- Drive start through the stored-profile service path. The manual controller
+  sends `ACTION_START` without profile payload after validating that a stored
+  profile exists.
+- Request Android VPN consent in `MainActivity`, then call the same controller
+  start path only after consent succeeds.
+
+Completed:
+
+- Added `FpsVpnManualController` with repository/command-sender seams and JVM
+  tests for save/start/stop/clear, missing/corrupted profiles, permission
+  denial and metadata-only snapshots.
+- Added a minimal launcher `MainActivity` for profile paste/save, VPN permission
+  request, start/stop, clear and refresh status.
+- Added the launcher activity to the production manifest.
+- Updated Android planning/testing docs and beta status.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the code changes and
+  documentation update.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android profile persistence and stored-profile start
 
 Goal:
