@@ -234,10 +234,11 @@ source-containing `ci` stage is kept only for explicit image-shape experiments.
 Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
 that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
 it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
-hosts where `/dev/kvm` can be passed through to Docker. For repeated local
-runs after the images have already been built, set
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` to rerun the checks without rebuilding the
-base/emulator images. The emulator image inherits from the source-free
+hosts where `/dev/kvm` can be passed through to Docker. Repeated local runs
+reuse the default `fps:android-ci-base` and `fps:android-emulator-ci` tags by
+default and build only missing images. Set
+`FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only after Dockerfile layer, apt/sdk
+package or base-image changes. The emulator image inherits from the source-free
 `android-gradle-base` image and receives the current source tree through the
 test container bind mount, so ordinary source edits do not force the
 emulator/system-image layers to rebuild. Use

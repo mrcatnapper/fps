@@ -45,10 +45,10 @@ Environment:
   FPS_ANDROID_EMULATOR_DOCKERFILE
                             Dockerfile for --docker-managed-device, default:
                             Dockerfile.android-emulator.
-  FPS_ANDROID_REUSE_DOCKER_IMAGE=1
-                            Reuse existing Android Docker images instead of
-                            rebuilding them. If a requested image is missing,
-                            it is built normally.
+  FPS_ANDROID_FORCE_DOCKER_REBUILD=1
+                            Rebuild Android Docker images even when the target
+                            tag already exists. Use after Dockerfile layer,
+                            apt/sdk package or base-image changes.
   FPS_ANDROID_SOURCE_IMAGE=1
                             Build and run the legacy source-containing
                             Dockerfile.android final image instead of the
@@ -148,7 +148,7 @@ ensure_docker_image() {
   local dockerfile_path="$2"
   shift 2
 
-  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$image" "$@"; then
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$image" "$@"; then
     log "Reuse existing Android Docker image: $image"
     return 0
   fi
@@ -340,7 +340,7 @@ run_docker_checks() {
     return 0
   fi
 
-  log "Build source-free Android base Docker image"
+  log "Ensure source-free Android base Docker image"
   docker_build_args=(--target "$android_base_target")
   ensure_docker_image "$android_base_image" "$dockerfile_path" "${docker_cmd[@]}"
 
@@ -395,14 +395,14 @@ run_docker_managed_device_checks() {
   fi
 
   local docker_build_args=()
-  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
     log "Reuse existing Android emulator Docker image: $emulator_image"
   else
-    log "Build Android source-free base Docker image"
+    log "Ensure Android source-free base Docker image"
     docker_build_args=(--target "$android_base_target")
     ensure_docker_image "$android_base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
 
-    log "Build Android emulator Docker image"
+    log "Ensure Android emulator Docker image"
     docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$android_base_image")
     ensure_docker_image "$emulator_image" "$emulator_dockerfile_path" "${docker_cmd[@]}"
   fi

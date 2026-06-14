@@ -32,9 +32,9 @@ documentation.
   not become production JNI exports.
 - `tools/run_android_checks.sh --connected` runs the current instrumented native
   smoke on an already attached Android device or emulator.
-- `tools/run_android_checks.sh --docker-managed-device` can now reuse existing
-  Android Docker image tags with `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`; use this
-  for fast reruns after the base/emulator images have already been built.
+- `tools/run_android_checks.sh --docker-managed-device` reuses existing Android
+  Docker image tags by default; use `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only
+  when intentionally rebuilding image contents.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
   image. Its `android-gradle-base` stage installs SDK/NDK/vcpkg Android OpenSSL
   and prewarms Gradle dependencies without copying the full source tree. The
@@ -178,14 +178,12 @@ Use the repository helper:
 
 ```sh
 tools/run_android_checks.sh --docker-managed-device
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
+FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
-The helper builds the source-free base image first, builds the emulator image
-from that local tag, then runs the managed-device task in a container with
-`/dev/kvm` passed through and the current workspace bind-mounted. The base image
-is built from the `android-gradle-base` target. With
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing default tags are used directly and
+The helper ensures the source-free base image and emulator image exist, then
+runs the managed-device task in a container with `/dev/kvm` passed through and
+the current workspace bind-mounted. Existing default tags are used directly and
 only missing images are built:
 
 - `fps:android-ci-base`
@@ -200,10 +198,11 @@ images. Do not use broad Docker prunes as part of routine checks.
 
 The emulator tag is intentionally large. It inherits the SDK/NDK/Gradle/vcpkg
 Android OpenSSL base and adds the Android emulator plus the API 30 AOSP ATD
-x86_64 system image. If disk pressure matters, keep `fps:android-ci-base` for
-ordinary checks and rebuild `fps:android-emulator-ci` only before
-managed-device runs. Do not create parallel emulator tags unless a specific
-experiment needs them.
+x86_64 system image. Keep it tagged when managed-device tests are part of the
+local workflow; rebuilding it on every run wastes network, disk and time. Use
+`FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only when the image contents intentionally
+changed. Do not create parallel emulator tags unless a specific experiment
+needs them.
 Keep this lane opt-in until repeated local/agent runs show it is stable enough
 for scheduled CI.
 

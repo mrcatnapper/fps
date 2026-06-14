@@ -91,9 +91,11 @@ Useful environment variables:
 Local non-Docker Python runtime dependencies are pinned in
 `requirements-runtime.txt`.
 
-Android Docker helpers do not remove existing tags before rebuilds. Docker owns
-cache reuse for repeated `docker build -t same-tag ...` runs; Android cleanup is
-an explicit action through `tools/run_android_checks.sh --clean-images`.
+Android Docker helpers reuse existing tagged Android images by default and build
+only missing tags. Use `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` after Dockerfile
+layer, apt/sdk package or base-image changes when the existing tag must be
+rebuilt. Android cleanup is an explicit action through
+`tools/run_android_checks.sh --clean-images`.
 
 If you only need to inspect or smoke-test an already built image, run it
 directly instead of rebuilding:
@@ -109,13 +111,12 @@ from the image. This is useful for quick checks, but remember that generated
 build outputs will be written to the mounted workspace unless the command
 redirects them elsewhere.
 
-Android Docker checks have the same reuse path. Set
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` when the relevant Android image tags already
-exist and you only want to rerun Gradle/tests:
+Android Docker checks have the same reuse path by default:
 
 ```sh
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
+tools/run_android_checks.sh --docker
+tools/run_android_checks.sh --docker-managed-device
+FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
 To reclaim Android image space, use the allowlisted cleanup mode instead of a
@@ -197,8 +198,10 @@ experiments.
 `fps:android-ci-base`: it includes the Android emulator binary, API 30 platform
 metadata and the `system-images;android-30;aosp_atd;x86_64` managed-device
 image. The large layer is intentional and is used only by the opt-in
-`--docker-managed-device` lane. Routine Android JVM/native builds should reuse
-`fps:android-ci-base` and not rebuild or keep custom emulator tags.
+`--docker-managed-device` lane. Keep the default `fps:android-emulator-ci` tag
+around when managed-device tests are part of the local workflow; subsequent
+managed-device runs reuse it by default. Avoid custom emulator tags unless a
+specific experiment needs them.
 
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
@@ -282,9 +285,11 @@ ls -l /dev/kvm
 tools/run_android_checks.sh --docker-managed-device
 ```
 
-This builds `Dockerfile.android` to the source-free `android-gradle-base`
-target as `fps:android-ci-base`, then builds `Dockerfile.android-emulator` from
-that local base image. The emulator image adds Android's `emulator` package,
+This ensures `fps:android-ci-base` and `fps:android-emulator-ci` exist, building
+only missing tags by default. The base comes from the source-free
+`android-gradle-base` target and the emulator image comes from
+`Dockerfile.android-emulator` built on that local base. The emulator image adds
+Android's `emulator` package,
 `platforms;android-30` and
 `system-images;android-30;aosp_atd;x86_64`, then runs the Gradle Managed Device
 task `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm`

@@ -4,6 +4,64 @@
 
 ## 2026-06-14
 
+### Android Docker image reuse policy correction
+
+Goal:
+
+- Align Android Docker behavior with the expected developer/agent workflow:
+  after a clean build, repeated Android host and managed-device checks should
+  reuse existing tagged images by default.
+
+Decisions:
+
+- `fps:android-ci-base` and `fps:android-emulator-ci` are both useful cache
+  images. The emulator image is large, but it should remain tagged when
+  emulator tests are part of the workflow.
+- Image rebuilds should be explicit after Dockerfile layer, apt/sdk package or
+  base-image changes, not implicit on every script run.
+
+Plan:
+
+1. Make `tools/run_android_checks.sh` reuse existing Android image tags by
+   default and build only missing images.
+2. Add an explicit `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` escape hatch for
+   intentional rebuilds.
+3. Update Android testing docs and developer notes.
+4. Reset local Docker images/cache, rebuild default Android images once, then
+   verify repeated runs reuse the tags without rebuilding.
+
+Completed:
+
+- Changed the Android Docker helper so existing tags are reused by default.
+- Removed the old documented `FPS_ANDROID_REUSE_DOCKER_IMAGE=1` switch from
+  the helper help text; default reuse no longer needs a compatibility flag.
+- Added `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` for intentional tag rebuilds after
+  Dockerfile layer, apt/sdk package or base-image changes.
+- Updated testing/developer docs to state that both `fps:android-ci-base` and
+  `fps:android-emulator-ci` are expected cache tags after a clean build.
+- Fully reset local Docker images and build cache with `docker system prune -af`
+  and `docker builder prune -af`.
+- Rebuilt `fps:android-ci-base` and `fps:android-emulator-ci` from zero and
+  confirmed repeated `--docker` / `--docker-managed-device` runs reuse the
+  existing tags by default without Docker build.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `git diff --check` passed.
+- `tools/run_android_checks.sh --docker` passed after full Docker reset,
+  rebuilding `fps:android-ci-base` from zero.
+- `tools/run_android_checks.sh --docker-managed-device` passed after full
+  Docker reset, reusing the base image, rebuilding `fps:android-emulator-ci`
+  and running 26/26 managed-device tests.
+- Repeated `tools/run_android_checks.sh --docker` passed and logged reuse of
+  `fps:android-ci-base`.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` passed and
+  logged reuse of `fps:android-emulator-ci`, with 26/26 managed-device tests.
+- Docker inventory after verification contains only the expected Android tags:
+  `fps:android-ci-base` (~6.8GB) and `fps:android-emulator-ci` (~12.5GB), with
+  no dangling images or stopped containers.
+
 ### Android HTTPS-only foreground/status increment
 
 Goal:
