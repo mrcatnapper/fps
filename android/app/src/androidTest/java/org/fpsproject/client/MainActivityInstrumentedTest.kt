@@ -22,11 +22,7 @@ class MainActivityInstrumentedTest {
     fun launcherStartsAndReportsNoStoredProfile() {
         clearStoredState()
 
-        val launchIntent = targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
-        assertNotNull("Launcher intent is missing", launchIntent)
-        targetContext.startActivity(launchIntent!!.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        })
+        launchMainActivity()
 
         val device = UiDevice.getInstance(instrumentation)
         assertNotNull("Main activity title was not visible", device.wait(Until.findObject(By.text("FPS Android")), 10_000))
@@ -92,6 +88,24 @@ class MainActivityInstrumentedTest {
         assertEquals(PROFILE_JSON, storedProfileText())
     }
 
+    @Test
+    fun profileDeepLinkUpdatesExistingSingleTopActivityWithoutSaving() {
+        clearStoredState()
+
+        launchMainActivity()
+
+        val device = UiDevice.getInstance(instrumentation)
+        assertNotNull("Initial no-profile status was not visible", device.wait(Until.findObject(By.textContains("profile_state=NO_PROFILE")), 5_000))
+
+        launchProfileUri(profileUri(PROFILE_JSON), clearTask = false)
+
+        assertNotNull(
+            "Deep-link import status was not visible after onNewIntent",
+            device.wait(Until.findObject(By.textContains("profile_message=profile_import_ready")), 5_000),
+        )
+        assertEquals(null, storedProfileText())
+    }
+
     private fun clearStoredState() {
         targetContext.getSharedPreferences(PROFILE_PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -100,10 +114,22 @@ class MainActivityInstrumentedTest {
         SharedPreferencesFpsVpnStatusStore(targetContext).clear()
     }
 
-    private fun launchProfileUri(uri: String) {
+    private fun launchMainActivity() {
+        val launchIntent = targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
+        assertNotNull("Launcher intent is missing", launchIntent)
+        targetContext.startActivity(launchIntent!!.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+    }
+
+    private fun launchProfileUri(uri: String, clearTask: Boolean = true) {
         targetContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
             setPackage(targetContext.packageName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            var flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            if (clearTask) {
+                flags = flags or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            }
+            addFlags(flags)
         })
     }
 

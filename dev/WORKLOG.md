@@ -28,7 +28,8 @@ Completed:
   `MainActivity`.
 - Added controller/repository preview validation that shares the existing
   normalizer and does not persist profile text.
-- Extended JVM and managed-device tests for valid and invalid deep-link import.
+- Extended JVM and managed-device tests for valid, invalid and already-open
+  `singleTop`/`onNewIntent` deep-link import.
 - Updated Android planning/testing docs, beta status and specification.
 
 Verification:
@@ -36,6 +37,10 @@ Verification:
 - `tools/run_android_checks.sh --docker` passed.
 - `tools/run_android_checks.sh --docker-managed-device` passed, 31/31 managed
   device tests.
+- Follow-up: `tools/run_android_checks.sh --docker` passed after adding the
+  already-open `singleTop`/`onNewIntent` import test.
+- Follow-up: `tools/run_android_checks.sh --docker-managed-device` passed,
+  32/32 managed-device tests.
 - `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
 - `bash -n tools/*.sh docker/*.sh` passed.
 - `cmake --build build -j 2` passed.
