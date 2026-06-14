@@ -206,11 +206,15 @@ without claiming resistance to advanced timing/size traffic analysis.
 - [x] Add Android inline static shaper-profile UX: Android parses the compact
   CDF profile object, rejects `shaper.profile_file` and installs the shared
   native `Shaper` through JNI.
+- [x] Add Android managed-device product-flow smoke: the Docker-managed
+  emulator lane now validates protected raw socket connect, native TLS/TCP
+  bridge auth, encrypted lease delivery, real `VpnService` fd attach and native
+  pump startup through the service-owned coordinator.
 - Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
   `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
   product-flow bias: keep the first app-owned internal carrier HTTPS-only,
-  extend release-device product-flow validation, add profile persistence/manual
-  UX and defer WSS to future external carrier design. Prefer
+  add profile persistence/manual UX, add physical-device release validation and
+  defer WSS to future external carrier design. Prefer
   integration-shaped Android tests over more isolated smoke checks unless a
   small red test is needed to define a new failure contract.
 

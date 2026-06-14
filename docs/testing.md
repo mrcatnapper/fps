@@ -298,13 +298,15 @@ task `:android:app:fpsApi30AtdDebugAndroidTest` in a container with `/dev/kvm`
 passed through and the current workspace bind-mounted at `/workspaces`. The
 bind mount is intentional: source edits do not invalidate the heavy
 emulator/system-image layers. The managed-device lane runs the same
-instrumented native smoke as `--connected` and also exercises a debug-only real
-`VpnService.prepare(...)` / `VpnService.Builder.establish()` smoke. The VPN
+instrumented native smoke as `--connected` and also exercises debug-only real
+`VpnService.prepare(...)` / `VpnService.Builder.establish()` coverage. The VPN
 smoke requests consent through the system dialog when needed, verifies a real
 TUN fd, routes that fd through `HeadlessNativeVpnRuntime`, starts the native TUN
-pump and closes it through explicit stop/debug-revoke paths. This lane is
-opt-in and is not part of ordinary PR CI until repeated local runs prove it
-stable.
+pump and closes it through explicit stop/debug-revoke paths. It also includes a
+small local product-flow smoke for the service-owned coordinator: protected raw
+socket connect, native TLS/TCP bridge auth, encrypted lease delivery, real TUN
+fd attach and native pump startup. This lane is opt-in and is not part of
+ordinary PR CI until repeated local runs prove it stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

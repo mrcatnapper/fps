@@ -4,6 +4,55 @@
 
 ## 2026-06-14
 
+### Android managed-device product-flow smoke
+
+Goal:
+
+- Extend the Docker-managed emulator lane from isolated native/VpnService smoke
+  to the smallest service-owned product-flow validation that needs Android
+  framework behavior.
+
+Decisions:
+
+- Keep the first internal Android carrier path HTTPS-only; do not add WSS or
+  external-carrier machinery in this increment.
+- Use a debug-only synthetic TLS Application Data local cover starter for the
+  emulator product-flow smoke. The test exercises the production coordinator,
+  protected raw socket, native TLS/TCP bridge, Zero-RTT auth, encrypted lease,
+  real `VpnService` fd attach and native pump startup without depending on an
+  external TLS origin.
+- Treat IP-literal endpoint resolution as a production platform-hook concern:
+  numeric IPs should bypass Android underlying-network DNS and use
+  `InetAddress.getAllByName` directly.
+
+Completed:
+
+- Added a debug harness action for a service-owned coordinated product flow.
+- Added managed-device coverage that starts a local FPS server peer, requests
+  VPN permission, runs the coordinator to `RUNNING`, verifies encrypted lease
+  delivery and confirms real TUN fd/native pump startup.
+- Fixed `VpnServicePlatformHooks.resolveOnUnderlyingNetwork` for IP-literal
+  hosts such as `127.0.0.1`; the first red managed-device run failed with
+  `server_resolve_failed` before this fix.
+- Updated Android planning/testing docs, beta status and roadmap.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the implementation and
+  again after the final debug starter cleanup.
+- First `tools/run_android_checks.sh --docker-managed-device` failed as
+  expected on the new product-flow test before the IP-literal resolution fix.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` passed twice,
+  28/28 managed-device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- A concurrent full `ctest` run failed once with `Address already in use`
+  because it overlapped the local CTest run; rerunning full CTest alone passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android static shaper profile UX
 
 Goal:

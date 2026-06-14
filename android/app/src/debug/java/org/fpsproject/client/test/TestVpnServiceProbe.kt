@@ -1,6 +1,7 @@
 package org.fpsproject.client.test
 
 import org.fpsproject.client.nativebridge.NativeVpnRuntimeSnapshot
+import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerSnapshot
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -21,6 +22,12 @@ data class TestNativeRuntimeResult(
     val snapshot: NativeVpnRuntimeSnapshot?,
 )
 
+data class TestCoordinatedProductFlowResult(
+    val success: Boolean,
+    val error: String?,
+    val snapshot: CoordinatedNativeVpnRunnerSnapshot?,
+)
+
 object TestVpnServiceProbe {
     private val lock = Any()
     private var permissionLatch = CountDownLatch(1)
@@ -28,11 +35,15 @@ object TestVpnServiceProbe {
     private var closedLatch = CountDownLatch(1)
     private var nativeRuntimeStartedLatch = CountDownLatch(1)
     private var nativeRuntimeStoppedLatch = CountDownLatch(1)
+    private var productFlowStartedLatch = CountDownLatch(1)
+    private var productFlowStoppedLatch = CountDownLatch(1)
     private var revokedLatch = CountDownLatch(1)
     private var permissionResult: TestVpnPermissionResult? = null
     private var establishResult: TestVpnEstablishResult? = null
     private var nativeRuntimeStartedResult: TestNativeRuntimeResult? = null
     private var nativeRuntimeStoppedSnapshot: NativeVpnRuntimeSnapshot? = null
+    private var productFlowStartedResult: TestCoordinatedProductFlowResult? = null
+    private var productFlowStoppedSnapshot: CoordinatedNativeVpnRunnerSnapshot? = null
     private var closed = false
     private var revoked = false
 
@@ -43,11 +54,15 @@ object TestVpnServiceProbe {
             closedLatch = CountDownLatch(1)
             nativeRuntimeStartedLatch = CountDownLatch(1)
             nativeRuntimeStoppedLatch = CountDownLatch(1)
+            productFlowStartedLatch = CountDownLatch(1)
+            productFlowStoppedLatch = CountDownLatch(1)
             revokedLatch = CountDownLatch(1)
             permissionResult = null
             establishResult = null
             nativeRuntimeStartedResult = null
             nativeRuntimeStoppedSnapshot = null
+            productFlowStartedResult = null
+            productFlowStoppedSnapshot = null
             closed = false
             revoked = false
         }
@@ -109,6 +124,30 @@ object TestVpnServiceProbe {
         latch.countDown()
     }
 
+    fun reportProductFlowStarted(snapshot: CoordinatedNativeVpnRunnerSnapshot) {
+        val latch = synchronized(lock) {
+            productFlowStartedResult = TestCoordinatedProductFlowResult(success = true, error = null, snapshot = snapshot)
+            productFlowStartedLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportProductFlowFailure(error: String, snapshot: CoordinatedNativeVpnRunnerSnapshot?) {
+        val latch = synchronized(lock) {
+            productFlowStartedResult = TestCoordinatedProductFlowResult(success = false, error = error, snapshot = snapshot)
+            productFlowStartedLatch
+        }
+        latch.countDown()
+    }
+
+    fun reportProductFlowStopped(snapshot: CoordinatedNativeVpnRunnerSnapshot) {
+        val latch = synchronized(lock) {
+            productFlowStoppedSnapshot = snapshot
+            productFlowStoppedLatch
+        }
+        latch.countDown()
+    }
+
     fun reportRevoked() {
         val latch = synchronized(lock) {
             revoked = true
@@ -145,6 +184,18 @@ object TestVpnServiceProbe {
         val latch = synchronized(lock) { nativeRuntimeStoppedLatch }
         latch.await(timeoutMs, TimeUnit.MILLISECONDS)
         return synchronized(lock) { nativeRuntimeStoppedSnapshot }
+    }
+
+    fun awaitProductFlowStarted(timeoutMs: Long): TestCoordinatedProductFlowResult? {
+        val latch = synchronized(lock) { productFlowStartedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { productFlowStartedResult }
+    }
+
+    fun awaitProductFlowStopped(timeoutMs: Long): CoordinatedNativeVpnRunnerSnapshot? {
+        val latch = synchronized(lock) { productFlowStoppedLatch }
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return synchronized(lock) { productFlowStoppedSnapshot }
     }
 
     fun awaitRevoked(timeoutMs: Long): Boolean {

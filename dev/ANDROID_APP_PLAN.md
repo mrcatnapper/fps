@@ -25,10 +25,11 @@ when Android test infrastructure or emulator strategy changes.
   lifecycle. The current service-owned runner drives native carrier auth,
   encrypted lease delivery, TUN establishment, split-tunnel policy and
   bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
-  a minimal foreground/status surface. HTTPS cover hardening and static
-  shaper-profile UX are implemented; the next product gaps are
-  release-device flow validation, profile persistence/manual UX and later
-  external-carrier design, not another internal carrier protocol.
+  a minimal foreground/status surface. HTTPS cover hardening, static
+  shaper-profile UX and the first managed-device product-flow validation are
+  implemented; the next product gaps are profile persistence/manual UX,
+  real-device validation and later external-carrier design, not another
+  internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -111,6 +112,14 @@ Delivered:
   constructs the shared platform-neutral `fps::Shaper`. Android deliberately
   does not support `shaper.profile_file`; mobile profile import stays
   self-contained.
+- The Docker-managed emulator lane now includes a debug-only product-flow smoke
+  around the production coordinator shape. It starts a real Android
+  `VpnService`, protects a raw carrier socket, runs the native TLS/TCP bridge,
+  completes client-side Zero-RTT against a local test FPS server peer, receives
+  an encrypted TUN lease, establishes a real TUN fd, attaches it to native and
+  starts the native pump. The local cover side uses synthetic TLS Application
+  Data records so the test remains deterministic and does not require an
+  external origin.
 - `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
   surface. It starts the native executor, resolves the FPS server through the
   underlying-network hook, prepares/protects/connects the raw carrier socket,
@@ -172,27 +181,35 @@ Completed product step:
   `max_response_bytes`, handles ordinary `Content-Length`/chunked/empty
   responses, reports metadata-only failures and stops its keep-alive worker
   cleanly on close.
+- **Managed-device product-flow smoke.**
+  The Docker-managed emulator lane validates the service-owned coordinator
+  through protected raw socket connect, native bridge auth, encrypted lease,
+  real `VpnService` fd attach and native pump startup.
 
 Remaining tactical implementation order:
 
-1. **External carrier design.**
+1. **Profile persistence and manual UX.**
+   Add the smallest practical profile storage/import surface and manual test
+   flow so the current headless service path can be exercised like a user-facing
+   client.
+
+2. **Real-device release validation.**
+   Run the same HTTPS-only product path on at least one physical device to
+   catch vendor VPN, background-service, network-switching and battery-policy
+   differences that managed devices cannot model.
+
+3. **External carrier design.**
    After the HTTPS path is stable, design external carrier support explicitly
    instead of adding raw WSS as a second internal carrier. That design must
    revisit DNS mapping, VPN-loop prevention and Android per-app routing.
-
-2. **Release-device product flow.**
-   Extend managed-device checks from native smoke toward a small
-   production-shaped HTTPS flow that exercises protected sockets, the raw
-   native bridge, encrypted lease delivery, TUN fd attach and split-tunnel
-   policy.
 
 Testing expectation:
 
 - JVM tests validate coordinator sequencing, retry/backoff, service-runner
   lifecycle and fail-closed branches with fake platform/native backends.
-- Managed-device tests should validate the smallest production-shaped flow that
-  needs real Android framework behavior: protected fd, real `VpnService` fd and
-  native bridge/auth/TUN wiring.
+- Managed-device tests validate Android framework behavior: protected fd, real
+  `VpnService` fd and native bridge/auth/TUN wiring. Keep them deterministic and
+  local; use real-device/manual checks for vendor-specific behavior.
 - Do not add more "2 + 2" tests around already-stable helpers unless they
   protect a newly integrated product contract.
 
