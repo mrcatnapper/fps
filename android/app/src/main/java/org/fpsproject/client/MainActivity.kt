@@ -24,9 +24,17 @@ class MainActivity : Activity() {
         controller = FpsVpnManualController(
             repository = SharedPreferencesFpsVpnProfileRepository(this),
             commandSender = AndroidFpsVpnServiceCommandSender(this),
+            statusStore = SharedPreferencesFpsVpnStatusStore(this),
         )
         setContentView(buildContentView())
         render(controller.refresh())
+        handleProfileViewIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleProfileViewIntent(intent)
     }
 
     @Deprecated("Deprecated in Android framework API")
@@ -69,7 +77,7 @@ class MainActivity : Activity() {
             profileInput.text.clear()
             render(controller.clear())
         })
-        root.addView(button("Refresh Profile Status") { render(controller.refresh()) })
+        root.addView(button("Refresh Status") { render(controller.refresh()) })
         statusText = TextView(this).apply {
             textSize = 14f
             typeface = Typeface.MONOSPACE
@@ -97,14 +105,46 @@ class MainActivity : Activity() {
         if (prepareIntent != null) {
             startAfterPermission = true
             startActivityForResult(prepareIntent, REQUEST_VPN_PERMISSION)
-            statusText.text = "state=STARTING\nprofile_saved=${controller.snapshot().profilePresent}\nmessage=vpn_permission_requested"
+            render(
+                controller.snapshot().copy(
+                    message = "vpn_permission_requested",
+                    vpnStatus = FpsVpnStatusSnapshot.starting(),
+                ),
+            )
             return
         }
         render(controller.start())
     }
 
     private fun render(snapshot: FpsVpnManualSnapshot) {
-        statusText.text = "state=${snapshot.state}\nprofile_saved=${snapshot.profilePresent}\nmessage=${snapshot.message}"
+        val status = snapshot.vpnStatus
+        statusText.text = buildString {
+            append("profile_state=${snapshot.state}\n")
+            append("profile_saved=${snapshot.profilePresent}\n")
+            append("profile_message=${snapshot.message}\n")
+            append("vpn_state=${status.state}\n")
+            append("vpn_attempts=${status.attempts}\n")
+            append("vpn_reconnects=${status.reconnects}\n")
+            append("vpn_next_retry_ms=${status.nextRetryDelayMs}")
+            status.error?.let { append("\nvpn_error=$it") }
+        }
+    }
+
+    private fun handleProfileViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) {
+            return
+        }
+        val profileUri = intent.dataString
+        if (profileUri == null || !profileUri.startsWith(PROFILE_URI_PREFIX)) {
+            render(controller.previewProfileImport(""))
+            return
+        }
+        val snapshot = controller.previewProfileImport(profileUri)
+        if (snapshot.state != FpsVpnManualState.ERROR) {
+            profileInput.setText(profileUri)
+            profileInput.setSelection(profileInput.text.length)
+        }
+        render(snapshot)
     }
 
     private fun matchWidthWrapHeight(): LinearLayout.LayoutParams {
@@ -116,5 +156,6 @@ class MainActivity : Activity() {
 
     private companion object {
         private const val REQUEST_VPN_PERMISSION = 6602
+        private const val PROFILE_URI_PREFIX = "fps://v1/"
     }
 }

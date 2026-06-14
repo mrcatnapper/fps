@@ -4,6 +4,94 @@
 
 ## 2026-06-14
 
+### Android `fps://v1` deep-link import
+
+Goal:
+
+- Let Android accept generated `fps://v1` client profile URIs through the normal
+  Android deep-link path while preserving explicit user confirmation before
+  saving or starting the VPN.
+
+Decisions:
+
+- Use the existing `fps://v1/<base64url-json-profile>` profile format and the
+  same Android profile parser/normalizer as manual paste/save.
+- Treat deep links as preview input only. A valid URI pre-fills the launcher
+  profile field and reports `profile_import_ready`; the profile is not written
+  to private storage until the user taps `Save Profile`.
+- Invalid deep links report `profile_import_invalid` and do not overwrite the
+  stored profile or start any service command.
+
+Completed:
+
+- Added a production `ACTION_VIEW`/`BROWSABLE` intent filter for `fps://v1` on
+  `MainActivity`.
+- Added controller/repository preview validation that shares the existing
+  normalizer and does not persist profile text.
+- Extended JVM and managed-device tests for valid, invalid and already-open
+  `singleTop`/`onNewIntent` deep-link import.
+- Updated Android planning/testing docs, beta status and specification.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `tools/run_android_checks.sh --docker-managed-device` passed, 31/31 managed
+  device tests.
+- Follow-up: `tools/run_android_checks.sh --docker` passed after adding the
+  already-open `singleTop`/`onNewIntent` import test.
+- Follow-up: `tools/run_android_checks.sh --docker-managed-device` passed,
+  32/32 managed-device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android runtime status in launcher
+
+Goal:
+
+- Let the minimal Android launcher show the latest metadata-only daemon/runtime
+  status, not only whether a profile is saved.
+
+Decisions:
+
+- Persist status through a small private `SharedPreferences` store. This is not
+  a management API, live IPC surface or security boundary.
+- Store only already-safe fields from `FpsVpnStatusSnapshot`: state, attempts,
+  reconnect count, next retry delay and sanitized error name.
+- Keep manual refresh explicit. No polling thread or bound service is added in
+  this increment.
+- Keep the launcher plain and dependency-free; real UI polish remains driven by
+  physical-device feedback.
+
+Completed:
+
+- Added `FpsVpnStatusStore` with a production SharedPreferences backend and
+  JVM-testable serialized storage backend.
+- Added `PersistingFpsVpnStatusNotifier` so runtime status updates are written
+  alongside foreground notification updates; clear writes an explicit stopped
+  snapshot.
+- Extended `FpsVpnManualController` and `MainActivity` to render combined
+  profile and daemon runtime metadata.
+- Updated managed-device launcher smoke to assert `profile_state=NO_PROFILE`
+  and `vpn_state=STOPPED`.
+- Updated Android planning/testing docs, beta status and specification.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed before the documentation
+  update.
+- `tools/run_android_checks.sh --docker-managed-device` passed, 29/29 managed
+  device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android minimal manual UX
 
 Goal:

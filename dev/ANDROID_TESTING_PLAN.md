@@ -303,6 +303,9 @@ Prioritize these emulator/device scenarios in order:
   storage: save accepts JSON and `fps://v1`, invalid input does not overwrite,
   start uses only the stored profile path, stop preserves the profile, clear
   deletes it and all snapshots/commands remain metadata-only.
+- Managed-device launcher tests cover `fps://v1` deep-link import: a valid
+  profile URI opens the Activity and remains a preview until the user taps save,
+  while an invalid profile URI does not overwrite the stored profile.
 - It covers the first native auth-core smoke without a real network carrier:
   client auth metadata is configured through JNI, invalid server public key
   encoding is rejected, a shared C++ Zero-RTT exchange returns an encrypted test
@@ -323,8 +326,9 @@ Prioritize these emulator/device scenarios in order:
    WSS remains probe-support code and future external-carrier research; do not
    add a raw WSS internal carrier unless the Android product direction changes
    explicitly.
-3. Profile persistence and the minimal manual import/start/stop controller are
-   now covered by JVM tests, and stored-profile startup is covered by the
+3. Profile persistence, persisted runtime status and the minimal manual
+   import/start/stop/status controller are now covered by JVM tests, and
+   stored-profile startup plus launcher rendering are covered by the
    managed-device product-flow smoke. Next UI testing should be driven by
    real-device findings rather than expanding emulator checks around plain view
    wiring.

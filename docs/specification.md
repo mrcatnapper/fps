@@ -651,12 +651,12 @@ crypto, Zero-RTT, classified-record codec, `fps://v1` client profile
 normalization and generic datagram scheduling. TUN framing/adaptation and the
 TLS/TCP carrier are explicit opt-in targets above that core. The current Android
 scaffold adds a headless Kotlin runtime boundary: it parses client JSON and
-`fps://v1` profiles, models carrier probes and split-tunnel allowlists, models
-the VPN startup state machine, provides live OkHttp HTTPS/WSS probe/keepalive
-traffic for app-owned carrier sessions, owns the first lease-triggered Android
-`VpnService` TUN file descriptor, keeps platform operations behind hooks, and
-builds an NDK library that reuses FPS native core pieces without linking Linux
-runtime code.
+`fps://v1` profiles, previews `fps://v1` deep-link imports without auto-saving,
+models carrier probes and split-tunnel allowlists, models the VPN startup state
+machine, provides live OkHttp HTTPS/WSS probe/keepalive traffic for app-owned
+carrier sessions, owns the first lease-triggered Android `VpnService` TUN file
+descriptor, keeps platform operations behind hooks, and builds an NDK library
+that reuses FPS native core pieces without linking Linux runtime code.
 
 Linux-specific runtime is separate:
 
@@ -732,8 +732,10 @@ Linux-specific runtime is separate:
   probe-support/future external-carrier material; first versions intentionally
   do not add a raw WSS internal carrier. Inline static shaper profiles are
   parsed by Kotlin, passed as primitive CDF arrays through JNI and installed as
-  the shared native `Shaper` for raw TLS/TCP carrier sessions. Android still
-  lacks full UI polish beyond the minimal foreground/status surface.
+  the shared native `Shaper` for raw TLS/TCP carrier sessions. Android persists
+  metadata-only runtime status locally so the launcher can show the latest
+  profile and daemon state, but it still lacks full UI polish beyond the
+  minimal foreground/status surface.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

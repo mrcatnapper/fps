@@ -31,7 +31,10 @@ class FpsVpnService : VpnService() {
                     ),
                 )
             },
-            statusNotifier = AndroidFpsVpnStatusNotifier(this),
+            statusNotifier = PersistingFpsVpnStatusNotifier(
+                delegate = AndroidFpsVpnStatusNotifier(this),
+                statusStore = SharedPreferencesFpsVpnStatusStore(this),
+            ),
             profileRepository = SharedPreferencesFpsVpnProfileRepository(this),
         )
     }

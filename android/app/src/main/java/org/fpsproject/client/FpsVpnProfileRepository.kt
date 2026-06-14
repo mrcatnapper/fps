@@ -4,6 +4,8 @@ import android.content.Context
 import org.fpsproject.client.config.AndroidClientProfileParser
 
 internal interface FpsVpnProfileRepository {
+    fun normalizeProfile(profileText: String): String
+
     fun saveProfile(profileText: String): String
 
     fun loadProfile(): String?
@@ -24,8 +26,10 @@ internal interface FpsVpnProfileStorage {
 internal class ValidatingFpsVpnProfileRepository(
     private val storage: FpsVpnProfileStorage,
 ) : FpsVpnProfileRepository {
+    override fun normalizeProfile(profileText: String): String = AndroidClientProfileParser.normalizeJsonText(profileText)
+
     override fun saveProfile(profileText: String): String {
-        val normalized = AndroidClientProfileParser.normalizeJsonText(profileText)
+        val normalized = normalizeProfile(profileText)
         storage.write(normalized)
         return normalized
     }
@@ -48,6 +52,8 @@ internal class SharedPreferencesFpsVpnProfileRepository(
     private val delegate = ValidatingFpsVpnProfileRepository(
         SharedPreferencesFpsVpnProfileStorage(context.applicationContext),
     )
+
+    override fun normalizeProfile(profileText: String): String = delegate.normalizeProfile(profileText)
 
     override fun saveProfile(profileText: String): String = delegate.saveProfile(profileText)
 
