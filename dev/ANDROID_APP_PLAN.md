@@ -160,10 +160,15 @@ Completed product step:
 - **Foreground service and status UX.**
   The smallest user-visible daemon surface exists: foreground notification,
   start/stop/status runtime seam and non-secret error reporting.
+- **HTTPS cover hardening.**
+  The raw HTTPS local cover client now bounds response draining through
+  `max_response_bytes`, handles ordinary `Content-Length`/chunked/empty
+  responses, reports metadata-only failures and stops its keep-alive worker
+  cleanly on close.
 
 Remaining tactical implementation order:
 
-1. **HTTPS cover hardening and shaper profile UX.**
+1. **Static shaper profile UX.**
    Keep the first app-owned internal carrier as raw HTTPS GET through the
    native loopback bridge. Add only the profile/config pieces needed to make
    static shaper CDF use practical on Android.

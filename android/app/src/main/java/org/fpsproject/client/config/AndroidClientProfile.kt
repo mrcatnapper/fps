@@ -189,6 +189,11 @@ object AndroidClientProfileParser {
                 endpoint = parseEndpoint(carrier.requiredString("endpoint", "$path.endpoint"), "$path.endpoint"),
                 path = parseCarrierPath(carrier.optionalString("path", "$path.path") ?: "/", "$path.path"),
                 intervalMs = carrier.optionalPositiveLong("interval_ms", 10_000, "$path.interval_ms"),
+                maxResponseBytes = carrier.optionalInt(
+                    "max_response_bytes",
+                    DEFAULT_MAX_CARRIER_RESPONSE_BYTES,
+                    "$path.max_response_bytes",
+                ),
             )
         }
     }

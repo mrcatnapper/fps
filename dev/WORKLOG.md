@@ -4,6 +4,51 @@
 
 ## 2026-06-14
 
+### Android HTTPS cover hardening
+
+Goal:
+
+- Harden the first Android app-owned internal carrier path without adding a
+  second internal carrier protocol.
+
+Decisions:
+
+- Keep raw HTTPS GET through the native loopback bridge as the first Android
+  product carrier path.
+- Keep WSS as probe-support/future external-carrier material, not an internal
+  wire carrier for the first Android beta.
+- Add one Android profile guard, `carriers[].max_response_bytes`, to bound
+  response draining and fail the carrier with metadata-only errors on malformed
+  or oversized responses.
+
+Completed:
+
+- Added `CarrierProbeProfile.maxResponseBytes` with a 1 MiB default and Android
+  profile parsing/validation for `max_response_bytes`.
+- Changed `RawHttpsLocalCoverClient` to pass the response budget into every
+  keep-alive GET.
+- Hardened HTTP draining for `Content-Length`, chunked bodies, `204`/`304`
+  empty-body statuses, malformed content length and chunk CRLF validation.
+- Mapped startup socket timeouts to `cover_timeout` and kept all reported
+  failures metadata-only.
+- Made cover-client `close()` interrupt and briefly join the worker thread
+  without joining itself.
+- Added JVM tests for parser defaults/validation, oversized responses, chunked
+  responses and close-before-next-keepalive.
+- Updated Android planning/testing docs and public profile/spec/beta notes.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `tools/run_android_checks.sh --docker-managed-device` reused
+  `fps:android-emulator-ci` and passed, 26/26 managed-device tests.
+- `git diff --check` passed.
+
 ### Android Docker image reuse policy correction
 
 Goal:

@@ -18,7 +18,7 @@ class AndroidClientProfileParserTest {
         carriers: String = """
           "carriers": [
             {"mode": "https_get", "endpoint": "origin.example.test:443", "path": "/ping", "interval_ms": 5000},
-            {"mode": "wss", "endpoint": "[2001:db8::1]:9443", "path": "/stream", "interval_ms": 10000}
+            {"mode": "wss", "endpoint": "[2001:db8::1]:9443", "path": "/stream", "interval_ms": 10000, "max_response_bytes": 2048}
           ],
         """.trimIndent(),
         splitTunnel: String = """
@@ -77,6 +77,8 @@ class AndroidClientProfileParserTest {
         assertEquals(CarrierProbeMode.HTTPS_GET, profile.carriers[0].mode)
         assertEquals("origin.example.test", profile.carriers[0].endpoint.host)
         assertEquals("/stream", profile.carriers[1].path)
+        assertEquals(DEFAULT_MAX_CARRIER_RESPONSE_BYTES, profile.carriers[0].maxResponseBytes)
+        assertEquals(2048, profile.carriers[1].maxResponseBytes)
         assertEquals(setOf(10042, 10043), profile.splitTunnel.allowedUids)
     }
 
@@ -149,14 +151,19 @@ class AndroidClientProfileParserTest {
             endpoint = Endpoint("origin.example.test", 443),
             path = "/ping",
             intervalMs = 10_000,
+            maxResponseBytes = 4096,
         )
 
         assertEquals(CarrierProbeMode.HTTPS_GET, probe.mode)
+        assertEquals(4096, probe.maxResponseBytes)
         assertThrows(IllegalArgumentException::class.java) {
             CarrierProbeProfile(CarrierProbeMode.WSS, Endpoint("origin.example.test", 443), "relative", 10_000)
         }
         assertThrows(IllegalArgumentException::class.java) {
             CarrierProbeProfile(CarrierProbeMode.WSS, Endpoint("origin.example.test", 443), "/", 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CarrierProbeProfile(CarrierProbeMode.WSS, Endpoint("origin.example.test", 443), "/", 10_000, 0)
         }
     }
 
@@ -173,6 +180,9 @@ class AndroidClientProfileParserTest {
         }
         assertThrows(AndroidClientProfileParseException::class.java) {
             AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "https_get", "endpoint": "origin.example.test:443", "interval_ms": 0}],"""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(carriers = """"carriers": [{"mode": "https_get", "endpoint": "origin.example.test:443", "max_response_bytes": 0}],"""))
         }
     }
 

@@ -177,8 +177,9 @@ Those remain release-hardening concerns.
   bridge and protected raw HTTPS `TlsTcpCarrierSession` with real client-side
   Zero-RTT/lease delivery exist. Native inbound datagrams now write back to the
   duplicated TUN fd through the shared datagram transport. The first app-owned
-  internal carrier path is HTTPS-only; WSS is probe-support/future external
-  carrier material. Android still needs broader manual UX, profile persistence
+  internal carrier path is HTTPS-only and has bounded response-drain/close
+  coverage; WSS is probe-support/future external carrier material. Android
+  still needs static shaper-profile UX, broader manual UX, profile persistence
   and release-device validation.
 
 ## Public Beta Gate

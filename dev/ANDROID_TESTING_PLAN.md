@@ -297,10 +297,14 @@ Prioritize these emulator/device scenarios in order:
 1. Keep the minimal foreground-service/status surface covered by JVM tests
    through a fake notifier/status sink and add device-level checks only where
    Android framework behavior is required.
-2. Keep the first product carrier path HTTPS-only. WSS remains probe-support
+2. Keep the first product carrier path HTTPS-only. The raw HTTPS keep-alive
+   client now has bounded response draining and close/metadata-failure coverage.
+   WSS remains probe-support
    code and future external-carrier research; do not add a raw WSS internal
    carrier unless the Android product direction changes explicitly.
-3. Extend the managed-device lane from fd/pump smoke to the smallest
+3. Add static shaper-profile UX to the Android profile/runtime path before
+   expanding external carrier design.
+4. Extend the managed-device lane from fd/pump smoke to the smallest
    production-shaped HTTPS flow that requires Android framework behavior.
-4. Keep managed-device CI manual/scheduled until repeated runs show it is
+5. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

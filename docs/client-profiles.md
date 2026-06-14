@@ -198,6 +198,12 @@ Generated client profiles use the normal randomized upgrade delay sigma. Set
 reproducible packet capture or deterministic integration lab requires a fixed
 upgrade moment.
 
+Android profiles can include app-owned carrier entries under `carriers`. The
+first internal Android carrier path is HTTPS GET; `max_response_bytes` bounds
+how much response body the app drains from each keep-alive request before
+treating the carrier as unhealthy. This is an Android runtime guard, not a
+Linux daemon setting.
+
 ## Security Notes
 
 - An FPS URI or generated client profile contains the client UUID, so it is a

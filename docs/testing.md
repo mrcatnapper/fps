@@ -322,6 +322,9 @@ Zero-RTT and encrypted lease delivery. The Kotlin layer also includes a raw
 HTTPS local cover client: it connects to the native loopback bridge, wraps that
 socket in TLS using the configured carrier origin hostname and sends
 HTTP/1.1 keep-alive GETs while preserving raw TLS bytes for the native bridge.
+The Android carrier profile can bound per-response draining with
+`max_response_bytes`; JVM tests cover oversized responses, chunked responses and
+close-before-next-keepalive behavior.
 OkHttp remains probe/support code, not the FPS wire carrier. The scaffold also
 has a lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with
 fake builders and a real debug `VpnService` fd routed through the Kotlin/native

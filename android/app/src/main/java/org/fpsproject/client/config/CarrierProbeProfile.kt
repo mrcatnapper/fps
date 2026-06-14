@@ -18,9 +18,13 @@ data class CarrierProbeProfile(
     val endpoint: Endpoint,
     val path: String = "/",
     val intervalMs: Long = 10_000,
+    val maxResponseBytes: Int = DEFAULT_MAX_CARRIER_RESPONSE_BYTES,
 ) {
     init {
         require(path.startsWith('/')) { "path must start with '/'" }
         require(intervalMs > 0) { "intervalMs must be positive" }
+        require(maxResponseBytes > 0) { "maxResponseBytes must be positive" }
     }
 }
+
+const val DEFAULT_MAX_CARRIER_RESPONSE_BYTES = 1024 * 1024
