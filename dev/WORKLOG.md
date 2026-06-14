@@ -34,16 +34,18 @@ Completed:
 - Fixed `VpnServicePlatformHooks.resolveOnUnderlyingNetwork` for IP-literal
   hosts such as `127.0.0.1`; the first red managed-device run failed with
   `server_resolve_failed` before this fix.
+- Added a cheap JVM guard for Android IP-literal detection so the loopback
+  regression is caught before the managed-device lane.
 - Updated Android planning/testing docs, beta status and roadmap.
 
 Verification:
 
 - `tools/run_android_checks.sh --docker` passed after the implementation and
-  again after the final debug starter cleanup.
+  again after the final debug starter cleanup and IP-literal JVM guard.
 - First `tools/run_android_checks.sh --docker-managed-device` failed as
   expected on the new product-flow test before the IP-literal resolution fix.
 - Repeated `tools/run_android_checks.sh --docker-managed-device` passed twice,
-  28/28 managed-device tests.
+  28/28 managed-device tests, then passed again after the IP-literal JVM guard.
 - `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
 - `bash -n tools/*.sh docker/*.sh` passed.
 - `cmake --build build -j 2` passed.

@@ -35,7 +35,7 @@ internal class VpnServicePlatformHooks(
     override fun protectSocket(socket: Socket): Boolean = service.protect(socket)
 
     override fun resolveOnUnderlyingNetwork(host: String, port: Int): List<ResolvedEndpoint> {
-        val addresses = if (isIpLiteral(host)) {
+        val addresses = if (isIpLiteralHost(host)) {
             InetAddress.getAllByName(host)
         } else {
             underlyingNetwork()?.getAllByName(host) ?: InetAddress.getAllByName(host)
@@ -81,8 +81,18 @@ internal class VpnServicePlatformHooks(
             ),
         )
     }
+}
 
-    private fun isIpLiteral(host: String): Boolean {
-        return host.contains(':') || host.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))
+internal fun isIpLiteralHost(host: String): Boolean {
+    return host.contains(':') || isIpv4LiteralHost(host)
+}
+
+private fun isIpv4LiteralHost(host: String): Boolean {
+    val parts = host.split('.')
+    return parts.size == 4 && parts.all { part ->
+        part.isNotEmpty() &&
+            part.length <= 3 &&
+            part.all { it.isDigit() } &&
+            part.toInt() in 0..255
     }
 }
