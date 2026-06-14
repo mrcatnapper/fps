@@ -22,10 +22,10 @@ when Android test infrastructure or emulator strategy changes.
 - Keep the application headless while product behavior is still incomplete.
   The next Android milestone is not more isolated smoke coverage; it is a
   production-like runtime path that composes the existing pieces into one VPN
-  lifecycle. The current raw carrier bridge now runs real client-side Zero-RTT
-  over `TlsTcpCarrierSession` and emits encrypted lease metadata, but native
-  TUN read/policy/enqueue exists only in the outbound direction and
-  `FpsVpnService` does not yet drive carrier/lease/TUN/policy loops by itself.
+  lifecycle. The current service-owned runner drives native carrier auth,
+  encrypted lease delivery, TUN establishment, split-tunnel policy and
+  bidirectional datagram/TUN movement for a raw HTTPS cover profile. Raw WSS
+  cover and user-facing service UI remain the next product gaps.
 
 ## Implemented Headless Core Slice
 
@@ -120,6 +120,11 @@ Delivered:
   TLS HTTPS GET keep-alive loop through the native loopback bridge and preserves
   raw TLS bytes for `TlsTcpCarrierSession`. It is separate from OkHttp probes,
   which still terminate TLS and remain health/probe support machinery.
+- Android release native builds exclude debug/instrumented JNI test hooks. The
+  release APK smoke verifies that `FpsNativeTestHooks` and auth/fake-carrier
+  test entrypoints are not exported by `libfps_android_native.so`. The native
+  runtime registry now copies a per-runtime entry under the global lock, then
+  serializes calls with the entry mutex after releasing the registry mutex.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -153,10 +158,11 @@ Tactical implementation order:
    the coordinator/service path. It must still feed raw TLS bytes to the native
    loopback bridge and must not reuse OkHttp as an FPS wire carrier.
 
-2. **Production surface cleanup.**
-   Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
-   and then add operator/UI-facing lifecycle/status features. Do this after the
-   headless product path works, so cleanup does not harden the wrong API shape.
+2. **Foreground service and status UX.**
+   Add the smallest user-visible Android daemon surface: foreground
+   notification, profile start/stop/status entrypoints and non-secret error
+   reporting. Keep this after raw WSS cover unless manual testing shows HTTPS
+   cover is enough for the first APK flow.
 
 Testing expectation:
 

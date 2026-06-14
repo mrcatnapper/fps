@@ -299,6 +299,7 @@ struct ClientAuthConfig {
     return controller.process_inbound_record(direction, *record);
 }
 
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
 [[nodiscard]] auto wait_fd_ready_for_test(int fd, short events, std::string& error) -> bool {
     pollfd descriptor{
         .fd = fd,
@@ -385,6 +386,7 @@ struct ClientAuthConfig {
     }
     return true;
 }
+#endif
 
 [[nodiscard]] auto passthrough_pipelines() -> fps::net::TlsTcpCarrierSessionPipelines {
     return fps::net::TlsTcpCarrierSessionPipelines{
@@ -1810,135 +1812,78 @@ public:
     [[nodiscard]] auto create(std::string profile_text) -> NativeRuntimeHandle {
         std::lock_guard lock{mutex_};
         const auto handle = next_handle_++;
-        runtimes_.emplace(handle, std::make_unique<AndroidNativeRuntime>(std::move(profile_text)));
+        runtimes_.emplace(handle, std::make_shared<RuntimeEntry>(std::move(profile_text)));
         return handle;
     }
 
     void close(NativeRuntimeHandle handle) {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return;
+        auto entry = take_runtime(handle);
+        if(entry) {
+            std::lock_guard lock{entry->mutex};
+            static_cast<void>(entry->runtime.stop());
         }
-        static_cast<void>(found->second->stop());
-        runtimes_.erase(found);
     }
 
     [[nodiscard]] auto start(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->start();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.start(); });
     }
 
     [[nodiscard]] auto stop(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->stop();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.stop(); });
     }
 
     [[nodiscard]] auto snapshot(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->snapshot();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.snapshot(); });
     }
 
     [[nodiscard]] auto start_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->start_tun_pump();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.start_tun_pump(); });
     }
 
     [[nodiscard]] auto stop_tun_pump(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->stop_tun_pump();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.stop_tun_pump(); });
     }
 
     [[nodiscard]] auto post_noop_command(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->post_noop_command();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.post_noop_command(); });
     }
 
     [[nodiscard]] auto attach_tun_fd_owned_duplicate(NativeRuntimeHandle handle, int fd, int mtu) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->attach_tun_fd_owned_duplicate(fd, mtu);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [fd, mtu](AndroidNativeRuntime& runtime) {
+            return runtime.attach_tun_fd_owned_duplicate(fd, mtu);
+        });
     }
 
     [[nodiscard]] auto drain_tun_policy_packets(NativeRuntimeHandle handle, int max_packets) -> std::vector<NativeTunPolicyPacketFields> {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return {};
-        }
-        return found->second->drain_tun_policy_packets(max_packets);
+        return with_runtime<std::vector<NativeTunPolicyPacketFields>>(handle, {}, [max_packets](AndroidNativeRuntime& runtime) {
+            return runtime.drain_tun_policy_packets(max_packets);
+        });
     }
 
     [[nodiscard]] auto complete_tun_policy_packet(NativeRuntimeHandle handle, std::uint64_t packet_id, bool allow) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->complete_tun_policy_packet(packet_id, allow);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [packet_id, allow](AndroidNativeRuntime& runtime) {
+            return runtime.complete_tun_policy_packet(packet_id, allow);
+        });
     }
 
     [[nodiscard]] auto prepare_raw_carrier_socket(NativeRuntimeHandle handle, std::string address, int port) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->prepare_raw_carrier_socket(std::move(address), port);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [address = std::move(address), port](AndroidNativeRuntime& runtime) mutable {
+            return runtime.prepare_raw_carrier_socket(std::move(address), port);
+        });
     }
 
     [[nodiscard]] auto complete_raw_carrier_protection(NativeRuntimeHandle handle, bool protect_allowed) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->complete_raw_carrier_protection(protect_allowed);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [protect_allowed](AndroidNativeRuntime& runtime) {
+            return runtime.complete_raw_carrier_protection(protect_allowed);
+        });
     }
 
     [[nodiscard]] auto start_raw_carrier_bridge(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->start_raw_carrier_bridge();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.start_raw_carrier_bridge(); });
     }
 
     [[nodiscard]] auto stop_raw_carrier(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->stop_raw_carrier();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.stop_raw_carrier(); });
     }
 
     [[nodiscard]] auto configure_client_auth(
@@ -1946,93 +1891,106 @@ public:
         std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
     )
         -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->configure_client_auth(
-            std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64), client_upgrade_delay_ms, client_upgrade_delay_sigma_ms,
-            max_frame_payload, max_frame_padding
+        return with_runtime(
+            handle, invalid_runtime_snapshot("invalid_handle"),
+            [
+                profile_id = std::move(profile_id), client_uuid = std::move(client_uuid), server_public_key_base64 = std::move(server_public_key_base64),
+                client_upgrade_delay_ms, client_upgrade_delay_sigma_ms, max_frame_payload, max_frame_padding
+            ](AndroidNativeRuntime& runtime) mutable {
+                return runtime.configure_client_auth(
+                    std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64), client_upgrade_delay_ms,
+                    client_upgrade_delay_sigma_ms, max_frame_payload, max_frame_padding
+                );
+            }
         );
     }
 
     [[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->run_client_auth_smoke_for_test(tamper_server_accept);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [tamper_server_accept](AndroidNativeRuntime& runtime) {
+            return runtime.run_client_auth_smoke_for_test(tamper_server_accept);
+        });
     }
 
     [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return {};
-        }
-        return found->second->drain_native_events(max_events);
+        return with_runtime<std::vector<NativeRuntimeEventFields>>(handle, {}, [max_events](AndroidNativeRuntime& runtime) {
+            return runtime.drain_native_events(max_events);
+        });
     }
 
     [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->install_tun_packet_capture_sink_for_test(reject_packets);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [reject_packets](AndroidNativeRuntime& runtime) {
+            return runtime.install_tun_packet_capture_sink_for_test(reject_packets);
+        });
     }
 
     [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return {};
-        }
-        return found->second->captured_tun_packet_digests_for_test();
+        return with_runtime<std::vector<std::string>>(handle, {}, [](AndroidNativeRuntime& runtime) { return runtime.captured_tun_packet_digests_for_test(); });
     }
 
     [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->start_fake_carrier_for_test(reject_frames);
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [reject_frames](AndroidNativeRuntime& runtime) {
+            return runtime.start_fake_carrier_for_test(reject_frames);
+        });
     }
 
     [[nodiscard]] auto stop_fake_carrier_for_test(NativeRuntimeHandle handle) -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->stop_fake_carrier_for_test();
+        return with_runtime(handle, invalid_runtime_snapshot("invalid_handle"), [](AndroidNativeRuntime& runtime) { return runtime.stop_fake_carrier_for_test(); });
     }
 
     [[nodiscard]] auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string> {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return {};
-        }
-        return found->second->captured_fake_carrier_frame_digests_for_test();
+        return with_runtime<std::vector<std::string>>(handle, {}, [](AndroidNativeRuntime& runtime) {
+            return runtime.captured_fake_carrier_frame_digests_for_test();
+        });
     }
 
     [[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
         -> NativeRuntimeSnapshotFields {
-        std::lock_guard lock{mutex_};
-        const auto found = runtimes_.find(handle);
-        if(found == runtimes_.end()) {
-            return invalid_runtime_snapshot("invalid_handle");
-        }
-        return found->second->inject_inbound_datagram_for_test(std::move(datagram), fragment_payload_bytes);
+        return with_runtime(
+            handle, invalid_runtime_snapshot("invalid_handle"),
+            [datagram = std::move(datagram), fragment_payload_bytes](AndroidNativeRuntime& runtime) mutable {
+                return runtime.inject_inbound_datagram_for_test(std::move(datagram), fragment_payload_bytes);
+            }
+        );
     }
 
 private:
+    struct RuntimeEntry {
+        explicit RuntimeEntry(std::string profile_text) : runtime{std::move(profile_text)} {}
+
+        std::mutex mutex;
+        AndroidNativeRuntime runtime;
+    };
+
+    [[nodiscard]] auto find_runtime(NativeRuntimeHandle handle) -> std::shared_ptr<RuntimeEntry> {
+        std::lock_guard lock{mutex_};
+        const auto found = runtimes_.find(handle);
+        if(found == runtimes_.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
+    [[nodiscard]] auto take_runtime(NativeRuntimeHandle handle) -> std::shared_ptr<RuntimeEntry> {
+        std::lock_guard lock{mutex_};
+        auto node = runtimes_.extract(handle);
+        if(node.empty()) {
+            return {};
+        }
+        return std::move(node.mapped());
+    }
+
+    template<typename Result, typename Fn>
+    [[nodiscard]] auto with_runtime(NativeRuntimeHandle handle, Result invalid_result, Fn&& fn) -> Result {
+        auto entry = find_runtime(handle);
+        if(!entry) {
+            return invalid_result;
+        }
+        std::lock_guard lock{entry->mutex};
+        return std::forward<Fn>(fn)(entry->runtime);
+    }
+
     std::mutex mutex_;
-    std::unordered_map<NativeRuntimeHandle, std::unique_ptr<AndroidNativeRuntime>> runtimes_;
+    std::unordered_map<NativeRuntimeHandle, std::shared_ptr<RuntimeEntry>> runtimes_;
     NativeRuntimeHandle next_handle_ = 1;
 };
 
@@ -2043,6 +2001,7 @@ private:
 
 } // namespace
 
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
 auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string {
     if(fd < 0) {
         return "invalid_fd";
@@ -2115,6 +2074,7 @@ auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::stri
     }
     return "client_auth_not_seen";
 }
+#endif
 
 auto tun_fd_ownership_name(TunFdOwnership ownership) noexcept -> std::string_view {
     switch(ownership) {
@@ -2177,12 +2137,13 @@ auto configure_client_auth(
     );
 }
 
-auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
-    return runtime_registry().run_client_auth_smoke_for_test(handle, tamper_server_accept);
-}
-
 auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
     return runtime_registry().drain_native_events(handle, max_events);
+}
+
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
+auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
+    return runtime_registry().run_client_auth_smoke_for_test(handle, tamper_server_accept);
 }
 
 auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields {
@@ -2206,6 +2167,7 @@ auto captured_fake_carrier_frame_digests_for_test(NativeRuntimeHandle handle) ->
 auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes) -> NativeRuntimeSnapshotFields {
     return runtime_registry().inject_inbound_datagram_for_test(handle, std::move(datagram), fragment_payload_bytes);
 }
+#endif
 
 auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields {
     return NativeRuntimeSnapshotFields{

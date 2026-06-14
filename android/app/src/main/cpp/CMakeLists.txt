@@ -12,6 +12,10 @@ set(FPS_ANDROID_BOOST_DIR "/usr/include/boost" CACHE PATH
 set(FPS_ANDROID_VCPKG_ROOT "/opt/vcpkg" CACHE PATH
   "Path to the vcpkg root used only for Android OpenSSL")
 
+option(FPS_ANDROID_ENABLE_TEST_HOOKS
+  "Build Android debug/instrumented JNI test hook entrypoints"
+  OFF)
+
 if(NOT EXISTS "${FPS_ANDROID_BOOST_DIR}/describe.hpp")
   message(FATAL_ERROR
     "FPS_ANDROID_BOOST_DIR must point to a Boost header directory; "
@@ -121,7 +125,8 @@ target_compile_features(fps_android_native PRIVATE cxx_std_20)
 
 target_compile_definitions(fps_android_native PRIVATE
   BOOST_ERROR_CODE_HEADER_ONLY
-  BOOST_SYSTEM_NO_DEPRECATED)
+  BOOST_SYSTEM_NO_DEPRECATED
+  $<$<BOOL:${FPS_ANDROID_ENABLE_TEST_HOOKS}>:FPS_ANDROID_ENABLE_TEST_HOOKS>)
 
 target_compile_options(fps_android_native PRIVATE
   -Wall

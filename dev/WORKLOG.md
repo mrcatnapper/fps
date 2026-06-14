@@ -2,6 +2,48 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-14
+
+### Android native surface hardening
+
+Goal:
+
+- Reduce Android production native attack surface and lifecycle risk before
+  adding more carrier modes.
+
+Plan:
+
+1. Gate debug/test-only JNI hooks behind an explicit Android native compile
+   definition enabled only for debug/instrumented builds.
+2. Verify release native symbols do not expose test hook entrypoints.
+3. Refactor `AndroidNativeRuntimeRegistry` so registry locks are held only for
+   lookup/erase, not while runtime methods post to Asio, wait on futures or stop
+   threads.
+4. Update Android developer docs and run Android Docker/JVM checks plus local
+   source/script/C++ sanity checks.
+
+Completed:
+
+- Added Android CMake/Gradle gating for `FPS_ANDROID_ENABLE_TEST_HOOKS`.
+  Debug and instrumented builds keep JNI test hooks; release native builds do
+  not export those entrypoints.
+- Extended `tools/run_android_checks.sh` with a release native symbol guard for
+  forbidden debug/test JNI exports.
+- Refactored `AndroidNativeRuntimeRegistry` to keep the global mutex scoped to
+  map lookup/removal. Runtime calls remain serialized by a per-runtime entry
+  mutex outside the registry mutex.
+- Updated Android boundary, app plan, testing and specification docs.
+
+Verification:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host` passed during iteration.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+- `tools/run_android_checks.sh --docker` passed after rebuilding `fps:android-ci` from the Dockerfile.
+
 ## 2026-06-10
 
 ### Android service runner seam hardening

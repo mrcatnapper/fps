@@ -103,8 +103,10 @@ void close_runtime(NativeRuntimeHandle handle);
     std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
 )
     -> NativeRuntimeSnapshotFields;
-[[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields>;
+
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
+[[nodiscard]] auto run_client_auth_smoke_for_test(NativeRuntimeHandle handle, bool tamper_server_accept) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto install_tun_packet_capture_sink_for_test(NativeRuntimeHandle handle, bool reject_packets) -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto captured_tun_packet_digests_for_test(NativeRuntimeHandle handle) -> std::vector<std::string>;
 [[nodiscard]] auto start_fake_carrier_for_test(NativeRuntimeHandle handle, bool reject_frames) -> NativeRuntimeSnapshotFields;
@@ -113,6 +115,8 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto run_zero_rtt_server_peer_for_test(int fd, std::string profile_id, std::string client_uuid, bool tamper_server_accept) -> std::string;
 [[nodiscard]] auto inject_inbound_datagram_for_test(NativeRuntimeHandle handle, std::vector<std::byte> datagram, int fragment_payload_bytes)
     -> NativeRuntimeSnapshotFields;
+#endif
+
 [[nodiscard]] auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFields;
 
 } // namespace fps::android_native

@@ -135,6 +135,11 @@ devices and future Gradle-managed emulators.
   options derived from the validated Android profile, emits metadata-only
   encrypted `tun_lease` events and reports tampered server-accept failure
   without registering a lease.
+- Hardened the Android native production surface. Debug/instrumented JNI hooks
+  are built only with `FPS_ANDROID_ENABLE_TEST_HOOKS`, release native builds are
+  checked for forbidden test exports, and the runtime registry now holds the
+  global mutex only for map lookup/removal. Runtime calls are serialized by a
+  per-runtime entry mutex outside the global registry lock.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -163,12 +168,10 @@ product flow.
      reconnect/backoff, fail-closed branches and observable counters, not
      individual helper arithmetic.
 
-2. **Harden the API surface after the product path exists.**
-   - Gate debug-only JNI hooks out of production variants.
-   - Reduce native runtime registry mutex scope so registry locks are not held
-     while runtime methods post to Asio, wait on futures or stop threads.
-   - Add UI/foreground-service/status work only after the headless path can
-     authenticate, lease, establish TUN and move packets both ways.
+2. **Add the next product surface.**
+   - Raw WSS local cover is the next carrier-mode increment.
+   - UI/foreground-service/status work should follow after at least one raw
+     long-lived cover mode is wired through the same native loopback bridge.
 
 ## Accepted Android Direction
 

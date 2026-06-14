@@ -194,8 +194,9 @@ tools/run_android_checks.sh --host
 
 `tools/run_android_checks.sh --host` runs JVM unit tests, assembles debug and
 release APKs, and assembles the instrumented test APK. It does not require an
-emulator. The release APK smoke keeps debug-only test hooks from becoming an
-accidental production dependency. The JVM tests cover Android client-profile
+emulator. The release APK smoke checks the release native library's exported
+symbols so debug-only JNI test hooks cannot become an accidental production
+dependency. The JVM tests cover Android client-profile
 parsing, fail-closed split-tunnel policy, the headless VPN runtime state machine
 and the headless carrier probe runner with fake platform hooks/transports. They
 also cover profile-driven carrier probe planning,

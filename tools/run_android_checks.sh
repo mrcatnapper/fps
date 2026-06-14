@@ -176,6 +176,40 @@ run_host_checks() {
     :android:app:assembleDebug \
     :android:app:assembleRelease \
     :android:app:assembleDebugAndroidTest
+
+  verify_release_native_surface
+}
+
+verify_release_native_surface() {
+  log "Verify Android release native surface"
+  local nm_cmd
+  if command -v llvm-nm >/dev/null 2>&1; then
+    nm_cmd=(llvm-nm)
+  elif command -v nm >/dev/null 2>&1; then
+    nm_cmd=(nm)
+  else
+    echo "llvm-nm or nm is required to verify Android release native symbols" >&2
+    exit 2
+  fi
+
+  local libs=()
+  while IFS= read -r -d '' lib; do
+    libs+=("$lib")
+  done < <(find "$repo_root/android/app/build/intermediates" -type f -path '*release*' -name libfps_android_native.so -print0 | sort -z)
+
+  if [[ "${#libs[@]}" -eq 0 ]]; then
+    echo "Release libfps_android_native.so was not found under android/app/build/intermediates" >&2
+    exit 1
+  fi
+
+  local forbidden='FpsNativeTestHooks|runClientAuthSmokeForTest|RunZeroRttServerPeerForTest|InjectInboundDatagramForTest|StartFakeCarrierForTest|InstallTunPacketCaptureSinkForTest'
+  local lib
+  for lib in "${libs[@]}"; do
+    if "${nm_cmd[@]}" -D --defined-only "$lib" 2>/dev/null | grep -E "$forbidden" >&2; then
+      echo "Forbidden Android test JNI symbol exported by release library: $lib" >&2
+      exit 1
+    fi
+  done
 }
 
 run_connected_checks() {

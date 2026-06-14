@@ -712,14 +712,15 @@ Linux-specific runtime is separate:
   back to the native-owned duplicated TUN fd with metadata-only counters.
   Instrumented debug tests can attach fake carriers and inject inbound
   datagrams to prove these seams use shared core paths rather than
-  Android-specific packet handling. The native runtime also has a protected raw
-  TLS/TCP bridge: after native opens and Kotlin protects the outbound socket,
-  native binds a loopback listener, accepts the app-owned cover side and starts
-  a shared `TlsTcpCarrierSession` over both sockets with real client-side
-  Zero-RTT and encrypted lease delivery. The production service now starts this
-  path through a coordinated runner with bounded retry/backoff and a raw HTTPS
-  local cover client. Android still lacks UI/foreground-service polish and raw
-  WSS cover mode.
+  Android-specific packet handling; those JNI hooks are not exported by release
+  native builds. The native runtime also has a protected raw TLS/TCP bridge:
+  after native opens and Kotlin protects the outbound socket, native binds a
+  loopback listener, accepts the app-owned cover side and starts a shared
+  `TlsTcpCarrierSession` over both sockets with real client-side Zero-RTT and
+  encrypted lease delivery. The production service now starts this path through
+  a coordinated runner with bounded retry/backoff and a raw HTTPS local cover
+  client. Android still lacks UI/foreground-service polish and raw WSS cover
+  mode.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

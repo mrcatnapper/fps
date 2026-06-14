@@ -28,8 +28,8 @@ documentation.
   Gradle checks inside it.
 - `tools/run_android_checks.sh --host` runs JVM tests plus debug APK, release
   APK and instrumented-test APK assembly. It requires an Android SDK but no
-  emulator. The release APK smoke guards the production variant after
-  debug-only test hooks are added.
+  emulator. The release APK smoke verifies that debug-only native test hooks do
+  not become production JNI exports.
 - `tools/run_android_checks.sh --connected` runs the current instrumented native
   smoke on an already attached Android device or emulator.
 - `tools/run_android_checks.sh --docker-managed-device` can now reuse existing
