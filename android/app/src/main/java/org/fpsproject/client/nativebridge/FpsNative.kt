@@ -2,6 +2,8 @@ package org.fpsproject.client.nativebridge
 
 import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.config.AndroidClientProfile
+import org.fpsproject.client.config.AndroidShaperProfile
+import org.fpsproject.client.config.CdfPointProfile
 import org.fpsproject.client.policy.SplitTunnelDecision
 import org.fpsproject.client.runtime.EstablishedTun
 import org.fpsproject.client.runtime.TunLease
@@ -85,6 +87,8 @@ data class NativeRuntimeSnapshot(
     val carrierAuthSucceeded: Long = 0,
     val carrierAuthFailed: Long = 0,
     val carrierLeaseReceived: Long = 0,
+    val shaperConfigured: Boolean = false,
+    val shaperProfileId: String? = null,
     val lastError: String?,
 )
 
@@ -130,6 +134,32 @@ interface FpsNativeBackend {
         maxFramePadding: Int,
     ): NativeRuntimeSnapshot
 
+    fun configureClientShaper(
+        handle: Long,
+        profileId: String,
+        recordSizeC2sLe: LongArray,
+        recordSizeC2sP: DoubleArray,
+        recordSizeS2cLe: LongArray,
+        recordSizeS2cP: DoubleArray,
+        delayC2sLe: LongArray,
+        delayC2sP: DoubleArray,
+        delayS2cLe: LongArray,
+        delayS2cP: DoubleArray,
+        covertRatioMax: Double,
+        burstRecordsMax: Int,
+        jitterMinMs: Long,
+        jitterMaxMs: Long,
+        adaptiveEnabled: Boolean,
+        adaptiveMinRecords: Int,
+        adaptiveMinObservationMs: Long,
+        adaptiveDecay: Double,
+        adaptiveSnapshotIntervalMs: Long,
+        deterministicSeedPresent: Boolean,
+        deterministicSeed: Long,
+    ): NativeRuntimeSnapshot {
+        return runtimeSnapshot(handle)
+    }
+
     fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
 
     fun drainNativeEvents(handle: Long, maxEvents: Int): List<NativeRuntimeEvent>
@@ -166,7 +196,45 @@ class FpsNativeRuntime private constructor(
                 backend.closeRuntime(handle)
                 throw IllegalArgumentException(configured.lastError ?: "native auth configuration failed")
             }
+            val shaper = profile.shaper
+            if (shaper != null) {
+                val shaperConfigured = configureNativeShaper(handle, shaper, backend)
+                if (!shaperConfigured.alive || !shaperConfigured.shaperConfigured) {
+                    backend.closeRuntime(handle)
+                    throw IllegalArgumentException(shaperConfigured.lastError ?: "native shaper configuration failed")
+                }
+            }
             return FpsNativeRuntime(handle, backend)
+        }
+
+        private fun configureNativeShaper(
+            handle: Long,
+            shaper: AndroidShaperProfile,
+            backend: FpsNativeBackend,
+        ): NativeRuntimeSnapshot {
+            return backend.configureClientShaper(
+                handle = handle,
+                profileId = shaper.profileId,
+                recordSizeC2sLe = shaper.clientToServer.recordSizeCdf.leArray(),
+                recordSizeC2sP = shaper.clientToServer.recordSizeCdf.pArray(),
+                recordSizeS2cLe = shaper.serverToClient.recordSizeCdf.leArray(),
+                recordSizeS2cP = shaper.serverToClient.recordSizeCdf.pArray(),
+                delayC2sLe = shaper.clientToServer.interRecordDelayUsCdf.leArray(),
+                delayC2sP = shaper.clientToServer.interRecordDelayUsCdf.pArray(),
+                delayS2cLe = shaper.serverToClient.interRecordDelayUsCdf.leArray(),
+                delayS2cP = shaper.serverToClient.interRecordDelayUsCdf.pArray(),
+                covertRatioMax = shaper.covertRatioMax,
+                burstRecordsMax = shaper.burstRecordsMax,
+                jitterMinMs = shaper.jitterMinMs,
+                jitterMaxMs = shaper.jitterMaxMs,
+                adaptiveEnabled = shaper.adaptive.enabled,
+                adaptiveMinRecords = shaper.adaptive.minRecords,
+                adaptiveMinObservationMs = shaper.adaptive.minObservationMs,
+                adaptiveDecay = shaper.adaptive.decay,
+                adaptiveSnapshotIntervalMs = shaper.adaptive.snapshotIntervalMs,
+                deterministicSeedPresent = shaper.deterministicSeed != null,
+                deterministicSeed = shaper.deterministicSeed ?: 0L,
+            )
         }
     }
 
@@ -200,6 +268,8 @@ class FpsNativeRuntime private constructor(
                 tunCovertEnqueueRejected = 0,
                 commandsPosted = 0,
                 commandsCompleted = 0,
+                shaperConfigured = false,
+                shaperProfileId = null,
                 lastError = "runtime_closed",
             )
         }
@@ -390,6 +460,30 @@ object FpsNative : FpsNativeBackend {
         maxFramePadding: Int,
     ): NativeRuntimeSnapshot
 
+    external override fun configureClientShaper(
+        handle: Long,
+        profileId: String,
+        recordSizeC2sLe: LongArray,
+        recordSizeC2sP: DoubleArray,
+        recordSizeS2cLe: LongArray,
+        recordSizeS2cP: DoubleArray,
+        delayC2sLe: LongArray,
+        delayC2sP: DoubleArray,
+        delayS2cLe: LongArray,
+        delayS2cP: DoubleArray,
+        covertRatioMax: Double,
+        burstRecordsMax: Int,
+        jitterMinMs: Long,
+        jitterMaxMs: Long,
+        adaptiveEnabled: Boolean,
+        adaptiveMinRecords: Int,
+        adaptiveMinObservationMs: Long,
+        adaptiveDecay: Double,
+        adaptiveSnapshotIntervalMs: Long,
+        deterministicSeedPresent: Boolean,
+        deterministicSeed: Long,
+    ): NativeRuntimeSnapshot
+
     external override fun runClientAuthSmokeForTest(handle: Long, tamperServerAccept: Boolean): NativeRuntimeSnapshot
 
     external fun nativeDrainNativeEvents(handle: Long, maxEvents: Int): Array<NativeRuntimeEvent>
@@ -399,3 +493,7 @@ object FpsNative : FpsNativeBackend {
     }
 
 }
+
+private fun List<CdfPointProfile>.leArray(): LongArray = LongArray(size) { this[it].le }
+
+private fun List<CdfPointProfile>.pArray(): DoubleArray = DoubleArray(size) { this[it].p }

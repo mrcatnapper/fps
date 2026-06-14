@@ -4,6 +4,146 @@
 
 ## 2026-06-14
 
+### Android managed-device product-flow smoke
+
+Goal:
+
+- Extend the Docker-managed emulator lane from isolated native/VpnService smoke
+  to the smallest service-owned product-flow validation that needs Android
+  framework behavior.
+
+Decisions:
+
+- Keep the first internal Android carrier path HTTPS-only; do not add WSS or
+  external-carrier machinery in this increment.
+- Use a debug-only synthetic TLS Application Data local cover starter for the
+  emulator product-flow smoke. The test exercises the production coordinator,
+  protected raw socket, native TLS/TCP bridge, Zero-RTT auth, encrypted lease,
+  real `VpnService` fd attach and native pump startup without depending on an
+  external TLS origin.
+- Treat IP-literal endpoint resolution as a production platform-hook concern:
+  numeric IPs should bypass Android underlying-network DNS and use
+  `InetAddress.getAllByName` directly.
+
+Completed:
+
+- Added a debug harness action for a service-owned coordinated product flow.
+- Added managed-device coverage that starts a local FPS server peer, requests
+  VPN permission, runs the coordinator to `RUNNING`, verifies encrypted lease
+  delivery and confirms real TUN fd/native pump startup.
+- Fixed `VpnServicePlatformHooks.resolveOnUnderlyingNetwork` for IP-literal
+  hosts such as `127.0.0.1`; the first red managed-device run failed with
+  `server_resolve_failed` before this fix.
+- Added a cheap JVM guard for Android IP-literal detection so the loopback
+  regression is caught before the managed-device lane.
+- Updated Android planning/testing docs, beta status and roadmap.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed after the implementation and
+  again after the final debug starter cleanup and IP-literal JVM guard.
+- First `tools/run_android_checks.sh --docker-managed-device` failed as
+  expected on the new product-flow test before the IP-literal resolution fix.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` passed twice,
+  28/28 managed-device tests, then passed again after the IP-literal JVM guard.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- A concurrent full `ctest` run failed once with `Address already in use`
+  because it overlapped the local CTest run; rerunning full CTest alone passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android static shaper profile UX
+
+Goal:
+
+- Let Android client profiles carry a self-contained static shaper profile
+  using the same compact inline CDF JSON shape as Linux configs.
+- Keep file expansion and Boost.JSON config parsing out of the Android
+  boundary.
+
+Decisions:
+
+- Android supports only inline `shaper` objects and rejects
+  `shaper.profile_file`.
+- Kotlin validates the profile shape with Android's JSON runtime, then passes
+  primitive CDF arrays through JNI.
+- Native Android runtime constructs the existing platform-neutral
+  `fps::Shaper`, stores it as shared runtime state and attaches it to raw
+  `TlsTcpCarrierSession` instances.
+- Snapshots expose only non-secret shaper metadata: configured flag and
+  profile id.
+
+Completed:
+
+- Added Android profile model/parser support for `shaper.profile_id`,
+  record-size CDFs, inter-record-delay CDFs, covert ratio, burst limit, jitter,
+  adaptive settings and deterministic seed.
+- Added JNI/native `configureClientShaper` and runtime shaper state.
+- Wired raw Android TLS/TCP carrier sessions to the configured shared shaper.
+- Added JVM parser and fake-backend tests plus an instrumented native smoke for
+  valid/invalid native shaper configuration.
+- Updated Android/spec/testing/client-profile/beta/roadmap docs.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `tools/run_android_checks.sh --docker-managed-device` passed, 27/27 managed
+  device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
+### Android HTTPS cover hardening
+
+Goal:
+
+- Harden the first Android app-owned internal carrier path without adding a
+  second internal carrier protocol.
+
+Decisions:
+
+- Keep raw HTTPS GET through the native loopback bridge as the first Android
+  product carrier path.
+- Keep WSS as probe-support/future external-carrier material, not an internal
+  wire carrier for the first Android beta.
+- Add one Android profile guard, `carriers[].max_response_bytes`, to bound
+  response draining and fail the carrier with metadata-only errors on malformed
+  or oversized responses.
+
+Completed:
+
+- Added `CarrierProbeProfile.maxResponseBytes` with a 1 MiB default and Android
+  profile parsing/validation for `max_response_bytes`.
+- Changed `RawHttpsLocalCoverClient` to pass the response budget into every
+  keep-alive GET.
+- Hardened HTTP draining for `Content-Length`, chunked bodies, `204`/`304`
+  empty-body statuses, malformed content length and chunk CRLF validation.
+- Mapped startup socket timeouts to `cover_timeout` and kept all reported
+  failures metadata-only.
+- Made cover-client `close()` interrupt and briefly join the worker thread
+  without joining itself.
+- Added JVM tests for parser defaults/validation, oversized responses, chunked
+  responses and close-before-next-keepalive.
+- Updated Android planning/testing docs and public profile/spec/beta notes.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `tools/run_android_checks.sh --docker-managed-device` reused
+  `fps:android-emulator-ci` and passed, 26/26 managed-device tests.
+- `git diff --check` passed.
+
 ### Android Docker image reuse policy correction
 
 Goal:

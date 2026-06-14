@@ -85,6 +85,63 @@ class RawHttpsLocalCoverClientTest {
     }
 
     @Test
+    fun oversizedContentLengthFailureReturnsMetadataError() {
+        val fixture = newHttpsServer("carrier.example.test")
+        fixture.enqueue(MockResponse.Builder().code(200).body("too-large").build())
+        val bridge = newBridge(fixture.port)
+        val starter = RawHttpsLocalCoverClientStarter(
+            sslSocketFactory = fixture.clientCertificates.sslSocketFactory(),
+            socketTimeoutMs = 2000,
+        )
+
+        val result = starter.start(bridge.port, httpsPlan(path = "/ping", maxResponseBytes = 4))
+
+        assertNull(result.handle)
+        assertEquals("cover_http_failed", result.error)
+    }
+
+    @Test
+    fun chunkedResponseWithinLimitKeepsCarrierAlive() {
+        val fixture = newHttpsServer("carrier.example.test")
+        fixture.enqueue(MockResponse.Builder().code(200).chunkedBody("hello", 2).build())
+        fixture.enqueue(MockResponse.Builder().code(204).build())
+        val bridge = newBridge(fixture.port)
+        val starter = RawHttpsLocalCoverClientStarter(
+            sslSocketFactory = fixture.clientCertificates.sslSocketFactory(),
+            socketTimeoutMs = 2000,
+        )
+
+        val result = starter.start(bridge.port, httpsPlan(path = "/ping", intervalMs = 50, maxResponseBytes = 16))
+
+        assertNull(result.error)
+        assertNotNull(result.handle)
+        assertNotNull(fixture.takeRequest(2, TimeUnit.SECONDS))
+        assertNotNull(fixture.takeRequest(2, TimeUnit.SECONDS))
+
+        result.handle!!.close()
+    }
+
+    @Test
+    fun closeStopsKeepAliveLoopBeforeNextRequest() {
+        val fixture = newHttpsServer("carrier.example.test")
+        fixture.enqueue(MockResponse.Builder().code(204).build())
+        fixture.enqueue(MockResponse.Builder().code(204).build())
+        val bridge = newBridge(fixture.port)
+        val starter = RawHttpsLocalCoverClientStarter(
+            sslSocketFactory = fixture.clientCertificates.sslSocketFactory(),
+            socketTimeoutMs = 2000,
+        )
+
+        val result = starter.start(bridge.port, httpsPlan(path = "/ping", intervalMs = 1000))
+        assertNull(result.error)
+        assertNotNull(fixture.takeRequest(2, TimeUnit.SECONDS))
+
+        result.handle!!.close()
+
+        assertNull(fixture.takeRequest(250, TimeUnit.MILLISECONDS))
+    }
+
+    @Test
     fun tlsFailureReturnsMetadataError() {
         val fixture = newHttpsServer("carrier.example.test")
         fixture.enqueue(MockResponse.Builder().code(204).build())
@@ -121,7 +178,7 @@ class RawHttpsLocalCoverClientTest {
         return bridge
     }
 
-    private fun httpsPlan(path: String, intervalMs: Long = 1000): CarrierProbeRuntimePlan {
+    private fun httpsPlan(path: String, intervalMs: Long = 1000, maxResponseBytes: Int = 1024 * 1024): CarrierProbeRuntimePlan {
         return CarrierProbeRuntimePlan(
             id = 0,
             probe = CarrierProbeProfile(
@@ -129,6 +186,7 @@ class RawHttpsLocalCoverClientTest {
                 endpoint = Endpoint("carrier.example.test", 443),
                 path = path,
                 intervalMs = intervalMs,
+                maxResponseBytes = maxResponseBytes,
             ),
         )
     }

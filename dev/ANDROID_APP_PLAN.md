@@ -25,9 +25,11 @@ when Android test infrastructure or emulator strategy changes.
   lifecycle. The current service-owned runner drives native carrier auth,
   encrypted lease delivery, TUN establishment, split-tunnel policy and
   bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
-  a minimal foreground/status surface. The next product gaps are HTTPS cover
-  hardening, static shaper-profile UX and later external-carrier design, not
-  another internal carrier protocol.
+  a minimal foreground/status surface. HTTPS cover hardening, static
+  shaper-profile UX and the first managed-device product-flow validation are
+  implemented; the next product gaps are profile persistence/manual UX,
+  real-device validation and later external-carrier design, not another
+  internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -38,10 +40,10 @@ Delivered:
 - Parsing accepts only client-side fields needed by the Android runtime:
   `network.server`, `security.zero_rtt.client_uuid`,
   `security.zero_rtt.server_public_key_base64`, optional codec, TUN, ops,
-  carrier probe and split-tunnel metadata.
+  carrier probe, split-tunnel and inline shaper metadata.
 - Parsing rejects server-only secret/runtime fields such as
   `server_private_key_base64`, `allowed_client_uuids`, `tun.lease_pool`,
-  `tun.server_address` and `tun.lease_file`.
+  `tun.server_address`, `tun.lease_file` and file-based `shaper.profile_file`.
 - Parsing uses Android's `org.json` API. Headless JVM tests provide the same API
   through a test-only `org.json:json` dependency; do not maintain a project-local
   JSON parser for this boundary.
@@ -104,6 +106,20 @@ Delivered:
   through `TlsTcpCarrierSession` with real client-side Zero-RTT options. Managed
   emulator coverage verifies successful encrypted lease delivery and tampered
   server-accept failure on this bridge.
+- Android profiles can now include the same compact inline static shaper CDF
+  object as Linux configs. Kotlin parses and validates the JSON shape with
+  Android's `org.json`, passes primitive CDF arrays through JNI, and native
+  constructs the shared platform-neutral `fps::Shaper`. Android deliberately
+  does not support `shaper.profile_file`; mobile profile import stays
+  self-contained.
+- The Docker-managed emulator lane now includes a debug-only product-flow smoke
+  around the production coordinator shape. It starts a real Android
+  `VpnService`, protects a raw carrier socket, runs the native TLS/TCP bridge,
+  completes client-side Zero-RTT against a local test FPS server peer, receives
+  an encrypted TUN lease, establishes a real TUN fd, attaches it to native and
+  starts the native pump. The local cover side uses synthetic TLS Application
+  Data records so the test remains deterministic and does not require an
+  external origin.
 - `HeadlessNativeVpnRuntime` now has the first product-shaped coordinator
   surface. It starts the native executor, resolves the FPS server through the
   underlying-network hook, prepares/protects/connects the raw carrier socket,
@@ -160,15 +176,29 @@ Completed product step:
 - **Foreground service and status UX.**
   The smallest user-visible daemon surface exists: foreground notification,
   start/stop/status runtime seam and non-secret error reporting.
+- **HTTPS cover hardening.**
+  The raw HTTPS local cover client now bounds response draining through
+  `max_response_bytes`, handles ordinary `Content-Length`/chunked/empty
+  responses, reports metadata-only failures and stops its keep-alive worker
+  cleanly on close.
+- **Managed-device product-flow smoke.**
+  The Docker-managed emulator lane validates the service-owned coordinator
+  through protected raw socket connect, native bridge auth, encrypted lease,
+  real `VpnService` fd attach and native pump startup.
 
 Remaining tactical implementation order:
 
-1. **HTTPS cover hardening and shaper profile UX.**
-   Keep the first app-owned internal carrier as raw HTTPS GET through the
-   native loopback bridge. Add only the profile/config pieces needed to make
-   static shaper CDF use practical on Android.
+1. **Profile persistence and manual UX.**
+   Add the smallest practical profile storage/import surface and manual test
+   flow so the current headless service path can be exercised like a user-facing
+   client.
 
-2. **External carrier design.**
+2. **Real-device release validation.**
+   Run the same HTTPS-only product path on at least one physical device to
+   catch vendor VPN, background-service, network-switching and battery-policy
+   differences that managed devices cannot model.
+
+3. **External carrier design.**
    After the HTTPS path is stable, design external carrier support explicitly
    instead of adding raw WSS as a second internal carrier. That design must
    revisit DNS mapping, VPN-loop prevention and Android per-app routing.
@@ -177,9 +207,9 @@ Testing expectation:
 
 - JVM tests validate coordinator sequencing, retry/backoff, service-runner
   lifecycle and fail-closed branches with fake platform/native backends.
-- Managed-device tests should validate the smallest production-shaped flow that
-  needs real Android framework behavior: protected fd, real `VpnService` fd and
-  native bridge/auth/TUN wiring.
+- Managed-device tests validate Android framework behavior: protected fd, real
+  `VpnService` fd and native bridge/auth/TUN wiring. Keep them deterministic and
+  local; use real-device/manual checks for vendor-specific behavior.
 - Do not add more "2 + 2" tests around already-stable helpers unless they
   protect a newly integrated product contract.
 

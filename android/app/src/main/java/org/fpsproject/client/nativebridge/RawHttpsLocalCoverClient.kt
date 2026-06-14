@@ -43,6 +43,8 @@ class RawHttpsLocalCoverClientStarter(
             LocalCoverClientStartResult.failed("cover_tls_failed")
         } catch (_: HttpCoverException) {
             LocalCoverClientStartResult.failed("cover_http_failed")
+        } catch (_: SocketTimeoutException) {
+            LocalCoverClientStartResult.failed("cover_timeout")
         } catch (_: IOException) {
             LocalCoverClientStartResult.failed("cover_io_failed")
         } catch (_: RuntimeException) {
@@ -71,7 +73,7 @@ private class RawHttpsLocalCoverClient(
         running = true
         val connected = connect()
         socket = connected
-        performGet(connected, carrierPlan.probe.endpoint, carrierPlan.probe.path)
+        performGet(connected, carrierPlan.probe.endpoint, carrierPlan.probe.path, carrierPlan.probe.maxResponseBytes)
         worker = thread(start = true, name = "fps-android-raw-https-cover-${carrierPlan.id}", isDaemon = true) {
             runLoop()
         }
@@ -80,7 +82,15 @@ private class RawHttpsLocalCoverClient(
     override fun close() {
         running = false
         socket?.closeQuietly()
-        worker?.interrupt()
+        val activeWorker = worker
+        activeWorker?.interrupt()
+        if (activeWorker != null && activeWorker != Thread.currentThread()) {
+            try {
+                activeWorker.join(250)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
         worker = null
         socket = null
     }
@@ -91,9 +101,12 @@ private class RawHttpsLocalCoverClient(
                 Thread.sleep(carrierPlan.probe.intervalMs)
                 val active = socket ?: return
                 if (running) {
-                    performGet(active, carrierPlan.probe.endpoint, carrierPlan.probe.path)
+                    performGet(active, carrierPlan.probe.endpoint, carrierPlan.probe.path, carrierPlan.probe.maxResponseBytes)
                 }
             } catch (_: InterruptedException) {
+                return
+            } catch (_: SocketTimeoutException) {
+                close()
                 return
             } catch (_: IOException) {
                 close()
@@ -119,7 +132,7 @@ private class RawHttpsLocalCoverClient(
 
 private class HttpCoverException : IOException()
 
-private fun performGet(socket: SSLSocket, endpoint: Endpoint, path: String) {
+private fun performGet(socket: SSLSocket, endpoint: Endpoint, path: String, maxResponseBytes: Int) {
     val output = socket.outputStream
     val request = "GET $path HTTP/1.1\r\n" +
         "Host: ${hostHeader(endpoint)}\r\n" +
@@ -136,7 +149,7 @@ private fun performGet(socket: SSLSocket, endpoint: Endpoint, path: String) {
     if (status !in 200..399) {
         throw HttpCoverException()
     }
-    drainBody(headers, input = { input.read() })
+    drainBody(status, headers, maxResponseBytes, input = { input.read() })
 }
 
 private fun hostHeader(endpoint: Endpoint): String {
@@ -171,18 +184,24 @@ private fun parseStatus(headers: String): Int? {
     return parts.getOrNull(1)?.toIntOrNull()
 }
 
-private fun drainBody(headers: String, input: () -> Int) {
-    val length = headerValue(headers, "content-length")?.toIntOrNull()
+private fun drainBody(status: Int, headers: String, maxResponseBytes: Int, input: () -> Int) {
+    if (status == 204 || status == 304) {
+        return
+    }
+    val lengthHeader = headerValue(headers, "content-length")
+    val length = lengthHeader?.toIntOrNull()
+    if (lengthHeader != null && length == null) {
+        throw HttpCoverException()
+    }
     if (length != null) {
-        repeat(length) {
-            if (input() < 0) {
-                throw IOException("cover_http_body_eof")
-            }
+        if (length < 0 || length > maxResponseBytes) {
+            throw HttpCoverException()
         }
+        drainExact(length, input, "cover_http_body_eof")
         return
     }
     if (headerValue(headers, "transfer-encoding")?.lowercase()?.contains("chunked") == true) {
-        drainChunked(input)
+        drainChunked(maxResponseBytes, input)
     }
 }
 
@@ -194,7 +213,8 @@ private fun headerValue(headers: String, name: String): String? {
         ?.trim()
 }
 
-private fun drainChunked(input: () -> Int) {
+private fun drainChunked(maxResponseBytes: Int, input: () -> Int) {
+    var drained = 0
     while (true) {
         val sizeLine = readLine(input)
         val size = sizeLine.substringBefore(';').trim().toIntOrNull(16) ?: throw HttpCoverException()
@@ -202,11 +222,12 @@ private fun drainChunked(input: () -> Int) {
             drainTrailerLines(input)
             return
         }
-        repeat(size + 2) {
-            if (input() < 0) {
-                throw IOException("cover_http_chunk_eof")
-            }
+        if (size < 0 || size > maxResponseBytes - drained) {
+            throw HttpCoverException()
         }
+        drainExact(size, input, "cover_http_chunk_eof")
+        drained += size
+        readCrlf(input, "cover_http_chunk_eof")
     }
 }
 
@@ -232,6 +253,25 @@ private fun readLine(input: () -> Int): String {
         previous = byte
     }
     throw IOException("cover_http_line_too_large")
+}
+
+private fun drainExact(size: Int, input: () -> Int, eofError: String) {
+    repeat(size) {
+        if (input() < 0) {
+            throw IOException(eofError)
+        }
+    }
+}
+
+private fun readCrlf(input: () -> Int, eofError: String) {
+    val first = input()
+    val second = input()
+    if (first < 0 || second < 0) {
+        throw IOException(eofError)
+    }
+    if (first != '\r'.code || second != '\n'.code) {
+        throw HttpCoverException()
+    }
 }
 
 private fun Socket.closeQuietly() {

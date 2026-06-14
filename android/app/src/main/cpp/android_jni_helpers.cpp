@@ -206,7 +206,7 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         return nullptr;
     }
     auto* constructor = env->GetMethodID(
-        snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZZIZJJJZJJJJLjava/lang/String;)V"
+        snapshot_class.get(), "<init>", "(ZZZZZIILjava/lang/String;JJJJJJJLjava/lang/String;JJJJJJJJJJJJJJJJIZZZIZJJJZJJJJZLjava/lang/String;Ljava/lang/String;)V"
     );
     if(constructor == nullptr) {
         return nullptr;
@@ -223,6 +223,10 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
     }
     auto tun_drop_reason_string = new_optional_string(env, snapshot.tun_last_drop_reason);
     if(!snapshot.tun_last_drop_reason.empty() && tun_drop_reason_string.get() == nullptr) {
+        return nullptr;
+    }
+    auto shaper_profile_id_string = new_optional_string(env, snapshot.shaper_profile_id);
+    if(!snapshot.shaper_profile_id.empty() && shaper_profile_id_string.get() == nullptr) {
         return nullptr;
     }
 
@@ -245,7 +249,8 @@ auto runtime_snapshot_object(JNIEnv* env, const fps::android_native::NativeRunti
         static_cast<jlong>(snapshot.raw_carrier_connect_attempted), static_cast<jlong>(snapshot.raw_carrier_connect_succeeded),
         static_cast<jlong>(snapshot.raw_carrier_connect_failed), static_cast<jboolean>(snapshot.carrier_auth_configured),
         static_cast<jlong>(snapshot.carrier_auth_attempted), static_cast<jlong>(snapshot.carrier_auth_succeeded),
-        static_cast<jlong>(snapshot.carrier_auth_failed), static_cast<jlong>(snapshot.carrier_lease_received), error_string.get()
+        static_cast<jlong>(snapshot.carrier_auth_failed), static_cast<jlong>(snapshot.carrier_lease_received),
+        static_cast<jboolean>(snapshot.shaper_configured), shaper_profile_id_string.get(), error_string.get()
     );
 }
 

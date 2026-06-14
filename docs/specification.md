@@ -525,6 +525,13 @@ Optional shaper adaptive fields live under `shaper.adaptive`:
 }
 ```
 
+Android client profiles use the same inline `shaper` object and compact CDF
+arrays when static shaping is configured. Android intentionally rejects
+`shaper.profile_file`: generated/imported mobile profiles must remain
+self-contained. Kotlin validates the JSON shape with Android's JSON runtime,
+then passes primitive CDF arrays through JNI; native code constructs the shared
+platform-neutral `Shaper` and attaches it to `TlsTcpCarrierSession`.
+
 `network.tcp_no_delay` defaults to `true` and is applied to both accepted and
 outbound FPS relay TCP sockets. This disables Nagle on the FPS link so shaped
 classified TLS records are not delayed or coalesced by an implicit TCP policy.
@@ -719,9 +726,14 @@ Linux-specific runtime is separate:
   `TlsTcpCarrierSession` over both sockets with real client-side Zero-RTT and
   encrypted lease delivery. The production service now starts this path through
   a coordinated runner with bounded retry/backoff and a raw HTTPS local cover
-  client. Android keeps WSS as probe-support/future external-carrier material;
-  first versions intentionally do not add a raw WSS internal carrier. Android
-  still lacks full UI polish beyond the minimal foreground/status surface.
+  client. That HTTPS client bounds per-response draining with
+  `max_response_bytes` profile metadata so unexpected origin responses fail the
+  carrier instead of hanging or consuming unbounded data. Android keeps WSS as
+  probe-support/future external-carrier material; first versions intentionally
+  do not add a raw WSS internal carrier. Inline static shaper profiles are
+  parsed by Kotlin, passed as primitive CDF arrays through JNI and installed as
+  the shared native `Shaper` for raw TLS/TCP carrier sessions. Android still
+  lacks full UI polish beyond the minimal foreground/status surface.
 - TUN adapters can install an outbound packet policy hook before covert
   enqueue. The hook receives raw packet bytes plus a best-effort parsed IPv4
   TCP/UDP 5-tuple (`protocol`, source/destination IPv4 and ports). Android

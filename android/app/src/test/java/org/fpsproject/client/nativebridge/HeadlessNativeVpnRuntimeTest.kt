@@ -825,6 +825,8 @@ private fun coordinatorSnapshot(
     carrierAuthSucceeded: Long = 0,
     carrierAuthFailed: Long = 0,
     carrierLeaseReceived: Long = 0,
+    shaperConfigured: Boolean = false,
+    shaperProfileId: String? = null,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -867,6 +869,8 @@ private fun coordinatorSnapshot(
     carrierAuthSucceeded = carrierAuthSucceeded,
     carrierAuthFailed = carrierAuthFailed,
     carrierLeaseReceived = carrierLeaseReceived,
+    shaperConfigured = shaperConfigured,
+    shaperProfileId = shaperProfileId,
     lastError = lastError,
 )
 

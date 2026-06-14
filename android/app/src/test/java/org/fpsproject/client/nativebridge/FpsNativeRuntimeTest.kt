@@ -29,6 +29,40 @@ class FpsNativeRuntimeTest {
           "tun": {"enabled": true, "mtu": 1280}
         }
     """.trimIndent()
+    private val profileJsonWithShaper = """
+        {
+          "network": {"server": "fps.example.test:443"},
+          "security": {
+            "zero_rtt": {
+              "enabled": true,
+              "profile_id": "android-test-v5",
+              "client_uuid": "$uuid",
+              "server_public_key_base64": "$key"
+            }
+          },
+          "codec": {"max_frame_payload": 1280, "max_frame_padding": 64},
+          "tun": {"enabled": true, "mtu": 1280},
+          "shaper": {
+            "enabled": true,
+            "profile_id": "android-shaper-test",
+            "record_size_cdf_c2s": [[512, 0.5], [1500, 1.0]],
+            "record_size_cdf_s2c": [[640, 0.25], [1510, 1.0]],
+            "inter_record_delay_us_cdf_c2s": [[1000, 0.7], [10000, 1.0]],
+            "inter_record_delay_us_cdf_s2c": [[2000, 0.5], [15000, 1.0]],
+            "covert_ratio_max": 0.25,
+            "burst_records_max": 2,
+            "jitter_ms": {"min": 1, "max": 3},
+            "adaptive": {
+              "enabled": false,
+              "min_records": 4,
+              "min_observation_ms": 500,
+              "decay": 0.75,
+              "snapshot_interval_ms": 1000
+            },
+            "deterministic_seed": 42
+          }
+        }
+    """.trimIndent()
 
     @Test
     fun createValidatesProfileBeforeNativeHandleCreation() {
@@ -93,6 +127,54 @@ class FpsNativeRuntimeTest {
         assertEquals("invalid_client_auth_config", error.message)
         assertEquals(1, backend.createdProfiles.size)
         assertEquals(listOf(RuntimeAuthConfigCall(1L, "android-test-v5", uuid, key, 2000, 666, 16 * 1024, 2048)), backend.configuredAuth)
+        assertEquals(listOf(1L), backend.closedHandles)
+    }
+
+    @Test
+    fun createConfiguresInlineShaperProfile() {
+        val backend = FakeNativeBackend()
+        val runtime = FpsNativeRuntime.create(profileJsonWithShaper, backend)
+        val snapshot = runtime.snapshot()
+
+        assertTrue(snapshot.shaperConfigured)
+        assertEquals("android-shaper-test", snapshot.shaperProfileId)
+        assertEquals(1, backend.configuredShapers.size)
+        val configured = backend.configuredShapers.single()
+        assertEquals("android-shaper-test", configured.profileId)
+        assertEquals(listOf(512L, 1500L), configured.recordSizeC2sLe)
+        assertEquals(listOf(0.5, 1.0), configured.recordSizeC2sP)
+        assertEquals(listOf(640L, 1510L), configured.recordSizeS2cLe)
+        assertEquals(listOf(0.25, 1.0), configured.recordSizeS2cP)
+        assertEquals(listOf(1000L, 10000L), configured.delayC2sLe)
+        assertEquals(listOf(0.7, 1.0), configured.delayC2sP)
+        assertEquals(listOf(2000L, 15000L), configured.delayS2cLe)
+        assertEquals(listOf(0.5, 1.0), configured.delayS2cP)
+        assertEquals(0.25, configured.covertRatioMax, 0.0)
+        assertEquals(2, configured.burstRecordsMax)
+        assertEquals(1L, configured.jitterMinMs)
+        assertEquals(3L, configured.jitterMaxMs)
+        assertFalse(configured.adaptiveEnabled)
+        assertEquals(4, configured.adaptiveMinRecords)
+        assertEquals(500L, configured.adaptiveMinObservationMs)
+        assertEquals(0.75, configured.adaptiveDecay, 0.0)
+        assertEquals(1000L, configured.adaptiveSnapshotIntervalMs)
+        assertTrue(configured.deterministicSeedPresent)
+        assertEquals(42L, configured.deterministicSeed)
+        assertFalse(snapshot.toString().contains(uuid))
+        assertFalse(snapshot.toString().contains(key))
+    }
+
+    @Test
+    fun createClosesNativeHandleWhenShaperConfigurationFails() {
+        val backend = FakeNativeBackend(shaperConfigureError = "invalid_shaper_profile")
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            FpsNativeRuntime.create(profileJsonWithShaper, backend)
+        }
+
+        assertEquals("invalid_shaper_profile", error.message)
+        assertEquals(1, backend.configuredAuth.size)
+        assertEquals(1, backend.configuredShapers.size)
         assertEquals(listOf(1L), backend.closedHandles)
     }
 
@@ -448,6 +530,30 @@ private data class RuntimeAuthConfigCall(
     val maxFramePadding: Int,
 )
 
+private data class RuntimeShaperConfigCall(
+    val handle: Long,
+    val profileId: String,
+    val recordSizeC2sLe: List<Long>,
+    val recordSizeC2sP: List<Double>,
+    val recordSizeS2cLe: List<Long>,
+    val recordSizeS2cP: List<Double>,
+    val delayC2sLe: List<Long>,
+    val delayC2sP: List<Double>,
+    val delayS2cLe: List<Long>,
+    val delayS2cP: List<Double>,
+    val covertRatioMax: Double,
+    val burstRecordsMax: Int,
+    val jitterMinMs: Long,
+    val jitterMaxMs: Long,
+    val adaptiveEnabled: Boolean,
+    val adaptiveMinRecords: Int,
+    val adaptiveMinObservationMs: Long,
+    val adaptiveDecay: Double,
+    val adaptiveSnapshotIntervalMs: Long,
+    val deterministicSeedPresent: Boolean,
+    val deterministicSeed: Long,
+)
+
 private fun leaseEvent() = NativeRuntimeEvent(
     type = NATIVE_EVENT_LEASE_RECEIVED,
     clientIpv4 = 0x0a420002L,
@@ -497,6 +603,8 @@ private fun nativeSnapshot(
     carrierAuthSucceeded: Long = 0,
     carrierAuthFailed: Long = 0,
     carrierLeaseReceived: Long = 0,
+    shaperConfigured: Boolean = false,
+    shaperProfileId: String? = null,
     lastError: String? = null,
 ) = NativeRuntimeSnapshot(
     alive = alive,
@@ -539,12 +647,15 @@ private fun nativeSnapshot(
     carrierAuthSucceeded = carrierAuthSucceeded,
     carrierAuthFailed = carrierAuthFailed,
     carrierLeaseReceived = carrierLeaseReceived,
+    shaperConfigured = shaperConfigured,
+    shaperProfileId = shaperProfileId,
     lastError = lastError,
 )
 
 private class FakeNativeBackend(
     private val returnZeroHandle: Boolean = false,
     private val authConfigureError: String? = null,
+    private val shaperConfigureError: String? = null,
     initialPolicyPackets: List<NativeTunPolicyPacket> = emptyList(),
 ) : FpsNativeBackend {
     private var nextHandle = 1L
@@ -559,6 +670,7 @@ private class FakeNativeBackend(
     val startedRawCarrierBridges = mutableListOf<Long>()
     val stoppedRawCarriers = mutableListOf<Long>()
     val configuredAuth = mutableListOf<RuntimeAuthConfigCall>()
+    val configuredShapers = mutableListOf<RuntimeShaperConfigCall>()
     val authSmokeTamperFlags = mutableListOf<Boolean>()
     var drainCalls = 0
     private val snapshots = mutableMapOf<Long, NativeRuntimeSnapshot>()
@@ -826,6 +938,67 @@ private class FakeNativeBackend(
         }
         return current.copy(
             carrierAuthConfigured = true,
+            lastError = null,
+        ).also { snapshots[handle] = it }
+    }
+
+    override fun configureClientShaper(
+        handle: Long,
+        profileId: String,
+        recordSizeC2sLe: LongArray,
+        recordSizeC2sP: DoubleArray,
+        recordSizeS2cLe: LongArray,
+        recordSizeS2cP: DoubleArray,
+        delayC2sLe: LongArray,
+        delayC2sP: DoubleArray,
+        delayS2cLe: LongArray,
+        delayS2cP: DoubleArray,
+        covertRatioMax: Double,
+        burstRecordsMax: Int,
+        jitterMinMs: Long,
+        jitterMaxMs: Long,
+        adaptiveEnabled: Boolean,
+        adaptiveMinRecords: Int,
+        adaptiveMinObservationMs: Long,
+        adaptiveDecay: Double,
+        adaptiveSnapshotIntervalMs: Long,
+        deterministicSeedPresent: Boolean,
+        deterministicSeed: Long,
+    ): NativeRuntimeSnapshot {
+        configuredShapers += RuntimeShaperConfigCall(
+            handle = handle,
+            profileId = profileId,
+            recordSizeC2sLe = recordSizeC2sLe.toList(),
+            recordSizeC2sP = recordSizeC2sP.toList(),
+            recordSizeS2cLe = recordSizeS2cLe.toList(),
+            recordSizeS2cP = recordSizeS2cP.toList(),
+            delayC2sLe = delayC2sLe.toList(),
+            delayC2sP = delayC2sP.toList(),
+            delayS2cLe = delayS2cLe.toList(),
+            delayS2cP = delayS2cP.toList(),
+            covertRatioMax = covertRatioMax,
+            burstRecordsMax = burstRecordsMax,
+            jitterMinMs = jitterMinMs,
+            jitterMaxMs = jitterMaxMs,
+            adaptiveEnabled = adaptiveEnabled,
+            adaptiveMinRecords = adaptiveMinRecords,
+            adaptiveMinObservationMs = adaptiveMinObservationMs,
+            adaptiveDecay = adaptiveDecay,
+            adaptiveSnapshotIntervalMs = adaptiveSnapshotIntervalMs,
+            deterministicSeedPresent = deterministicSeedPresent,
+            deterministicSeed = deterministicSeed,
+        )
+        val current = snapshots[handle] ?: return nativeSnapshot(alive = false, lastError = "invalid_handle")
+        if (shaperConfigureError != null) {
+            return current.copy(
+                shaperConfigured = false,
+                shaperProfileId = null,
+                lastError = shaperConfigureError,
+            ).also { snapshots[handle] = it }
+        }
+        return current.copy(
+            shaperConfigured = true,
+            shaperProfileId = profileId,
             lastError = null,
         ).also { snapshots[handle] = it }
     }

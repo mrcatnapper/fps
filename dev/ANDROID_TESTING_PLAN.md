@@ -62,7 +62,10 @@ documentation.
   smoke that requests consent through UI Automator when needed, verifies a real
   TUN fd/MTU, routes the fd through `HeadlessNativeVpnRuntime`, verifies native
   `owned_duplicate` attachment plus pump startup and closes it through explicit
-  stop/revoke paths.
+  stop/revoke paths. The same lane now includes a small product-flow smoke that
+  drives the service-owned coordinator through protected raw socket connect,
+  native TLS/TCP bridge auth, encrypted lease delivery, real TUN fd attach and
+  native pump startup against a local test FPS server peer.
 
 ## Testing Layers For FPS Android
 
@@ -228,8 +231,9 @@ Prioritize these emulator/device scenarios in order:
      start native executor, resolve through underlying network, prepare/protect
      raw fd, connect, start bridge, start app-owned cover client, apply lease,
      establish TUN, start pump and drain policy.
-   - One managed-device smoke should validate the Android-only pieces of that
-     same sequence with real `VpnService` fd ownership.
+   - The managed-device smoke validates the Android-only pieces of that same
+     sequence with real `VpnService` fd ownership and local deterministic
+     carrier/auth fixtures.
 
 2. **Socket loop-prevention and underlying-network resolution**
    - Verify these as part of the coordinator path. The production FPS carrier
@@ -277,6 +281,11 @@ Prioritize these emulator/device scenarios in order:
 - The managed-device lane has been run locally with `/dev/kvm` and covers both
   the native/JNI smoke and debug-only real `VpnService`
   consent/establish/full-runtime fd attach/pump/stop/revoke smoke.
+- It now also validates the first service-owned coordinator product flow:
+  protected raw socket connect, native bridge auth, encrypted TUN lease, real
+  TUN fd attach and native pump startup. The local cover side uses synthetic
+  TLS Application Data records so the test remains deterministic and does not
+  depend on external origins.
 - It also covers native raw TCP carrier socket lifecycle through a local
   loopback server: native exposes the pre-connect fd, Kotlin has a chance to
   call the protect hook, native connects only after positive protection and
@@ -294,13 +303,16 @@ Prioritize these emulator/device scenarios in order:
 
 ## Next Android Runtime Steps
 
-1. Keep the minimal foreground-service/status surface covered by JVM tests
-   through a fake notifier/status sink and add device-level checks only where
-   Android framework behavior is required.
-2. Keep the first product carrier path HTTPS-only. WSS remains probe-support
-   code and future external-carrier research; do not add a raw WSS internal
-   carrier unless the Android product direction changes explicitly.
-3. Extend the managed-device lane from fd/pump smoke to the smallest
-   production-shaped HTTPS flow that requires Android framework behavior.
+1. Keep the minimal foreground-service/status and coordinator surfaces covered
+   by JVM tests through fake notifier/status/native hooks; add device-level
+   checks only where Android framework behavior is required.
+2. Keep the first product carrier path HTTPS-only. The raw HTTPS keep-alive
+   client now has bounded response draining and close/metadata-failure coverage.
+   WSS remains probe-support code and future external-carrier research; do not
+   add a raw WSS internal carrier unless the Android product direction changes
+   explicitly.
+3. Add profile persistence/import/manual UX around the current headless service
+   path before widening carrier protocols.
 4. Keep managed-device CI manual/scheduled until repeated runs show it is
-   stable enough for PR gating.
+   stable enough for PR gating, and add physical-device release validation for
+   vendor VPN/background-network behavior.
