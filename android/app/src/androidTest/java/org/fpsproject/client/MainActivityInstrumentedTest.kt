@@ -16,7 +16,7 @@ class MainActivityInstrumentedTest {
 
     @Test
     fun launcherStartsAndReportsNoStoredProfile() {
-        clearStoredProfile()
+        clearStoredState()
 
         val launchIntent = targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
         assertNotNull("Launcher intent is missing", launchIntent)
@@ -32,18 +32,23 @@ class MainActivityInstrumentedTest {
         )
         assertNotNull(
             "Initial no-profile status was not visible",
-            device.wait(Until.findObject(By.textContains("state=NO_PROFILE")), 5_000),
+            device.wait(Until.findObject(By.textContains("profile_state=NO_PROFILE")), 5_000),
         )
         assertNotNull(
-            "Profile refresh label should describe stored-profile state",
-            device.wait(Until.findObject(By.text(Pattern.compile("(?i)Refresh Profile Status"))), 5_000),
+            "Initial stopped VPN status was not visible",
+            device.wait(Until.findObject(By.textContains("vpn_state=STOPPED")), 5_000),
+        )
+        assertNotNull(
+            "Refresh label should describe combined status",
+            device.wait(Until.findObject(By.text(Pattern.compile("(?i)Refresh Status"))), 5_000),
         )
     }
 
-    private fun clearStoredProfile() {
+    private fun clearStoredState() {
         targetContext.getSharedPreferences("fps_vpn_profile", Context.MODE_PRIVATE)
             .edit()
             .clear()
             .commit()
+        SharedPreferencesFpsVpnStatusStore(targetContext).clear()
     }
 }

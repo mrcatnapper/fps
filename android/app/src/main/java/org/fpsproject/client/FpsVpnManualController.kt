@@ -18,6 +18,7 @@ internal data class FpsVpnManualSnapshot(
     val state: FpsVpnManualState,
     val profilePresent: Boolean,
     val message: String,
+    val vpnStatus: FpsVpnStatusSnapshot = FpsVpnStatusSnapshot.stopped(),
 )
 
 internal interface FpsVpnServiceCommandSender {
@@ -50,6 +51,7 @@ internal class AndroidFpsVpnServiceCommandSender(
 internal class FpsVpnManualController(
     private val repository: FpsVpnProfileRepository,
     private val commandSender: FpsVpnServiceCommandSender,
+    private val statusStore: FpsVpnStatusStore? = null,
 ) {
     private var lastSnapshot: FpsVpnManualSnapshot = baseSnapshot()
 
@@ -71,19 +73,22 @@ internal class FpsVpnManualController(
         if (profile == null) {
             return update(FpsVpnManualState.ERROR, "profile_missing")
         }
+        statusStore?.write(FpsVpnStatusSnapshot.starting())
         commandSender.startFromStoredProfile()
-        return update(FpsVpnManualState.START_REQUESTED, "Start requested")
+        return update(FpsVpnManualState.START_REQUESTED, "Start requested", FpsVpnStatusSnapshot.starting())
     }
 
     fun stop(): FpsVpnManualSnapshot {
         commandSender.stop()
-        return update(FpsVpnManualState.STOP_REQUESTED, "Stop requested")
+        statusStore?.write(FpsVpnStatusSnapshot.stopped())
+        return update(FpsVpnManualState.STOP_REQUESTED, "Stop requested", FpsVpnStatusSnapshot.stopped())
     }
 
     fun clear(): FpsVpnManualSnapshot {
         commandSender.stop()
         repository.clearProfile()
-        return update(FpsVpnManualState.PROFILE_CLEARED, "Profile cleared")
+        statusStore?.write(FpsVpnStatusSnapshot.stopped())
+        return update(FpsVpnManualState.PROFILE_CLEARED, "Profile cleared", FpsVpnStatusSnapshot.stopped())
     }
 
     fun permissionDenied(): FpsVpnManualSnapshot {
@@ -97,14 +102,21 @@ internal class FpsVpnManualController(
 
     fun snapshot(): FpsVpnManualSnapshot = lastSnapshot
 
-    private fun update(state: FpsVpnManualState, message: String): FpsVpnManualSnapshot {
+    private fun update(
+        state: FpsVpnManualState,
+        message: String,
+        vpnStatus: FpsVpnStatusSnapshot = readStatus(),
+    ): FpsVpnManualSnapshot {
         lastSnapshot = FpsVpnManualSnapshot(
             state = state,
             profilePresent = repository.hasProfile(),
             message = message,
+            vpnStatus = vpnStatus,
         )
         return lastSnapshot
     }
+
+    private fun readStatus(): FpsVpnStatusSnapshot = statusStore?.read() ?: FpsVpnStatusSnapshot.stopped()
 
     private fun baseSnapshot(): FpsVpnManualSnapshot {
         val hasProfile = repository.hasProfile()
@@ -116,6 +128,7 @@ internal class FpsVpnManualController(
                     state = FpsVpnManualState.ERROR,
                     profilePresent = true,
                     message = "profile_invalid",
+                    vpnStatus = readStatus(),
                 )
             }
         }
@@ -123,6 +136,7 @@ internal class FpsVpnManualController(
             state = if (hasProfile) FpsVpnManualState.READY else FpsVpnManualState.NO_PROFILE,
             profilePresent = hasProfile,
             message = if (hasProfile) "Profile ready" else "No profile saved",
+            vpnStatus = readStatus(),
         )
     }
 }

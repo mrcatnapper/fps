@@ -133,8 +133,9 @@ FPS_ANDROID_CLEAN_TAGS=1 tools/run_android_checks.sh --clean-images
 
 ## Android Bootstrap Checks
 
-The Android client scaffold is command-line only; Android Studio is not
-required. The preferred reproducible path is Docker:
+The Android client has a minimal launcher UI, while the build and test workflow
+remains command-line first; Android Studio is not required. The preferred
+reproducible path is Docker:
 
 ```sh
 tools/run_android_checks.sh
@@ -223,10 +224,10 @@ emulator. The release APK smoke checks the release native library's exported
 symbols so debug-only JNI test hooks cannot become an accidental production
 dependency. The JVM tests cover Android client-profile
 parsing, private profile persistence/start-from-stored-profile behavior,
-minimal manual save/start/stop/clear controller behavior, fail-closed
-split-tunnel policy, the headless VPN runtime state machine and the headless
-carrier probe runner with fake platform hooks/transports. They also cover
-profile-driven carrier probe planning,
+persisted runtime status, minimal manual save/start/stop/clear/status
+controller behavior, fail-closed split-tunnel policy, the headless VPN runtime
+state machine and the headless carrier probe runner with fake platform
+hooks/transports. They also cover profile-driven carrier probe planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
 HTTPS/WSS carrier probe transport factory through MockWebServer. They also
@@ -309,8 +310,9 @@ small local product-flow smoke for the service-owned coordinator: protected raw
 socket connect from a stored profile, native TLS/TCP bridge auth, encrypted
 lease delivery, real TUN fd attach and native pump startup. The same lane also
 launches the production `MainActivity` and checks that the no-stored-profile
-manual surface renders without crashing. This lane is opt-in and is not part of
-ordinary PR CI until repeated local runs prove it stable.
+manual surface renders profile and stopped VPN status without crashing. This
+lane is opt-in and is not part of ordinary PR CI until repeated local runs
+prove it stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

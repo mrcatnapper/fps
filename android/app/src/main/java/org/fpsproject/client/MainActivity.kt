@@ -24,6 +24,7 @@ class MainActivity : Activity() {
         controller = FpsVpnManualController(
             repository = SharedPreferencesFpsVpnProfileRepository(this),
             commandSender = AndroidFpsVpnServiceCommandSender(this),
+            statusStore = SharedPreferencesFpsVpnStatusStore(this),
         )
         setContentView(buildContentView())
         render(controller.refresh())
@@ -69,7 +70,7 @@ class MainActivity : Activity() {
             profileInput.text.clear()
             render(controller.clear())
         })
-        root.addView(button("Refresh Profile Status") { render(controller.refresh()) })
+        root.addView(button("Refresh Status") { render(controller.refresh()) })
         statusText = TextView(this).apply {
             textSize = 14f
             typeface = Typeface.MONOSPACE
@@ -97,14 +98,29 @@ class MainActivity : Activity() {
         if (prepareIntent != null) {
             startAfterPermission = true
             startActivityForResult(prepareIntent, REQUEST_VPN_PERMISSION)
-            statusText.text = "state=STARTING\nprofile_saved=${controller.snapshot().profilePresent}\nmessage=vpn_permission_requested"
+            render(
+                controller.snapshot().copy(
+                    message = "vpn_permission_requested",
+                    vpnStatus = FpsVpnStatusSnapshot.starting(),
+                ),
+            )
             return
         }
         render(controller.start())
     }
 
     private fun render(snapshot: FpsVpnManualSnapshot) {
-        statusText.text = "state=${snapshot.state}\nprofile_saved=${snapshot.profilePresent}\nmessage=${snapshot.message}"
+        val status = snapshot.vpnStatus
+        statusText.text = buildString {
+            append("profile_state=${snapshot.state}\n")
+            append("profile_saved=${snapshot.profilePresent}\n")
+            append("profile_message=${snapshot.message}\n")
+            append("vpn_state=${status.state}\n")
+            append("vpn_attempts=${status.attempts}\n")
+            append("vpn_reconnects=${status.reconnects}\n")
+            append("vpn_next_retry_ms=${status.nextRetryDelayMs}")
+            status.error?.let { append("\nvpn_error=$it") }
+        }
     }
 
     private fun matchWidthWrapHeight(): LinearLayout.LayoutParams {

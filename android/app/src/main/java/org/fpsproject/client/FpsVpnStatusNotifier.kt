@@ -3,12 +3,15 @@ package org.fpsproject.client
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerSnapshot
 import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunnerState
+import org.json.JSONObject
 
 internal enum class FpsVpnStatusState {
     STARTING,
@@ -73,6 +76,112 @@ internal interface FpsVpnStatusNotifier {
     fun clear()
 }
 
+internal interface FpsVpnStatusStore {
+    fun read(): FpsVpnStatusSnapshot
+
+    fun write(snapshot: FpsVpnStatusSnapshot)
+
+    fun clear()
+}
+
+internal interface FpsVpnStatusStorage {
+    fun read(): String?
+
+    fun write(value: String)
+
+    fun clear()
+}
+
+internal class PersistedFpsVpnStatusStore(
+    private val storage: FpsVpnStatusStorage,
+) : FpsVpnStatusStore {
+    override fun read(): FpsVpnStatusSnapshot {
+        val raw = storage.read() ?: return FpsVpnStatusSnapshot.stopped()
+        return runCatching {
+            val json = JSONObject(raw)
+            FpsVpnStatusSnapshot(
+                state = FpsVpnStatusState.valueOf(json.optString("state", FpsVpnStatusState.STOPPED.name)),
+                attempts = json.optInt("attempts", 0).coerceAtLeast(0),
+                reconnects = json.optInt("reconnects", 0).coerceAtLeast(0),
+                nextRetryDelayMs = json.optLong("next_retry_delay_ms", 0).coerceAtLeast(0),
+                error = if (json.has("error") && !json.isNull("error")) {
+                    safeErrorName(json.optString("error"))
+                } else {
+                    null
+                },
+            )
+        }.getOrDefault(FpsVpnStatusSnapshot.stopped())
+    }
+
+    override fun write(snapshot: FpsVpnStatusSnapshot) {
+        val json = JSONObject()
+            .put("state", snapshot.state.name)
+            .put("attempts", snapshot.attempts.coerceAtLeast(0))
+            .put("reconnects", snapshot.reconnects.coerceAtLeast(0))
+            .put("next_retry_delay_ms", snapshot.nextRetryDelayMs.coerceAtLeast(0))
+        snapshot.error?.let { json.put("error", safeErrorName(it)) }
+        storage.write(json.toString())
+    }
+
+    override fun clear() {
+        storage.clear()
+    }
+}
+
+internal class SharedPreferencesFpsVpnStatusStore(
+    context: Context,
+) : FpsVpnStatusStore {
+    private val delegate = PersistedFpsVpnStatusStore(
+        SharedPreferencesFpsVpnStatusStorage(context.applicationContext),
+    )
+
+    override fun read(): FpsVpnStatusSnapshot = delegate.read()
+
+    override fun write(snapshot: FpsVpnStatusSnapshot) {
+        delegate.write(snapshot)
+    }
+
+    override fun clear() {
+        delegate.clear()
+    }
+}
+
+private class SharedPreferencesFpsVpnStatusStorage(
+    context: Context,
+) : FpsVpnStatusStorage {
+    private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+
+    override fun read(): String? = preferences.getString(KEY_STATUS, null)
+
+    override fun write(value: String) {
+        preferences.edit().putString(KEY_STATUS, value).apply()
+    }
+
+    override fun clear() {
+        preferences.edit().remove(KEY_STATUS).apply()
+    }
+
+    private companion object {
+        private const val PREFERENCES_NAME = "fps_vpn_status"
+        private const val KEY_STATUS = "status_snapshot"
+    }
+}
+
+internal class PersistingFpsVpnStatusNotifier(
+    private val delegate: FpsVpnStatusNotifier,
+    private val statusStore: FpsVpnStatusStore,
+) : FpsVpnStatusNotifier {
+    override fun show(snapshot: FpsVpnStatusSnapshot) {
+        statusStore.write(snapshot)
+        delegate.show(snapshot)
+    }
+
+    override fun clear() {
+        statusStore.write(FpsVpnStatusSnapshot.stopped())
+        delegate.clear()
+    }
+}
+
 internal object NoopFpsVpnStatusNotifier : FpsVpnStatusNotifier {
     override fun show(snapshot: FpsVpnStatusSnapshot) = Unit
 
@@ -116,6 +225,7 @@ internal class AndroidFpsVpnStatusNotifier(
             .setSmallIcon(R.drawable.ic_fps_notification)
             .setContentTitle("FPS VPN")
             .setContentText(notificationText(snapshot))
+            .setContentIntent(contentIntent())
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(snapshot.state != FpsVpnStatusState.FAILED)
             .setOnlyAlertOnce(true)
@@ -135,6 +245,13 @@ internal class AndroidFpsVpnStatusNotifier(
             FpsVpnStatusState.FAILED -> "Stopped: ${snapshot.error ?: "failed"}"
             FpsVpnStatusState.STOPPED -> "Stopped"
         }
+    }
+
+    private fun contentIntent(): PendingIntent {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val intent = Intent(service, MainActivity::class.java)
+        return PendingIntent.getActivity(service, 0, intent, flags)
     }
 
     private companion object {

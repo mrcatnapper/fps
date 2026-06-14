@@ -323,8 +323,9 @@ Prioritize these emulator/device scenarios in order:
    WSS remains probe-support code and future external-carrier research; do not
    add a raw WSS internal carrier unless the Android product direction changes
    explicitly.
-3. Profile persistence and the minimal manual import/start/stop controller are
-   now covered by JVM tests, and stored-profile startup is covered by the
+3. Profile persistence, persisted runtime status and the minimal manual
+   import/start/stop/status controller are now covered by JVM tests, and
+   stored-profile startup plus launcher rendering are covered by the
    managed-device product-flow smoke. Next UI testing should be driven by
    real-device findings rather than expanding emulator checks around plain view
    wiring.

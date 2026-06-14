@@ -74,8 +74,9 @@ and signed artifacts remain deferred.
   Valgrind, coverage and bounded fuzzing.
 - Android has a reproducible Docker build/test image and a headless Kotlin/NDK
   scaffold. Current JVM tests cover client profile parsing, carrier probe
-  persistence, manual save/start/stop/clear controller behavior, carrier probe
-  planning, split-tunnel UID allowlists, underlying-network endpoint
+  persistence, persisted runtime status, manual save/start/stop/clear/status
+  controller behavior, carrier probe planning, split-tunnel UID allowlists,
+  underlying-network endpoint
   resolution, socket-protection failure handling, deterministic fake-transport
   carrier probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS
   probe transport tests, native-runtime wrapper tests, bidirectional native TUN
@@ -186,9 +187,9 @@ Those remain release-hardening concerns.
   protected raw socket connect, native bridge auth, encrypted lease delivery,
   real TUN fd attach and native pump startup. A minimal launcher can paste/save
   client profiles, request VPN consent, start/stop the stored-profile service
-  path, clear the profile and show metadata-only local status. Android still
-  needs physical-device release validation and UI/status polish based on real
-  device failures.
+  path, clear the profile and show metadata-only profile/runtime status.
+  Android still needs physical-device release validation and UI polish based on
+  real device failures.
 
 ## Public Beta Gate
 

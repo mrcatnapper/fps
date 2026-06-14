@@ -121,6 +121,32 @@ class FpsVpnServiceRuntimeTest {
     }
 
     @Test
+    fun persistingStatusNotifierStoresRuntimeUpdatesAndStoppedState() {
+        val factory = FakeServiceRunnerFactory()
+        val statusStore = PersistedFpsVpnStatusStore(RuntimeStatusStorage())
+        val notifier = PersistingFpsVpnStatusNotifier(RecordingStatusNotifier(), statusStore)
+        val runtime = FpsVpnServiceRuntime(factory, notifier)
+
+        runtime.startProfile(PROFILE_A)
+
+        assertEquals(FpsVpnStatusState.RUNNING, statusStore.read().state)
+
+        val runner = factory.createdRunners.single()
+        runner.state = CoordinatedNativeVpnRunnerState.BACKOFF
+        runner.lastError = "cover_io_failed"
+        runner.nextRetryDelayMs = 5000
+        runtime.runnerSnapshot()
+
+        assertEquals(FpsVpnStatusState.BACKOFF, statusStore.read().state)
+        assertEquals("cover_io_failed", statusStore.read().error)
+        assertEquals(5000L, statusStore.read().nextRetryDelayMs)
+
+        runtime.stop()
+
+        assertEquals(FpsVpnStatusSnapshot.stopped(), statusStore.read())
+    }
+
+    @Test
     fun statusMetadataRedactsUnexpectedErrors() {
         val factory = FakeServiceRunnerFactory()
         val notifier = RecordingStatusNotifier()
@@ -338,6 +364,20 @@ private class RecordingStatusNotifier : FpsVpnStatusNotifier {
 private class RuntimeProfileStorage(
     var value: String? = null,
 ) : FpsVpnProfileStorage {
+    override fun read(): String? = value
+
+    override fun write(value: String) {
+        this.value = value
+    }
+
+    override fun clear() {
+        value = null
+    }
+}
+
+private class RuntimeStatusStorage(
+    var value: String? = null,
+) : FpsVpnStatusStorage {
     override fun read(): String? = value
 
     override fun write(value: String) {
