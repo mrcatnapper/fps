@@ -4,6 +4,45 @@
 
 ## 2026-06-14
 
+### Android `fps://v1` deep-link import
+
+Goal:
+
+- Let Android accept generated `fps://v1` client profile URIs through the normal
+  Android deep-link path while preserving explicit user confirmation before
+  saving or starting the VPN.
+
+Decisions:
+
+- Use the existing `fps://v1/<base64url-json-profile>` profile format and the
+  same Android profile parser/normalizer as manual paste/save.
+- Treat deep links as preview input only. A valid URI pre-fills the launcher
+  profile field and reports `profile_import_ready`; the profile is not written
+  to private storage until the user taps `Save Profile`.
+- Invalid deep links report `profile_import_invalid` and do not overwrite the
+  stored profile or start any service command.
+
+Completed:
+
+- Added a production `ACTION_VIEW`/`BROWSABLE` intent filter for `fps://v1` on
+  `MainActivity`.
+- Added controller/repository preview validation that shares the existing
+  normalizer and does not persist profile text.
+- Extended JVM and managed-device tests for valid and invalid deep-link import.
+- Updated Android planning/testing docs, beta status and specification.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `tools/run_android_checks.sh --docker-managed-device` passed, 31/31 managed
+  device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android runtime status in launcher
 
 Goal:

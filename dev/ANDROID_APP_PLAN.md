@@ -27,10 +27,11 @@ when Android test infrastructure or emulator strategy changes.
   encrypted lease delivery, TUN establishment, split-tunnel policy and
   bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
   a minimal foreground/status surface. HTTPS cover hardening, static
-  shaper-profile UX, private profile persistence, a minimal manual
-  paste/save/start/stop/status UI and the first managed-device product-flow
-  validation are implemented; the next product gaps are real-device validation
-  and later external-carrier design, not another internal carrier protocol.
+  shaper-profile UX, private profile persistence, `fps://v1` deep-link import,
+  a minimal manual paste/save/start/stop/status UI and the first managed-device
+  product-flow validation are implemented; the next product gaps are
+  real-device validation and later external-carrier design, not another
+  internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -42,11 +43,12 @@ Delivered:
   storage and start `FpsVpnService` from that stored profile. Explicit profile
   starts overwrite the stored profile; stop does not delete it.
 - A minimal launcher `Activity` exists for production/debug use. It lets a user
-  paste a raw JSON or `fps://v1` profile, save it to private storage, request
-  Android VPN consent, start/stop the stored-profile service path, clear the
-  stored profile and view a small non-secret local status string containing
-  both profile state and the last persisted daemon/runtime status. It does not
-  display stored profile text after saving.
+  paste a raw JSON or `fps://v1` profile, open an `fps://v1` deep link for
+  preview, save the profile to private storage, request Android VPN consent,
+  start/stop the stored-profile service path, clear the stored profile and view
+  a small non-secret local status string containing both profile state and the
+  last persisted daemon/runtime status. It does not display stored profile text
+  after saving.
 - Parsing accepts only client-side fields needed by the Android runtime:
   `network.server`, `security.zero_rtt.client_uuid`,
   `security.zero_rtt.server_public_key_base64`, optional codec, TUN, ops,
@@ -201,10 +203,10 @@ Completed product step:
   can start `FpsVpnService` from the stored profile without carrying the full
   profile in every start intent.
 - **Minimal manual UX.**
-  A production launcher Activity can save/import a client profile, request VPN
-  permission, start/stop the stored-profile service path, clear the profile and
-  show metadata-only profile/runtime status without exposing the stored profile
-  text.
+  A production launcher Activity can paste or deep-link preview a client
+  profile, save it only after explicit user action, request VPN permission,
+  start/stop the stored-profile service path, clear the profile and show
+  metadata-only profile/runtime status without exposing the stored profile text.
 
 Remaining tactical implementation order:
 

@@ -64,6 +64,15 @@ internal class FpsVpnManualController(
         }
     }
 
+    fun previewProfileImport(profileText: String): FpsVpnManualSnapshot {
+        return try {
+            repository.normalizeProfile(profileText)
+            update(FpsVpnManualState.READY, "profile_import_ready")
+        } catch (_: IllegalArgumentException) {
+            update(FpsVpnManualState.ERROR, "profile_import_invalid")
+        }
+    }
+
     fun start(): FpsVpnManualSnapshot {
         val profile = try {
             repository.loadProfile()

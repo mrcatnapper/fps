@@ -28,6 +28,13 @@ class MainActivity : Activity() {
         )
         setContentView(buildContentView())
         render(controller.refresh())
+        handleProfileViewIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleProfileViewIntent(intent)
     }
 
     @Deprecated("Deprecated in Android framework API")
@@ -123,6 +130,23 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun handleProfileViewIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) {
+            return
+        }
+        val profileUri = intent.dataString
+        if (profileUri == null || !profileUri.startsWith(PROFILE_URI_PREFIX)) {
+            render(controller.previewProfileImport(""))
+            return
+        }
+        val snapshot = controller.previewProfileImport(profileUri)
+        if (snapshot.state != FpsVpnManualState.ERROR) {
+            profileInput.setText(profileUri)
+            profileInput.setSelection(profileInput.text.length)
+        }
+        render(snapshot)
+    }
+
     private fun matchWidthWrapHeight(): LinearLayout.LayoutParams {
         return LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -132,5 +156,6 @@ class MainActivity : Activity() {
 
     private companion object {
         private const val REQUEST_VPN_PERMISSION = 6602
+        private const val PROFILE_URI_PREFIX = "fps://v1/"
     }
 }

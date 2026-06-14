@@ -75,8 +75,8 @@ and signed artifacts remain deferred.
 - Android has a reproducible Docker build/test image and a headless Kotlin/NDK
   scaffold. Current JVM tests cover client profile parsing, carrier probe
   persistence, persisted runtime status, manual save/start/stop/clear/status
-  controller behavior, carrier probe planning, split-tunnel UID allowlists,
-  underlying-network endpoint
+  controller behavior, `fps://v1` deep-link import preview, carrier probe
+  planning, split-tunnel UID allowlists, underlying-network endpoint
   resolution, socket-protection failure handling, deterministic fake-transport
   carrier probe runner lifecycle/reconnect behavior, live OkHttp HTTPS/WSS
   probe transport tests, native-runtime wrapper tests, bidirectional native TUN

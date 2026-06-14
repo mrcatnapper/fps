@@ -48,6 +48,30 @@ class FpsVpnManualControllerTest {
     }
 
     @Test
+    fun previewProfileImportValidatesWithoutPersistingOrStarting() {
+        val fixture = controllerWithStorage(PROFILE_JSON)
+
+        val snapshot = fixture.controller.previewProfileImport(profileUri(PROFILE_JSON_ALT))
+
+        assertEquals(FpsVpnManualState.READY, snapshot.state)
+        assertEquals("profile_import_ready", snapshot.message)
+        assertEquals(PROFILE_JSON, fixture.storage.value)
+        assertEquals(emptyList<String>(), fixture.commands.commands)
+    }
+
+    @Test
+    fun invalidProfileImportDoesNotOverwriteOrStart() {
+        val fixture = controllerWithStorage(PROFILE_JSON)
+
+        val snapshot = fixture.controller.previewProfileImport("fps://v1/not@base64")
+
+        assertEquals(FpsVpnManualState.ERROR, snapshot.state)
+        assertEquals("profile_import_invalid", snapshot.message)
+        assertEquals(PROFILE_JSON, fixture.storage.value)
+        assertEquals(emptyList<String>(), fixture.commands.commands)
+    }
+
+    @Test
     fun startRequiresValidStoredProfileAndSendsStartCommandWithoutProfileText() {
         val fixture = controllerWithStorage(PROFILE_JSON)
 
@@ -182,6 +206,9 @@ class FpsVpnManualControllerTest {
         private const val SERVER_KEY_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
         private val PROFILE_JSON = """
             {"network":{"server":"fps.example.test:443"},"security":{"zero_rtt":{"profile_id":"android-test-v5","client_uuid":"$CLIENT_UUID","server_public_key_base64":"$SERVER_KEY_BASE64"}}}
+        """.trimIndent()
+        private val PROFILE_JSON_ALT = """
+            {"network":{"server":"fps-alt.example.test:443"},"security":{"zero_rtt":{"profile_id":"android-test-alt-v5","client_uuid":"$CLIENT_UUID","server_public_key_base64":"$SERVER_KEY_BASE64"}}}
         """.trimIndent()
 
         private fun profileUri(json: String): String {
