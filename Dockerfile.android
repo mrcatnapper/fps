@@ -55,7 +55,14 @@ RUN set -eux; \
     "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics; \
     ANDROID_NDK_HOME="${ANDROID_NDK_HOME}" "${VCPKG_ROOT}/vcpkg" install \
       openssl:arm64-android \
-      openssl:x64-android
+      openssl:x64-android; \
+    # Android builds only need the installed triplets; vcpkg build/download
+    # work trees are large and should not become part of the reusable base.
+    rm -rf \
+      "${VCPKG_ROOT}/.git" \
+      "${VCPKG_ROOT}/buildtrees" \
+      "${VCPKG_ROOT}/downloads" \
+      "${VCPKG_ROOT}/packages"
 
 FROM android-deps AS android-gradle-base
 

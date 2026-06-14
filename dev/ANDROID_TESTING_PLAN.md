@@ -197,6 +197,13 @@ Use `tools/run_android_checks.sh --clean-images` for allowlisted Android image
 cleanup; by default it prunes dangling images and keeps useful Android cache
 tags. Set `FPS_ANDROID_CLEAN_TAGS=1` only when intentionally resetting Android
 images. Do not use broad Docker prunes as part of routine checks.
+
+The emulator tag is intentionally large. It inherits the SDK/NDK/Gradle/vcpkg
+Android OpenSSL base and adds the Android emulator plus the API 30 AOSP ATD
+x86_64 system image. If disk pressure matters, keep `fps:android-ci-base` for
+ordinary checks and rebuild `fps:android-emulator-ci` only before
+managed-device runs. Do not create parallel emulator tags unless a specific
+experiment needs them.
 Keep this lane opt-in until repeated local/agent runs show it is stable enough
 for scheduled CI.
 

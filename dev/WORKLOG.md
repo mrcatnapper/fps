@@ -4,6 +4,51 @@
 
 ## 2026-06-14
 
+### Android Docker image size audit
+
+Goal:
+
+- Rebuild the Android Docker images after a clean local image reset, explain
+  the unexpectedly large emulator image and verify that routine Android checks
+  do not duplicate image tags or source-copied layers.
+
+Completed:
+
+- Rebuilt `fps:android-ci-base` through `tools/run_android_checks.sh --docker`.
+- Rebuilt `fps:android-emulator-ci` from the current
+  `fps:android-ci-base`.
+- Trimmed `Dockerfile.android` so the reusable base removes vcpkg `.git`,
+  `buildtrees`, `downloads` and `packages` after installing Android OpenSSL
+  triplets. `/opt/vcpkg` dropped from roughly 1.4GB to 277MB while keeping the
+  installed `arm64-android` and `x64-android` OpenSSL outputs.
+- Measured the current image contents:
+  - `fps:android-ci-base`: Docker virtual size about 6.8GB; `/opt/android-sdk`
+    about 2.7GB, dominated by the 2.2GB NDK; `/opt/gradle-cache` about 739MB.
+  - `fps:android-emulator-ci`: Docker virtual size about 12.5GB; it adds the
+    emulator binary, API 30 platform and about 3.2GB of AOSP ATD x86_64 system
+    image data.
+- Confirmed the large emulator tag is caused by the Android emulator/system
+  image stack, not by duplicate FPS tags.
+- Pruned dangling images and bounded Docker build cache without deleting the
+  useful Android base tag.
+- Re-ran the Docker-managed emulator lane; it now passes locally with `/dev/kvm`
+  and executes 26 managed-device instrumented tests.
+- Removed the opt-in `fps:android-emulator-ci` tag after the successful smoke to
+  keep routine local disk usage under control; `fps:android-ci-base` remains
+  tagged for fast Android JVM/native reruns.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  passed.
+- `cmake -S . -B build && cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed, 26/26 managed-device tests.
+
 ### Android Docker image hygiene refactor
 
 Goal:

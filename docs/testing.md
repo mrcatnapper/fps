@@ -174,7 +174,11 @@ ANDROID_NDK_HOME=/opt/android-sdk/ndk/28.2.13676358 \
 ```
 
 This vcpkg usage is intentionally limited to Android OpenSSL. Linux, Docker,
-Alpine and Boost dependency paths are not managed by vcpkg.
+Alpine and Boost dependency paths are not managed by vcpkg. Dockerized Android
+builds remove vcpkg checkout, buildtree, download and package work directories
+after installing the Android OpenSSL triplets; the reusable image keeps only
+the installed triplet outputs and the minimal vcpkg metadata needed for
+inspection.
 
 Android Kotlin code should use Android/Kotlin/JVM libraries for common parsing
 and encoding tasks. Client profile parsing uses Android's `org.json`; JVM unit
@@ -188,6 +192,13 @@ dependency-resolution task. Ordinary `--docker` checks build this target as
 so source edits do not create a new heavy source-copied image. The final
 source-containing `ci` stage remains available only for explicit image-shape
 experiments.
+
+`fps:android-emulator-ci` is expected to be much larger than
+`fps:android-ci-base`: it includes the Android emulator binary, API 30 platform
+metadata and the `system-images;android-30;aosp_atd;x86_64` managed-device
+image. The large layer is intentional and is used only by the opt-in
+`--docker-managed-device` lane. Routine Android JVM/native builds should reuse
+`fps:android-ci-base` and not rebuild or keep custom emulator tags.
 
 Run host Android checks through the repository helper or the Gradle wrapper, not
 the old system Gradle:
