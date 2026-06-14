@@ -69,7 +69,7 @@ class MainActivity : Activity() {
             profileInput.text.clear()
             render(controller.clear())
         })
-        root.addView(button("Refresh Status") { render(controller.refresh()) })
+        root.addView(button("Refresh Profile Status") { render(controller.refresh()) })
         statusText = TextView(this).apply {
             textSize = 14f
             typeface = Typeface.MONOSPACE

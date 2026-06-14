@@ -307,8 +307,10 @@ TUN fd, routes that fd through `HeadlessNativeVpnRuntime`, starts the native TUN
 pump and closes it through explicit stop/debug-revoke paths. It also includes a
 small local product-flow smoke for the service-owned coordinator: protected raw
 socket connect from a stored profile, native TLS/TCP bridge auth, encrypted
-lease delivery, real TUN fd attach and native pump startup. This lane is opt-in
-and is not part of ordinary PR CI until repeated local runs prove it stable.
+lease delivery, real TUN fd attach and native pump startup. The same lane also
+launches the production `MainActivity` and checks that the no-stored-profile
+manual surface renders without crashing. This lane is opt-in and is not part of
+ordinary PR CI until repeated local runs prove it stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

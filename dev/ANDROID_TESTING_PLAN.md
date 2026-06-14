@@ -291,6 +291,9 @@ Prioritize these emulator/device scenarios in order:
   encrypted TUN lease, real TUN fd attach and native pump startup. The local
   cover side uses synthetic TLS Application Data records so the test remains
   deterministic and does not depend on external origins.
+- It includes a minimal production launcher smoke: the app's launcher Activity
+  starts on a managed device, renders the no-stored-profile state and exposes
+  the manual save/start/stop/clear surface without crashing.
 - It also covers native raw TCP carrier socket lifecycle through a local
   loopback server: native exposes the pre-connect fd, Kotlin has a chance to
   call the protect hook, native connects only after positive protection and

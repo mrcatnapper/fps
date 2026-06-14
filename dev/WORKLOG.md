@@ -32,7 +32,12 @@ Completed:
   denial and metadata-only snapshots.
 - Added a minimal launcher `MainActivity` for profile paste/save, VPN permission
   request, start/stop, clear and refresh status.
+- Renamed the refresh button to `Refresh Profile Status` so the first UI does
+  not imply daemon/runtime status that it does not yet display.
 - Added the launcher activity to the production manifest.
+- Added a managed-device launcher smoke that starts the production Activity,
+  verifies the no-stored-profile status and guards against manifest/theme
+  startup crashes.
 - Updated Android planning/testing docs and beta status.
 
 Verification:
@@ -45,6 +50,13 @@ Verification:
 - `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
 - `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
 - `git diff --check` passed.
+- Follow-up: `tools/run_android_checks.sh --docker` passed after the launcher
+  UI label/test addition.
+- Follow-up: first `tools/run_android_checks.sh --docker-managed-device` run
+  exposed Android `Button` all-caps rendering in the UIAutomator selector; the
+  test now uses case-insensitive matching.
+- Follow-up: repeated `tools/run_android_checks.sh --docker-managed-device`
+  passed, 29/29 managed-device tests.
 
 ### Android profile persistence and stored-profile start
 
