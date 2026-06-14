@@ -203,13 +203,16 @@ without claiming resistance to advanced timing/size traffic analysis.
   loop with metadata-only status snapshots.
 - [x] Add minimal Android foreground/status surface for the service-owned HTTPS
   carrier path.
+- [x] Add Android inline static shaper-profile UX: Android parses the compact
+  CDF profile object, rejects `shaper.profile_file` and installs the shared
+  native `Shaper` through JNI.
 - Continue Android implementation from `dev/ANDROID_APP_PLAN.md`,
   `dev/ANDROID_BOUNDARY.md` and `dev/ANDROID_TESTING_PLAN.md` with a
   product-flow bias: keep the first app-owned internal carrier HTTPS-only,
-  add static shaper-profile UX if needed and defer WSS to future external
-  carrier design. Prefer integration-shaped Android tests over more isolated
-  smoke checks unless a small red test is needed to define a new failure
-  contract.
+  extend release-device product-flow validation, add profile persistence/manual
+  UX and defer WSS to future external carrier design. Prefer
+  integration-shaped Android tests over more isolated smoke checks unless a
+  small red test is needed to define a new failure contract.
 
 ## Phase 7: Fuzzing And Soak
 

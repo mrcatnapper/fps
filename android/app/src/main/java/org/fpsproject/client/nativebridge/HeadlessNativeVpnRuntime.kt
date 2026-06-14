@@ -53,6 +53,8 @@ data class NativeVpnRuntimeSnapshot(
                 tunCovertEnqueueRejected = 0,
                 commandsPosted = 0,
                 commandsCompleted = 0,
+                shaperConfigured = false,
+                shaperProfileId = null,
                 lastError = "runtime_stopped",
             ),
         )

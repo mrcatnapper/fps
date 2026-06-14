@@ -601,6 +601,70 @@ class NativeCoreSmokeInstrumentedTest {
     }
 
     @Test
+    fun nativeClientShaperConfigurationAcceptsValidProfileAndRejectsInvalidProfile() {
+        val handle = FpsNative.createRuntime(profileJson)
+        assertTrue(handle != 0L)
+
+        try {
+            val configured = FpsNative.configureClientShaper(
+                handle = handle,
+                profileId = "android-shaper-test",
+                recordSizeC2sLe = longArrayOf(512, 1500),
+                recordSizeC2sP = doubleArrayOf(0.5, 1.0),
+                recordSizeS2cLe = longArrayOf(640, 1510),
+                recordSizeS2cP = doubleArrayOf(0.25, 1.0),
+                delayC2sLe = longArrayOf(1000, 10000),
+                delayC2sP = doubleArrayOf(0.7, 1.0),
+                delayS2cLe = longArrayOf(2000, 15000),
+                delayS2cP = doubleArrayOf(0.5, 1.0),
+                covertRatioMax = 0.25,
+                burstRecordsMax = 2,
+                jitterMinMs = 1,
+                jitterMaxMs = 3,
+                adaptiveEnabled = false,
+                adaptiveMinRecords = 4,
+                adaptiveMinObservationMs = 500,
+                adaptiveDecay = 0.75,
+                adaptiveSnapshotIntervalMs = 1000,
+                deterministicSeedPresent = true,
+                deterministicSeed = 42,
+            )
+            assertTrue(configured.shaperConfigured)
+            assertEquals("android-shaper-test", configured.shaperProfileId)
+            assertEquals(null, configured.lastError)
+
+            val rejected = FpsNative.configureClientShaper(
+                handle = handle,
+                profileId = "android-shaper-test",
+                recordSizeC2sLe = longArrayOf(512),
+                recordSizeC2sP = doubleArrayOf(0.5),
+                recordSizeS2cLe = longArrayOf(640, 1510),
+                recordSizeS2cP = doubleArrayOf(0.25, 1.0),
+                delayC2sLe = longArrayOf(1000, 10000),
+                delayC2sP = doubleArrayOf(0.7, 1.0),
+                delayS2cLe = longArrayOf(2000, 15000),
+                delayS2cP = doubleArrayOf(0.5, 1.0),
+                covertRatioMax = 0.25,
+                burstRecordsMax = 2,
+                jitterMinMs = 1,
+                jitterMaxMs = 3,
+                adaptiveEnabled = false,
+                adaptiveMinRecords = 4,
+                adaptiveMinObservationMs = 500,
+                adaptiveDecay = 0.75,
+                adaptiveSnapshotIntervalMs = 1000,
+                deterministicSeedPresent = false,
+                deterministicSeed = 0,
+            )
+            assertFalse(rejected.shaperConfigured)
+            assertEquals(null, rejected.shaperProfileId)
+            assertEquals("invalid_shaper_profile", rejected.lastError)
+        } finally {
+            FpsNative.closeRuntime(handle)
+        }
+    }
+
+    @Test
     fun nativeClientAuthSmokeEmitsLeaseEventAndReportsTamperFailure() {
         val handle = FpsNative.createRuntime(profileJson)
         assertTrue(handle != 0L)

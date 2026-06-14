@@ -58,6 +58,46 @@ class ZeroRttProfile(
     }
 }
 
+data class CdfPointProfile(
+    val le: Long,
+    val p: Double,
+)
+
+data class DirectionShaperProfile(
+    val recordSizeCdf: List<CdfPointProfile>,
+    val interRecordDelayUsCdf: List<CdfPointProfile>,
+)
+
+data class AdaptiveShaperProfile(
+    val enabled: Boolean = true,
+    val minRecords: Int = 16,
+    val minObservationMs: Long = 2000,
+    val decay: Double = 0.98,
+    val snapshotIntervalMs: Long = 30_000,
+)
+
+class AndroidShaperProfile(
+    val profileId: String,
+    val clientToServer: DirectionShaperProfile,
+    val serverToClient: DirectionShaperProfile,
+    val covertRatioMax: Double = 0.0,
+    val burstRecordsMax: Int = 1,
+    val jitterMinMs: Long = 0,
+    val jitterMaxMs: Long = 0,
+    val adaptive: AdaptiveShaperProfile = AdaptiveShaperProfile(),
+    val deterministicSeed: Long? = null,
+) {
+    override fun toString(): String {
+        return "AndroidShaperProfile(profileId=$profileId, " +
+            "c2sRecordBins=${clientToServer.recordSizeCdf.size}, " +
+            "s2cRecordBins=${serverToClient.recordSizeCdf.size}, " +
+            "c2sDelayBins=${clientToServer.interRecordDelayUsCdf.size}, " +
+            "s2cDelayBins=${serverToClient.interRecordDelayUsCdf.size}, " +
+            "covertRatioMax=$covertRatioMax, burstRecordsMax=$burstRecordsMax, " +
+            "adaptive=${adaptive.enabled})"
+    }
+}
+
 class AndroidClientProfile(
     val server: Endpoint,
     val zeroRtt: ZeroRttProfile,
@@ -66,10 +106,11 @@ class AndroidClientProfile(
     val ops: OpsProfile = OpsProfile(),
     val carriers: List<CarrierProbeProfile> = emptyList(),
     val splitTunnel: SplitTunnelProfile = SplitTunnelProfile(),
+    val shaper: AndroidShaperProfile? = null,
 ) {
     override fun toString(): String {
         return "AndroidClientProfile(server=$server, zeroRtt=$zeroRtt, codec=$codec, tun=$tun, " +
-            "ops=$ops, carriers=$carriers, splitTunnel=$splitTunnel)"
+            "ops=$ops, carriers=$carriers, splitTunnel=$splitTunnel, shaper=$shaper)"
     }
 }
 
@@ -115,6 +156,7 @@ object AndroidClientProfileParser {
             ops = parseOps(rootObject.optionalObject("ops")),
             carriers = parseCarriers(rootObject.optionalArray("carriers")),
             splitTunnel = parseSplitTunnel(rootObject.optionalObject("split_tunnel")),
+            shaper = parseShaper(rootObject.optionalObject("shaper")),
         )
     }
 
@@ -141,6 +183,7 @@ object AndroidClientProfileParser {
             "tun.server_address",
             "tun.lease_file",
             "tun.client_isolation",
+            "shaper.profile_file",
         )
         val present = forbidden.firstOrNull { root.find(it) != null }
         if (present != null) {
@@ -157,6 +200,109 @@ object AndroidClientProfileParser {
             maxFramePadding = codec.optionalInt("max_frame_padding", 2048, "codec.max_frame_padding"),
             allowFragmentation = codec.optionalBoolean("allow_fragmentation", true, "codec.allow_fragmentation"),
         )
+    }
+
+    private fun parseShaper(shaper: JSONObject?): AndroidShaperProfile? {
+        if (shaper == null || !shaper.optionalBoolean("enabled", false, "shaper.enabled")) {
+            return null
+        }
+        if (shaper.optionalValue("profile_file") != null) {
+            throw AndroidClientProfileParseException("shaper.profile_file is not valid in an Android client profile")
+        }
+        val profileId = shaper.requiredString("profile_id", "shaper.profile_id")
+        val jitter = shaper.optionalObject("jitter_ms")
+        val adaptive = shaper.optionalObject("adaptive")
+        val jitterMinMs = jitter?.optionalLong("min", 0, "shaper.jitter_ms.min") ?: 0
+        val jitterMaxMs = jitter?.optionalLong("max", 0, "shaper.jitter_ms.max") ?: 0
+        if (jitterMinMs > jitterMaxMs) {
+            throw AndroidClientProfileParseException("shaper.jitter_ms.min must be <= shaper.jitter_ms.max")
+        }
+
+        return AndroidShaperProfile(
+            profileId = profileId,
+            clientToServer = DirectionShaperProfile(
+                recordSizeCdf = parseCdf(shaper, "record_size_cdf_c2s", "shaper.record_size_cdf_c2s"),
+                interRecordDelayUsCdf = parseCdf(shaper, "inter_record_delay_us_cdf_c2s", "shaper.inter_record_delay_us_cdf_c2s"),
+            ),
+            serverToClient = DirectionShaperProfile(
+                recordSizeCdf = parseCdf(shaper, "record_size_cdf_s2c", "shaper.record_size_cdf_s2c"),
+                interRecordDelayUsCdf = parseCdf(shaper, "inter_record_delay_us_cdf_s2c", "shaper.inter_record_delay_us_cdf_s2c"),
+            ),
+            covertRatioMax = shaper.optionalDouble("covert_ratio_max", 0.0, "shaper.covert_ratio_max").also {
+                if (it < 0.0 || it > 1.0) {
+                    throw AndroidClientProfileParseException("shaper.covert_ratio_max must be between 0 and 1")
+                }
+            },
+            burstRecordsMax = shaper.optionalInt("burst_records_max", 1, "shaper.burst_records_max"),
+            jitterMinMs = jitterMinMs,
+            jitterMaxMs = jitterMaxMs,
+            adaptive = AdaptiveShaperProfile(
+                enabled = adaptive?.optionalBoolean("enabled", true, "shaper.adaptive.enabled") ?: true,
+                minRecords = adaptive?.optionalInt("min_records", 16, "shaper.adaptive.min_records") ?: 16,
+                minObservationMs = adaptive?.optionalLong("min_observation_ms", 2000, "shaper.adaptive.min_observation_ms") ?: 2000,
+                decay = (adaptive?.optionalDouble("decay", 0.98, "shaper.adaptive.decay") ?: 0.98).also {
+                    if (it <= 0.0 || it > 1.0) {
+                        throw AndroidClientProfileParseException("shaper.adaptive.decay must be in (0, 1]")
+                    }
+                },
+                snapshotIntervalMs = adaptive?.optionalLong("snapshot_interval_ms", 30_000, "shaper.adaptive.snapshot_interval_ms") ?: 30_000,
+            ),
+            deterministicSeed = parseOptionalSeed(shaper),
+        )
+    }
+
+    private fun parseCdf(root: JSONObject, field: String, path: String): List<CdfPointProfile> {
+        val array = root.optionalArray(field) ?: throw AndroidClientProfileParseException("missing $path")
+        if (array.length() == 0) {
+            throw AndroidClientProfileParseException("$path must not be empty")
+        }
+        var previousLe = 0L
+        var previousP = 0.0
+        val points = List(array.length()) { index ->
+            val item = array.get(index) as? JSONArray
+                ?: throw AndroidClientProfileParseException("$path entries must be [value, probability] pairs")
+            if (item.length() != 2) {
+                throw AndroidClientProfileParseException("$path entries must contain exactly two values")
+            }
+            val le = item.get(0).integerLong("$path[$index][0]")
+            val p = item.get(1).probability("$path[$index][1]")
+            if (le <= 0) {
+                throw AndroidClientProfileParseException("$path[$index][0] must be positive")
+            }
+            if (index > 0 && le < previousLe) {
+                throw AndroidClientProfileParseException("$path bucket bounds must be non-decreasing")
+            }
+            if (p <= previousP) {
+                throw AndroidClientProfileParseException("$path probabilities must be strictly increasing")
+            }
+            previousLe = le
+            previousP = p
+            CdfPointProfile(le = le, p = p)
+        }
+        if (points.last().p < 1.0) {
+            throw AndroidClientProfileParseException("$path final probability must be 1.0")
+        }
+        return points
+    }
+
+    private fun parseOptionalSeed(root: JSONObject): Long? {
+        val value = root.optionalValue("deterministic_seed") ?: return null
+        val parsed = when (value) {
+            is Int -> value.toLong()
+            is Long -> value
+            is String -> {
+                if (value.isEmpty() || value == "null") {
+                    return null
+                }
+                value.toLongOrNull()
+                    ?: throw AndroidClientProfileParseException("shaper.deterministic_seed must be an unsigned integer or decimal string")
+            }
+            else -> throw AndroidClientProfileParseException("shaper.deterministic_seed must be an unsigned integer or decimal string")
+        }
+        if (parsed < 0) {
+            throw AndroidClientProfileParseException("shaper.deterministic_seed must be non-negative")
+        }
+        return parsed
     }
 
     private fun parseTun(tun: JSONObject?): TunProfile? {
@@ -293,6 +439,11 @@ private fun JSONObject.optionalBoolean(field: String, default: Boolean, path: St
     return value as? Boolean ?: throw AndroidClientProfileParseException("$path must be a boolean")
 }
 
+private fun JSONObject.optionalDouble(field: String, default: Double, path: String): Double {
+    val value = optionalValue(field) ?: return default
+    return value.numberDouble(path)
+}
+
 private fun JSONObject.optionalInt(field: String, default: Int, path: String): Int {
     val value = optionalValue(field) ?: return default
     val parsed = when (value) {
@@ -341,6 +492,33 @@ private fun JSONObject.optionalValue(field: String): Any? {
         return null
     }
     return get(field)
+}
+
+private fun Any.integerLong(path: String): Long {
+    return when (this) {
+        is Int -> toLong()
+        is Long -> this
+        else -> throw AndroidClientProfileParseException("$path must be an integer")
+    }
+}
+
+private fun Any.numberDouble(path: String): Double {
+    val parsed = when (this) {
+        is Number -> toDouble()
+        else -> throw AndroidClientProfileParseException("$path must be a number")
+    }
+    if (parsed.isNaN() || parsed.isInfinite()) {
+        throw AndroidClientProfileParseException("$path must be finite")
+    }
+    return parsed
+}
+
+private fun Any.probability(path: String): Double {
+    val parsed = numberDouble(path)
+    if (parsed <= 0.0 || parsed > 1.0) {
+        throw AndroidClientProfileParseException("$path must be in (0, 1]")
+    }
+    return parsed
 }
 
 private fun Long.toIntIfExact(path: String): Int {

@@ -7,6 +7,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -25,6 +27,64 @@
 namespace {
 
 [[nodiscard]] auto ignored_trace_value() noexcept -> int { return 42; }
+
+[[nodiscard]] auto jlong_array_to_vector(JNIEnv* env, jlongArray array) -> std::optional<std::vector<jlong>> {
+    if(array == nullptr) {
+        return std::nullopt;
+    }
+    const auto length = env->GetArrayLength(array);
+    if(length < 0) {
+        return std::nullopt;
+    }
+    std::vector<jlong> out(static_cast<std::size_t>(length));
+    if(length > 0) {
+        env->GetLongArrayRegion(array, 0, length, out.data());
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            return std::nullopt;
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] auto jdouble_array_to_vector(JNIEnv* env, jdoubleArray array) -> std::optional<std::vector<jdouble>> {
+    if(array == nullptr) {
+        return std::nullopt;
+    }
+    const auto length = env->GetArrayLength(array);
+    if(length < 0) {
+        return std::nullopt;
+    }
+    std::vector<jdouble> out(static_cast<std::size_t>(length));
+    if(length > 0) {
+        env->GetDoubleArrayRegion(array, 0, length, out.data());
+        if(env->ExceptionCheck() == JNI_TRUE) {
+            return std::nullopt;
+        }
+    }
+    return out;
+}
+
+[[nodiscard]] auto jcdf_to_cdf(JNIEnv* env, jlongArray le_array, jdoubleArray p_array) -> std::optional<std::vector<fps::CdfPoint>> {
+    auto le_values = jlong_array_to_vector(env, le_array);
+    auto p_values = jdouble_array_to_vector(env, p_array);
+    if(!le_values || !p_values || le_values->size() != p_values->size()) {
+        return std::nullopt;
+    }
+    std::vector<fps::CdfPoint> out;
+    out.reserve(le_values->size());
+    for(std::size_t index = 0; index < le_values->size(); ++index) {
+        if((*le_values)[index] <= 0 || static_cast<std::uint64_t>((*le_values)[index]) > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+            return std::nullopt;
+        }
+        out.push_back(
+            fps::CdfPoint{
+                .le = static_cast<std::size_t>((*le_values)[index]),
+                .p = static_cast<double>((*p_values)[index]),
+            }
+        );
+    }
+    return out;
+}
 
 #if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
 [[nodiscard]] auto string_array(JNIEnv* env, const std::vector<std::string>& values) -> jobjectArray {
@@ -259,6 +319,41 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
         static_cast<fps::android_native::NativeRuntimeHandle>(handle), std::move(parsed_profile_id.value()), std::move(parsed_client_uuid.value()),
         std::move(parsed_server_public_key.value()), static_cast<std::int64_t>(client_upgrade_delay_ms), static_cast<std::int64_t>(client_upgrade_delay_sigma_ms),
         static_cast<int>(max_frame_payload), static_cast<int>(max_frame_padding)
+    );
+    return fps::android_jni::runtime_snapshot_object(env, snapshot);
+}
+
+extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNative_configureClientShaper(
+    JNIEnv* env, jobject /* self */, jlong handle, jstring profile_id, jlongArray record_size_c2s_le, jdoubleArray record_size_c2s_p,
+    jlongArray record_size_s2c_le, jdoubleArray record_size_s2c_p, jlongArray delay_c2s_le, jdoubleArray delay_c2s_p, jlongArray delay_s2c_le,
+    jdoubleArray delay_s2c_p, jdouble covert_ratio_max, jint burst_records_max, jlong jitter_min_ms, jlong jitter_max_ms, jboolean adaptive_enabled,
+    jint adaptive_min_records, jlong adaptive_min_observation_ms, jdouble adaptive_decay, jlong adaptive_snapshot_interval_ms,
+    jboolean deterministic_seed_present, jlong deterministic_seed
+) {
+    auto parsed_profile_id = fps::android_jni::jstring_to_string(env, profile_id);
+    auto parsed_record_size_c2s = jcdf_to_cdf(env, record_size_c2s_le, record_size_c2s_p);
+    auto parsed_record_size_s2c = jcdf_to_cdf(env, record_size_s2c_le, record_size_s2c_p);
+    auto parsed_delay_c2s = jcdf_to_cdf(env, delay_c2s_le, delay_c2s_p);
+    auto parsed_delay_s2c = jcdf_to_cdf(env, delay_s2c_le, delay_s2c_p);
+    if(!parsed_profile_id || !parsed_record_size_c2s || !parsed_record_size_s2c || !parsed_delay_c2s || !parsed_delay_s2c) {
+        const auto snapshot = fps::android_native::invalid_runtime_snapshot("invalid_shaper_profile");
+        return fps::android_jni::runtime_snapshot_object(env, snapshot);
+    }
+    std::optional<std::uint64_t> seed;
+    if(deterministic_seed_present == JNI_TRUE) {
+        if(deterministic_seed < 0) {
+            const auto snapshot = fps::android_native::invalid_runtime_snapshot("invalid_shaper_profile");
+            return fps::android_jni::runtime_snapshot_object(env, snapshot);
+        }
+        seed = static_cast<std::uint64_t>(deterministic_seed);
+    }
+    const auto snapshot = fps::android_native::configure_client_shaper(
+        static_cast<fps::android_native::NativeRuntimeHandle>(handle), std::move(parsed_profile_id.value()), std::move(parsed_record_size_c2s.value()),
+        std::move(parsed_record_size_s2c.value()), std::move(parsed_delay_c2s.value()), std::move(parsed_delay_s2c.value()),
+        static_cast<double>(covert_ratio_max), static_cast<int>(burst_records_max), static_cast<std::int64_t>(jitter_min_ms),
+        static_cast<std::int64_t>(jitter_max_ms), adaptive_enabled == JNI_TRUE, static_cast<int>(adaptive_min_records),
+        static_cast<std::int64_t>(adaptive_min_observation_ms), static_cast<double>(adaptive_decay),
+        static_cast<std::int64_t>(adaptive_snapshot_interval_ms), seed
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }

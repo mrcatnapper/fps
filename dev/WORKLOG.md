@@ -4,6 +4,50 @@
 
 ## 2026-06-14
 
+### Android static shaper profile UX
+
+Goal:
+
+- Let Android client profiles carry a self-contained static shaper profile
+  using the same compact inline CDF JSON shape as Linux configs.
+- Keep file expansion and Boost.JSON config parsing out of the Android
+  boundary.
+
+Decisions:
+
+- Android supports only inline `shaper` objects and rejects
+  `shaper.profile_file`.
+- Kotlin validates the profile shape with Android's JSON runtime, then passes
+  primitive CDF arrays through JNI.
+- Native Android runtime constructs the existing platform-neutral
+  `fps::Shaper`, stores it as shared runtime state and attaches it to raw
+  `TlsTcpCarrierSession` instances.
+- Snapshots expose only non-secret shaper metadata: configured flag and
+  profile id.
+
+Completed:
+
+- Added Android profile model/parser support for `shaper.profile_id`,
+  record-size CDFs, inter-record-delay CDFs, covert ratio, burst limit, jitter,
+  adaptive settings and deterministic seed.
+- Added JNI/native `configureClientShaper` and runtime shaper state.
+- Wired raw Android TLS/TCP carrier sessions to the configured shared shaper.
+- Added JVM parser and fake-backend tests plus an instrumented native smoke for
+  valid/invalid native shaper configuration.
+- Updated Android/spec/testing/client-profile/beta/roadmap docs.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed.
+- `tools/run_android_checks.sh --docker-managed-device` passed, 27/27 managed
+  device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android HTTPS cover hardening
 
 Goal:

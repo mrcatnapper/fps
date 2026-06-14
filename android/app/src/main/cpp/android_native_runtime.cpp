@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <future>
 #include <initializer_list>
 #include <limits>
@@ -35,6 +36,7 @@
 #include "fps/core/enum.hpp"
 #include "fps/core/fps_upgrade_controller.hpp"
 #include "fps/core/identity.hpp"
+#include "fps/core/shaper.hpp"
 #include "fps/core/tls_record_layer.hpp"
 #include "fps/net/covert_datagram_transport.hpp"
 #include "fps/net/datagram_fragment.hpp"
@@ -797,6 +799,77 @@ public:
         return snapshot();
     }
 
+    [[nodiscard]] auto configure_client_shaper(
+        std::string profile_id, std::vector<fps::CdfPoint> record_size_c2s, std::vector<fps::CdfPoint> record_size_s2c,
+        std::vector<fps::CdfPoint> delay_us_c2s, std::vector<fps::CdfPoint> delay_us_s2c, double covert_ratio_max, int burst_records_max,
+        std::int64_t jitter_min_ms, std::int64_t jitter_max_ms, bool adaptive_enabled, int adaptive_min_records,
+        std::int64_t adaptive_min_observation_ms, double adaptive_decay, std::int64_t adaptive_snapshot_interval_ms,
+        std::optional<std::uint64_t> deterministic_seed
+    )
+        -> NativeRuntimeSnapshotFields {
+        const auto fail = [&](std::string error) {
+            {
+                std::lock_guard lock{shaper_mutex_};
+                shaper_.reset();
+                shaper_profile_id_.clear();
+            }
+            shaper_configured_.store(false);
+            last_error_ = std::move(error);
+            return snapshot();
+        };
+
+        if(profile_id.empty()) {
+            return fail("invalid_shaper_profile");
+        }
+        if(burst_records_max <= 0 || adaptive_min_records <= 0 || jitter_min_ms < 0 || jitter_max_ms < 0 || adaptive_min_observation_ms < 0 ||
+           adaptive_snapshot_interval_ms < 0) {
+            return fail("invalid_shaper_profile");
+        }
+
+        fps::ShaperProfile profile{
+            .profile_id = std::move(profile_id),
+            .client_to_server =
+                fps::DirectionProfile{
+                    .record_size_cdf = std::move(record_size_c2s),
+                    .inter_record_delay_us_cdf = std::move(delay_us_c2s),
+                },
+            .server_to_client =
+                fps::DirectionProfile{
+                    .record_size_cdf = std::move(record_size_s2c),
+                    .inter_record_delay_us_cdf = std::move(delay_us_s2c),
+                },
+            .covert_ratio_max = covert_ratio_max,
+            .burst_records_max = static_cast<std::size_t>(burst_records_max),
+            .jitter =
+                fps::JitterRange{
+                    .min = std::chrono::milliseconds{jitter_min_ms},
+                    .max = std::chrono::milliseconds{jitter_max_ms},
+                },
+            .adaptive_enabled = adaptive_enabled,
+            .adaptive_min_records = static_cast<std::size_t>(adaptive_min_records),
+            .adaptive_min_observation = std::chrono::milliseconds{adaptive_min_observation_ms},
+            .adaptive_decay = adaptive_decay,
+            .snapshot_interval = std::chrono::milliseconds{adaptive_snapshot_interval_ms},
+            .deterministic_seed = deterministic_seed,
+        };
+
+        std::shared_ptr<fps::Shaper> configured;
+        try {
+            configured = std::make_shared<fps::Shaper>(profile);
+        } catch(const std::exception&) {
+            return fail("invalid_shaper_profile");
+        }
+
+        {
+            std::lock_guard lock{shaper_mutex_};
+            shaper_profile_id_ = profile.profile_id;
+            shaper_ = std::move(configured);
+        }
+        shaper_configured_.store(true);
+        last_error_.clear();
+        return snapshot();
+    }
+
     [[nodiscard]] auto run_client_auth_smoke_for_test(bool tamper_server_accept) -> NativeRuntimeSnapshotFields {
         carrier_auth_attempted_.fetch_add(1);
         if(!started_ || !worker_thread_running_.load()) {
@@ -1366,6 +1439,11 @@ private:
             }
             auth = *client_auth_config_;
         }
+        std::shared_ptr<fps::Shaper> shaper;
+        {
+            std::lock_guard lock{shaper_mutex_};
+            shaper = shaper_;
+        }
 
         auto remote_socket = std::move(*raw_carrier_socket_);
         raw_carrier_socket_.reset();
@@ -1403,7 +1481,7 @@ private:
             fps::net::TlsTcpCarrierSessionConfig{
                 .read_buffer_size = 64U * 1024U,
                 .max_write_queue_bytes = 1024U * 1024U,
-                .shaper = nullptr,
+                .shaper = std::move(shaper),
                 .zero_rtt = android_zero_rtt_options(auth),
             }
         );
@@ -1681,6 +1759,11 @@ private:
     void set_tun_last_drop_reason_locked(std::string_view reason) { tun_last_drop_reason_ = std::string{reason}; }
 
     [[nodiscard]] auto snapshot_locked() const -> NativeRuntimeSnapshotFields {
+        std::string shaper_profile_id;
+        {
+            std::lock_guard lock{shaper_mutex_};
+            shaper_profile_id = shaper_profile_id_;
+        }
         return NativeRuntimeSnapshotFields{
             .alive = true,
             .started = started_,
@@ -1728,6 +1811,8 @@ private:
             .carrier_auth_succeeded = carrier_auth_succeeded_.load(),
             .carrier_auth_failed = carrier_auth_failed_.load(),
             .carrier_lease_received = carrier_lease_received_.load(),
+            .shaper_configured = shaper_configured_.load(),
+            .shaper_profile_id = std::move(shaper_profile_id),
             .last_error = last_error_,
         };
     }
@@ -1800,6 +1885,10 @@ private:
     std::atomic<std::uint64_t> carrier_auth_succeeded_ = 0;
     std::atomic<std::uint64_t> carrier_auth_failed_ = 0;
     std::atomic<std::uint64_t> carrier_lease_received_ = 0;
+    mutable std::mutex shaper_mutex_;
+    std::shared_ptr<fps::Shaper> shaper_;
+    std::string shaper_profile_id_;
+    std::atomic_bool shaper_configured_ = false;
     mutable std::mutex native_events_mutex_;
     std::deque<NativeRuntimeEventFields> native_events_;
     std::atomic<std::uint64_t> commands_posted_ = 0;
@@ -1900,6 +1989,31 @@ public:
                 return runtime.configure_client_auth(
                     std::move(profile_id), std::move(client_uuid), std::move(server_public_key_base64), client_upgrade_delay_ms,
                     client_upgrade_delay_sigma_ms, max_frame_payload, max_frame_padding
+                );
+            }
+        );
+    }
+
+    [[nodiscard]] auto configure_client_shaper(
+        NativeRuntimeHandle handle, std::string profile_id, std::vector<fps::CdfPoint> record_size_c2s,
+        std::vector<fps::CdfPoint> record_size_s2c, std::vector<fps::CdfPoint> delay_us_c2s, std::vector<fps::CdfPoint> delay_us_s2c,
+        double covert_ratio_max, int burst_records_max, std::int64_t jitter_min_ms, std::int64_t jitter_max_ms, bool adaptive_enabled,
+        int adaptive_min_records, std::int64_t adaptive_min_observation_ms, double adaptive_decay, std::int64_t adaptive_snapshot_interval_ms,
+        std::optional<std::uint64_t> deterministic_seed
+    )
+        -> NativeRuntimeSnapshotFields {
+        return with_runtime(
+            handle, invalid_runtime_snapshot("invalid_handle"),
+            [
+                profile_id = std::move(profile_id), record_size_c2s = std::move(record_size_c2s), record_size_s2c = std::move(record_size_s2c),
+                delay_us_c2s = std::move(delay_us_c2s), delay_us_s2c = std::move(delay_us_s2c), covert_ratio_max, burst_records_max, jitter_min_ms,
+                jitter_max_ms, adaptive_enabled, adaptive_min_records, adaptive_min_observation_ms, adaptive_decay, adaptive_snapshot_interval_ms,
+                deterministic_seed
+            ](AndroidNativeRuntime& runtime) mutable {
+                return runtime.configure_client_shaper(
+                    std::move(profile_id), std::move(record_size_c2s), std::move(record_size_s2c), std::move(delay_us_c2s), std::move(delay_us_s2c),
+                    covert_ratio_max, burst_records_max, jitter_min_ms, jitter_max_ms, adaptive_enabled, adaptive_min_records,
+                    adaptive_min_observation_ms, adaptive_decay, adaptive_snapshot_interval_ms, deterministic_seed
                 );
             }
         );
@@ -2137,6 +2251,21 @@ auto configure_client_auth(
     );
 }
 
+auto configure_client_shaper(
+    NativeRuntimeHandle handle, std::string profile_id, std::vector<fps::CdfPoint> record_size_c2s, std::vector<fps::CdfPoint> record_size_s2c,
+    std::vector<fps::CdfPoint> delay_us_c2s, std::vector<fps::CdfPoint> delay_us_s2c, double covert_ratio_max, int burst_records_max,
+    std::int64_t jitter_min_ms, std::int64_t jitter_max_ms, bool adaptive_enabled, int adaptive_min_records,
+    std::int64_t adaptive_min_observation_ms, double adaptive_decay, std::int64_t adaptive_snapshot_interval_ms,
+    std::optional<std::uint64_t> deterministic_seed
+)
+    -> NativeRuntimeSnapshotFields {
+    return runtime_registry().configure_client_shaper(
+        handle, std::move(profile_id), std::move(record_size_c2s), std::move(record_size_s2c), std::move(delay_us_c2s), std::move(delay_us_s2c),
+        covert_ratio_max, burst_records_max, jitter_min_ms, jitter_max_ms, adaptive_enabled, adaptive_min_records, adaptive_min_observation_ms,
+        adaptive_decay, adaptive_snapshot_interval_ms, deterministic_seed
+    );
+}
+
 auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields> {
     return runtime_registry().drain_native_events(handle, max_events);
 }
@@ -2177,6 +2306,8 @@ auto invalid_runtime_snapshot(std::string_view error) -> NativeRuntimeSnapshotFi
         .tun_mtu = 0,
         .tun_fd_ownership = TunFdOwnership::none,
         .tun_last_drop_reason = {},
+        .shaper_configured = false,
+        .shaper_profile_id = {},
         .last_error = std::string{error},
     };
 }

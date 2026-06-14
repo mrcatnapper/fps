@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "fps/core/shaper.hpp"
 #include "fps/net/tun_packet.hpp"
 
 namespace fps::android_native {
@@ -63,6 +65,8 @@ struct NativeRuntimeSnapshotFields {
     std::uint64_t carrier_auth_succeeded = 0;
     std::uint64_t carrier_auth_failed = 0;
     std::uint64_t carrier_lease_received = 0;
+    bool shaper_configured = false;
+    std::string shaper_profile_id;
     std::string last_error;
 };
 
@@ -101,6 +105,14 @@ void close_runtime(NativeRuntimeHandle handle);
 [[nodiscard]] auto configure_client_auth(
     NativeRuntimeHandle handle, std::string profile_id, std::string client_uuid, std::string server_public_key_base64,
     std::int64_t client_upgrade_delay_ms, std::int64_t client_upgrade_delay_sigma_ms, int max_frame_payload, int max_frame_padding
+)
+    -> NativeRuntimeSnapshotFields;
+[[nodiscard]] auto configure_client_shaper(
+    NativeRuntimeHandle handle, std::string profile_id, std::vector<fps::CdfPoint> record_size_c2s,
+    std::vector<fps::CdfPoint> record_size_s2c, std::vector<fps::CdfPoint> delay_us_c2s, std::vector<fps::CdfPoint> delay_us_s2c,
+    double covert_ratio_max, int burst_records_max, std::int64_t jitter_min_ms, std::int64_t jitter_max_ms, bool adaptive_enabled,
+    int adaptive_min_records, std::int64_t adaptive_min_observation_ms, double adaptive_decay, std::int64_t adaptive_snapshot_interval_ms,
+    std::optional<std::uint64_t> deterministic_seed
 )
     -> NativeRuntimeSnapshotFields;
 [[nodiscard]] auto drain_native_events(NativeRuntimeHandle handle, int max_events) -> std::vector<NativeRuntimeEventFields>;

@@ -325,6 +325,9 @@ HTTP/1.1 keep-alive GETs while preserving raw TLS bytes for the native bridge.
 The Android carrier profile can bound per-response draining with
 `max_response_bytes`; JVM tests cover oversized responses, chunked responses and
 close-before-next-keepalive behavior.
+Android profile tests also cover inline static shaper CDF parsing and rejection
+of file-based `shaper.profile_file`; JNI/native smoke covers configuring the
+shared native shaper from primitive CDF arrays.
 OkHttp remains probe/support code, not the FPS wire carrier. The scaffold also
 has a lease-triggered `VpnService.Builder` TUN fd ownership layer, tested with
 fake builders and a real debug `VpnService` fd routed through the Kotlin/native

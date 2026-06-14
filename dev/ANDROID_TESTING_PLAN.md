@@ -302,9 +302,7 @@ Prioritize these emulator/device scenarios in order:
    WSS remains probe-support
    code and future external-carrier research; do not add a raw WSS internal
    carrier unless the Android product direction changes explicitly.
-3. Add static shaper-profile UX to the Android profile/runtime path before
-   expanding external carrier design.
-4. Extend the managed-device lane from fd/pump smoke to the smallest
+3. Extend the managed-device lane from fd/pump smoke to the smallest
    production-shaped HTTPS flow that requires Android framework behavior.
-5. Keep managed-device CI manual/scheduled until repeated runs show it is
+4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

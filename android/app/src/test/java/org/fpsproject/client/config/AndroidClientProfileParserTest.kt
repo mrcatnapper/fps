@@ -21,6 +21,7 @@ class AndroidClientProfileParserTest {
             {"mode": "wss", "endpoint": "[2001:db8::1]:9443", "path": "/stream", "interval_ms": 10000, "max_response_bytes": 2048}
           ],
         """.trimIndent(),
+        shaper: String = "",
         splitTunnel: String = """
           "split_tunnel": {
             "allowed_uids": [10042, 10043]
@@ -58,10 +59,40 @@ class AndroidClientProfileParserTest {
             "status_socket": "/run/fps/client.status"
           },
           $carriers
+          $shaper
           $splitTunnel
           "unused_tail": true
         }
     """.trimIndent()
+
+    private fun shaperJson(
+        extra: String = "",
+        recordSizeC2s: String = "[[512, 0.5], [1500, 1.0]]",
+        recordSizeS2c: String = "[[640, 0.25], [1510, 1.0]]",
+        delayC2s: String = "[[1000, 0.7], [10000, 1.0]]",
+        delayS2c: String = "[[2000, 0.5], [15000, 1.0]]",
+    ) = """
+          "shaper": {
+            "enabled": true,
+            "profile_id": "android-shaper-test",
+            "record_size_cdf_c2s": $recordSizeC2s,
+            "record_size_cdf_s2c": $recordSizeS2c,
+            "inter_record_delay_us_cdf_c2s": $delayC2s,
+            "inter_record_delay_us_cdf_s2c": $delayS2c,
+            "covert_ratio_max": 0.25,
+            "burst_records_max": 2,
+            "jitter_ms": {"min": 1, "max": 3},
+            "adaptive": {
+              "enabled": false,
+              "min_records": 4,
+              "min_observation_ms": 500,
+              "decay": 0.75,
+              "snapshot_interval_ms": 1000
+            },
+            "deterministic_seed": "42"
+            $extra
+          },
+        """.trimIndent()
 
     @Test
     fun parsesClientJsonProfile() {
@@ -80,6 +111,7 @@ class AndroidClientProfileParserTest {
         assertEquals(DEFAULT_MAX_CARRIER_RESPONSE_BYTES, profile.carriers[0].maxResponseBytes)
         assertEquals(2048, profile.carriers[1].maxResponseBytes)
         assertEquals(setOf(10042, 10043), profile.splitTunnel.allowedUids)
+        assertEquals(null, profile.shaper)
     }
 
     @Test
@@ -129,6 +161,55 @@ class AndroidClientProfileParserTest {
         }
         assertThrows(AndroidClientProfileParseException::class.java) {
             AndroidClientProfileParser.parse(profileJson(extraTun = ",\"lease_pool\":\"10.66.0.0/30\""))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = """"shaper": {"enabled": true, "profile_file": "profile.json"},"""))
+        }
+    }
+
+    @Test
+    fun parsesInlineShaperProfile() {
+        val profile = AndroidClientProfileParser.parse(profileJson(shaper = shaperJson()))
+        val shaper = profile.shaper!!
+
+        assertEquals("android-shaper-test", shaper.profileId)
+        assertEquals(listOf(CdfPointProfile(512L, 0.5), CdfPointProfile(1500L, 1.0)), shaper.clientToServer.recordSizeCdf)
+        assertEquals(listOf(CdfPointProfile(640L, 0.25), CdfPointProfile(1510L, 1.0)), shaper.serverToClient.recordSizeCdf)
+        assertEquals(listOf(CdfPointProfile(1000L, 0.7), CdfPointProfile(10000L, 1.0)), shaper.clientToServer.interRecordDelayUsCdf)
+        assertEquals(0.25, shaper.covertRatioMax, 0.0)
+        assertEquals(2, shaper.burstRecordsMax)
+        assertEquals(1L, shaper.jitterMinMs)
+        assertEquals(3L, shaper.jitterMaxMs)
+        assertFalse(shaper.adaptive.enabled)
+        assertEquals(4, shaper.adaptive.minRecords)
+        assertEquals(500L, shaper.adaptive.minObservationMs)
+        assertEquals(0.75, shaper.adaptive.decay, 0.0)
+        assertEquals(1000L, shaper.adaptive.snapshotIntervalMs)
+        assertEquals(42L, shaper.deterministicSeed)
+    }
+
+    @Test
+    fun rejectsInvalidShaperProfiles() {
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson(recordSizeC2s = "[]")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson(recordSizeC2s = """[{"le": 512, "p": 1.0}]""")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson(recordSizeC2s = "[[1500, 0.5], [512, 1.0]]")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson(recordSizeC2s = "[[512, 0.5], [1500, 0.9]]")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson(recordSizeC2s = "[[0, 1.0]]")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson().replace(""""deterministic_seed": "42"""", """"deterministic_seed": -1""")))
+        }
+        assertThrows(AndroidClientProfileParseException::class.java) {
+            AndroidClientProfileParser.parse(profileJson(shaper = shaperJson().replace(""""decay": 0.75""", """"decay": 0.0""")))
         }
     }
 
