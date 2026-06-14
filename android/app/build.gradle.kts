@@ -32,6 +32,23 @@ android {
         }
     }
 
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf("-DFPS_ANDROID_ENABLE_TEST_HOOKS=ON")
+                }
+            }
+        }
+        release {
+            externalNativeBuild {
+                cmake {
+                    arguments += listOf("-DFPS_ANDROID_ENABLE_TEST_HOOKS=OFF")
+                }
+            }
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

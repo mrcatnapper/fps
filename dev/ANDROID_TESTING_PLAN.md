@@ -24,21 +24,21 @@ documentation.
 ## Current Baseline
 
 - Default Android verification is still Docker/JVM-first:
-  `tools/run_android_checks.sh` builds the Android CI image and runs host
-  Gradle checks inside it.
+  `tools/run_android_checks.sh` builds the source-free Android base image and
+  runs host Gradle checks inside it with the current workspace bind-mounted.
 - `tools/run_android_checks.sh --host` runs JVM tests plus debug APK, release
   APK and instrumented-test APK assembly. It requires an Android SDK but no
-  emulator. The release APK smoke guards the production variant after
-  debug-only test hooks are added.
+  emulator. The release APK smoke verifies that debug-only native test hooks do
+  not become production JNI exports.
 - `tools/run_android_checks.sh --connected` runs the current instrumented native
   smoke on an already attached Android device or emulator.
-- `tools/run_android_checks.sh --docker-managed-device` can now reuse existing
-  Android Docker image tags with `FPS_ANDROID_REUSE_DOCKER_IMAGE=1`; use this
-  for fast reruns after the base/emulator images have already been built.
+- `tools/run_android_checks.sh --docker-managed-device` reuses existing Android
+  Docker image tags by default; use `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only
+  when intentionally rebuilding image contents.
 - `Dockerfile.android` is intentionally a build/test image, not an emulator
-  image. It installs SDK/NDK/vcpkg Android OpenSSL and prewarms Gradle
-  dependencies in the source-free `android-gradle-base` stage, before the full
-  source `COPY`.
+  image. Its `android-gradle-base` stage installs SDK/NDK/vcpkg Android OpenSSL
+  and prewarms Gradle dependencies without copying the full source tree. The
+  source-containing final stage is opt-in only.
 - `Dockerfile.android-emulator` extends the Android build image with the
   Android emulator and the API 30 x86_64 AOSP ATD system image. It is opt-in
   and requires host `/dev/kvm` passthrough. It must inherit from the
@@ -178,22 +178,32 @@ Use the repository helper:
 
 ```sh
 tools/run_android_checks.sh --docker-managed-device
-FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device
+FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh --docker-managed-device
 ```
 
-The helper builds the base image first, builds the emulator image from that
-local tag, then runs the managed-device task in a container with `/dev/kvm`
-passed through and the current workspace bind-mounted. The base image is built
-from the source-free `android-gradle-base` target. With
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1`, existing default tags are used directly and
+The helper ensures the source-free base image and emulator image exist, then
+runs the managed-device task in a container with `/dev/kvm` passed through and
+the current workspace bind-mounted. Existing default tags are used directly and
 only missing images are built:
 
-- `fps:android-ci`
 - `fps:android-ci-base`
 - `fps:android-emulator-ci`
 
 Avoid long-lived custom local tags for routine Android checks. They make it too
 easy to build a second independent SDK/emulator image set and waste disk space.
+Use `tools/run_android_checks.sh --clean-images` for allowlisted Android image
+cleanup; by default it prunes dangling images and keeps useful Android cache
+tags. Set `FPS_ANDROID_CLEAN_TAGS=1` only when intentionally resetting Android
+images. Do not use broad Docker prunes as part of routine checks.
+
+The emulator tag is intentionally large. It inherits the SDK/NDK/Gradle/vcpkg
+Android OpenSSL base and adds the Android emulator plus the API 30 AOSP ATD
+x86_64 system image. Keep it tagged when managed-device tests are part of the
+local workflow; rebuilding it on every run wastes network, disk and time. Use
+`FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only when the image contents intentionally
+changed. A forced base-image rebuild intentionally removes the old emulator tag
+because that child image must be recreated from the new base. Do not create
+parallel emulator tags unless a specific experiment needs them.
 Keep this lane opt-in until repeated local/agent runs show it is stable enough
 for scheduled CI.
 
@@ -284,10 +294,13 @@ Prioritize these emulator/device scenarios in order:
 
 ## Next Android Runtime Steps
 
-1. Add the headless coordinator and a JVM product-flow test that includes
-   underlying-network resolution, protect-before-connect, bridge startup, lease,
-   TUN attach and policy draining.
-2. Extend the managed-device lane from fd/pump smoke to the smallest
-   production-shaped flow that requires Android framework behavior.
-3. Keep managed-device CI manual/scheduled until repeated runs show it is
+1. Keep the minimal foreground-service/status surface covered by JVM tests
+   through a fake notifier/status sink and add device-level checks only where
+   Android framework behavior is required.
+2. Keep the first product carrier path HTTPS-only. WSS remains probe-support
+   code and future external-carrier research; do not add a raw WSS internal
+   carrier unless the Android product direction changes explicitly.
+3. Extend the managed-device lane from fd/pump smoke to the smallest
+   production-shaped HTTPS flow that requires Android framework behavior.
+4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating.

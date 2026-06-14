@@ -5,10 +5,12 @@ usage() {
   cat >&2 <<'EOF'
 Usage: tools/run_android_checks.sh [--host] [--docker] [--connected]
        tools/run_android_checks.sh [--managed-device] [--docker-managed-device]
+       tools/run_android_checks.sh [--clean-images]
 
 Runs Android build/test checks:
   --host       Run Gradle unit tests and APK assembly with the current host SDK.
-  --docker     Build Dockerfile.android and run the host checks inside it.
+  --docker     Build the source-free Android base image and run host checks
+               inside it with the current workspace bind-mounted.
                This is the default outside Docker when no mode is specified.
   --connected  Run the instrumented native smoke on an attached Android
                device/emulator through adb.
@@ -18,19 +20,22 @@ Runs Android build/test checks:
   --docker-managed-device
                Build Dockerfile.android and Dockerfile.android-emulator, then
                run --managed-device inside the emulator image through /dev/kvm.
+  --clean-images
+               Remove dangling Android Docker artifacts. Set
+               FPS_ANDROID_CLEAN_TAGS=1 to also remove known FPS Android tags.
 
 Environment:
   ANDROID_HOME              Android SDK root for --host/--connected.
   ANDROID_SDK_ROOT          Android SDK root alias.
   ANDROID_NDK_HOME          Android NDK path, default:
                             $ANDROID_HOME/ndk/28.2.13676358.
-  FPS_ANDROID_DOCKER_IMAGE  Docker image tag for --docker, default:
-                            fps:android-ci.
+  FPS_ANDROID_DOCKER_IMAGE  Source-containing Docker image tag used only when
+                            FPS_ANDROID_SOURCE_IMAGE=1, default: fps:android-ci.
   FPS_ANDROID_DOCKERFILE    Dockerfile for --docker, default:
                             Dockerfile.android.
   FPS_ANDROID_BASE_IMAGE    Source-free Android base image tag for
-                            --docker-managed-device, default:
-                            ${FPS_ANDROID_DOCKER_IMAGE}-base.
+                            --docker and --docker-managed-device, default:
+                            fps:android-ci-base.
   FPS_ANDROID_BASE_TARGET   Dockerfile.android target used for
                             FPS_ANDROID_BASE_IMAGE, default:
                             android-gradle-base.
@@ -40,10 +45,19 @@ Environment:
   FPS_ANDROID_EMULATOR_DOCKERFILE
                             Dockerfile for --docker-managed-device, default:
                             Dockerfile.android-emulator.
-  FPS_ANDROID_REUSE_DOCKER_IMAGE=1
-                            Reuse existing Android Docker images instead of
-                            rebuilding them. If a requested image is missing,
-                            it is built normally.
+  FPS_ANDROID_FORCE_DOCKER_REBUILD=1
+                            Rebuild Android Docker images even when the target
+                            tag already exists. Use after Dockerfile layer,
+                            apt/sdk package or base-image changes.
+  FPS_ANDROID_SOURCE_IMAGE=1
+                            Build and run the legacy source-containing
+                            Dockerfile.android final image instead of the
+                            source-free base image plus bind mount.
+  FPS_ANDROID_CLEAN_DRY_RUN=1
+                            Print --clean-images actions without deleting.
+  FPS_ANDROID_CLEAN_TAGS=1  Also remove known FPS Android image tags during
+                            --clean-images. By default only dangling images are
+                            pruned, so useful cache tags stay available.
   FPS_ANDROID_MANAGED_DEVICE_TASK
                             Gradle task for --managed-device, default:
                             :android:app:fpsApi30AtdDebugAndroidTest.
@@ -60,6 +74,7 @@ run_docker=false
 run_connected=false
 run_managed_device=false
 run_docker_managed_device=false
+run_clean_images=false
 
 if [[ $# -eq 0 && "${FPS_ANDROID_DOCKER:-0}" == "1" ]]; then
   run_host=true
@@ -84,6 +99,9 @@ while [[ $# -gt 0 ]]; do
     --docker-managed-device)
       run_docker_managed_device=true
       ;;
+    --clean-images)
+      run_clean_images=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -107,15 +125,6 @@ run() {
   "$@"
 }
 
-remove_existing_docker_image() {
-  local image="$1"
-  shift
-  if "$@" image inspect "$image" >/dev/null 2>&1; then
-    log "Remove previous Docker image tag: $image"
-    run "$@" image rm --no-prune "$image"
-  fi
-}
-
 docker_image_exists() {
   local image="$1"
   shift
@@ -134,18 +143,77 @@ docker_build_image() {
   fi
 }
 
+docker_remove_image_tag() {
+  local image="$1"
+  shift
+
+  if docker_image_exists "$image" "$@"; then
+    log "Remove existing Android Docker image tag before rebuild: $image"
+    run "$@" image rm --no-prune "$image"
+  fi
+}
+
 ensure_docker_image() {
   local image="$1"
   local dockerfile_path="$2"
   shift 2
 
-  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$image" "$@"; then
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$image" "$@"; then
     log "Reuse existing Android Docker image: $image"
     return 0
   fi
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+    docker_remove_image_tag "$image" "$@"
+  fi
 
-  remove_existing_docker_image "$image" "$@"
   docker_build_image "$image" "$dockerfile_path" "$@"
+}
+
+clean_android_images() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is required for --clean-images" >&2
+    exit 2
+  fi
+
+  local docker_cmd=(docker)
+  if [[ "${FPS_DOCKER_SUDO:-0}" == "1" ]]; then
+    docker_cmd=(sudo -n docker)
+  fi
+
+  local dry_run=false
+  if [[ "${FPS_ANDROID_CLEAN_DRY_RUN:-0}" == "1" ]]; then
+    dry_run=true
+  fi
+  local clean_tags=false
+  if [[ "${FPS_ANDROID_CLEAN_TAGS:-0}" == "1" ]]; then
+    clean_tags=true
+  fi
+
+  local known_images=(
+    "${FPS_ANDROID_BASE_IMAGE:-fps:android-ci-base}"
+    "${FPS_ANDROID_DOCKER_IMAGE:-fps:android-ci}"
+    "${FPS_ANDROID_EMULATOR_IMAGE:-fps:android-emulator-ci}"
+    fps:android-gradle-base
+  )
+
+  if [[ "$clean_tags" == true ]]; then
+    local image
+    for image in "${known_images[@]}"; do
+      if docker_image_exists "$image" "${docker_cmd[@]}"; then
+        if [[ "$dry_run" == true ]]; then
+          printf 'would remove image tag: %s\n' "$image"
+        else
+          run "${docker_cmd[@]}" image rm --no-prune "$image"
+        fi
+      fi
+    done
+  fi
+
+  if [[ "$dry_run" == true ]]; then
+    run "${docker_cmd[@]}" images --filter dangling=true
+  else
+    run "${docker_cmd[@]}" image prune -f
+  fi
 }
 
 set_android_env() {
@@ -176,6 +244,40 @@ run_host_checks() {
     :android:app:assembleDebug \
     :android:app:assembleRelease \
     :android:app:assembleDebugAndroidTest
+
+  verify_release_native_surface
+}
+
+verify_release_native_surface() {
+  log "Verify Android release native surface"
+  local nm_cmd
+  if command -v llvm-nm >/dev/null 2>&1; then
+    nm_cmd=(llvm-nm)
+  elif command -v nm >/dev/null 2>&1; then
+    nm_cmd=(nm)
+  else
+    echo "llvm-nm or nm is required to verify Android release native symbols" >&2
+    exit 2
+  fi
+
+  local libs=()
+  while IFS= read -r -d '' lib; do
+    libs+=("$lib")
+  done < <(find "$repo_root/android/app/build/intermediates" -type f -path '*release*' -name libfps_android_native.so -print0 | sort -z)
+
+  if [[ "${#libs[@]}" -eq 0 ]]; then
+    echo "Release libfps_android_native.so was not found under android/app/build/intermediates" >&2
+    exit 1
+  fi
+
+  local forbidden='FpsNativeTestHooks|runClientAuthSmokeForTest|RunZeroRttServerPeerForTest|InjectInboundDatagramForTest|StartFakeCarrierForTest|InstallTunPacketCaptureSinkForTest'
+  local lib
+  for lib in "${libs[@]}"; do
+    if "${nm_cmd[@]}" -D --defined-only "$lib" 2>/dev/null | grep -E "$forbidden" >&2; then
+      echo "Forbidden Android test JNI symbol exported by release library: $lib" >&2
+      exit 1
+    fi
+  done
 }
 
 run_connected_checks() {
@@ -217,6 +319,9 @@ run_managed_device_checks() {
 
 run_docker_checks() {
   local image="${FPS_ANDROID_DOCKER_IMAGE:-fps:android-ci}"
+  local android_base_image="${FPS_ANDROID_BASE_IMAGE:-fps:android-ci-base}"
+  local android_base_target="${FPS_ANDROID_BASE_TARGET:-android-gradle-base}"
+  local emulator_image="${FPS_ANDROID_EMULATOR_IMAGE:-fps:android-emulator-ci}"
   local dockerfile="${FPS_ANDROID_DOCKERFILE:-Dockerfile.android}"
   local dockerfile_path
   if [[ "$dockerfile" = /* ]]; then
@@ -238,17 +343,38 @@ run_docker_checks() {
     docker_cmd=(sudo -n docker)
   fi
 
-  log "Build Android Docker image"
   local docker_build_args=()
-  ensure_docker_image "$image" "$dockerfile_path" "${docker_cmd[@]}"
 
-  log "Run Android checks in Docker"
-  run "${docker_cmd[@]}" run --rm "$image"
+  if [[ "${FPS_ANDROID_SOURCE_IMAGE:-0}" == "1" ]]; then
+    log "Build source-containing Android Docker image"
+    ensure_docker_image "$image" "$dockerfile_path" "${docker_cmd[@]}"
+
+    log "Run Android checks in source-containing Docker image"
+    run "${docker_cmd[@]}" run --rm "$image"
+    return 0
+  fi
+
+  log "Ensure source-free Android base Docker image"
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+    # The managed-device image extends this base. A forced base rebuild makes
+    # the old emulator image stale, so remove its tag before rebuilding the
+    # parent image and let the next managed-device run recreate it.
+    docker_remove_image_tag "$emulator_image" "${docker_cmd[@]}"
+  fi
+  docker_build_args=(--target "$android_base_target")
+  ensure_docker_image "$android_base_image" "$dockerfile_path" "${docker_cmd[@]}"
+
+  log "Run Android checks in source-free Docker image"
+  run "${docker_cmd[@]}" run \
+    --rm \
+    -v "$repo_root:/workspaces" \
+    -w /workspaces \
+    "$android_base_image" \
+    tools/run_android_checks.sh --host
 }
 
 run_docker_managed_device_checks() {
-  local base_image="${FPS_ANDROID_DOCKER_IMAGE:-fps:android-ci}"
-  local android_base_image="${FPS_ANDROID_BASE_IMAGE:-${base_image}-base}"
+  local android_base_image="${FPS_ANDROID_BASE_IMAGE:-fps:android-ci-base}"
   local android_base_target="${FPS_ANDROID_BASE_TARGET:-android-gradle-base}"
   local base_dockerfile="${FPS_ANDROID_DOCKERFILE:-Dockerfile.android}"
   local emulator_image="${FPS_ANDROID_EMULATOR_IMAGE:-fps:android-emulator-ci}"
@@ -289,14 +415,21 @@ run_docker_managed_device_checks() {
   fi
 
   local docker_build_args=()
-  if [[ "${FPS_ANDROID_REUSE_DOCKER_IMAGE:-0}" == "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
+  if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" != "1" ]] && docker_image_exists "$emulator_image" "${docker_cmd[@]}"; then
     log "Reuse existing Android emulator Docker image: $emulator_image"
   else
-    log "Build Android source-free base Docker image"
+    if [[ "${FPS_ANDROID_FORCE_DOCKER_REBUILD:-0}" == "1" ]]; then
+      # The emulator image is a child of the base image. Remove it first so the
+      # subsequent forced base rebuild does not leave the old base held alive by
+      # the old child image.
+      docker_remove_image_tag "$emulator_image" "${docker_cmd[@]}"
+    fi
+
+    log "Ensure Android source-free base Docker image"
     docker_build_args=(--target "$android_base_target")
     ensure_docker_image "$android_base_image" "$base_dockerfile_path" "${docker_cmd[@]}"
 
-    log "Build Android emulator Docker image"
+    log "Ensure Android emulator Docker image"
     docker_build_args=(--build-arg "FPS_ANDROID_BASE_IMAGE=$android_base_image")
     ensure_docker_image "$emulator_image" "$emulator_dockerfile_path" "${docker_cmd[@]}"
   fi
@@ -331,4 +464,8 @@ fi
 
 if [[ "$run_docker_managed_device" == true ]]; then
   run_docker_managed_device_checks
+fi
+
+if [[ "$run_clean_images" == true ]]; then
+  clean_android_images
 fi

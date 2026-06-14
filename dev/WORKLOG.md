@@ -2,6 +2,274 @@
 
 Журнал проектных работ FPS. Новые записи добавляются сверху или в хронологическом порядке внутри текущего дня, пока проект мал.
 
+## 2026-06-14
+
+### Android Docker image reuse policy correction
+
+Goal:
+
+- Align Android Docker behavior with the expected developer/agent workflow:
+  after a clean build, repeated Android host and managed-device checks should
+  reuse existing tagged images by default.
+
+Decisions:
+
+- `fps:android-ci-base` and `fps:android-emulator-ci` are both useful cache
+  images. The emulator image is large, but it should remain tagged when
+  emulator tests are part of the workflow.
+- Image rebuilds should be explicit after Dockerfile layer, apt/sdk package or
+  base-image changes, not implicit on every script run.
+
+Plan:
+
+1. Make `tools/run_android_checks.sh` reuse existing Android image tags by
+   default and build only missing images.
+2. Add an explicit `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` escape hatch for
+   intentional rebuilds.
+3. Update Android testing docs and developer notes.
+4. Reset local Docker images/cache, rebuild default Android images once, then
+   verify repeated runs reuse the tags without rebuilding.
+
+Completed:
+
+- Changed the Android Docker helper so existing tags are reused by default.
+- Removed the old documented `FPS_ANDROID_REUSE_DOCKER_IMAGE=1` switch from
+  the helper help text; default reuse no longer needs a compatibility flag.
+- Added `FPS_ANDROID_FORCE_DOCKER_REBUILD=1` for intentional tag rebuilds after
+  Dockerfile layer, apt/sdk package or base-image changes.
+- Made forced base-image rebuilds remove the stale emulator child tag before
+  rebuilding, so `fps:android-emulator-ci` is recreated from the new parent
+  instead of keeping an outdated child image around.
+- Updated the Docker artifact regression test to assert the new force-rebuild
+  contract instead of the removed reuse flag.
+- Updated testing/developer docs to state that both `fps:android-ci-base` and
+  `fps:android-emulator-ci` are expected cache tags after a clean build.
+- Fully reset local Docker images and build cache with `docker system prune -af`
+  and `docker builder prune -af`.
+- Rebuilt `fps:android-ci-base` and `fps:android-emulator-ci` from zero and
+  confirmed repeated `--docker` / `--docker-managed-device` runs reuse the
+  existing tags by default without Docker build.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `git diff --check` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `tools/run_android_checks.sh --docker` passed after full Docker reset,
+  rebuilding `fps:android-ci-base` from zero.
+- `tools/run_android_checks.sh --docker-managed-device` passed after full
+  Docker reset, reusing the base image, rebuilding `fps:android-emulator-ci`
+  and running 26/26 managed-device tests.
+- Repeated `tools/run_android_checks.sh --docker` passed and logged reuse of
+  `fps:android-ci-base`.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` passed and
+  logged reuse of `fps:android-emulator-ci`, with 26/26 managed-device tests.
+- Docker inventory after verification contains only the expected Android tags:
+  `fps:android-ci-base` (~6.8GB) and `fps:android-emulator-ci` (~12.5GB), with
+  no dangling images or stopped containers.
+- `FPS_ANDROID_FORCE_DOCKER_REBUILD=1 tools/run_android_checks.sh --docker`
+  passed; it removed the stale emulator tag first, removed/rebuilt the base tag
+  from Docker cache and completed Android host checks.
+- `tools/run_android_checks.sh --docker-managed-device` then rebuilt
+  `fps:android-emulator-ci` from the current base and passed, 26/26
+  managed-device tests.
+- Repeated `tools/run_android_checks.sh --docker-managed-device` reused
+  `fps:android-emulator-ci` and passed, 26/26 managed-device tests.
+
+### Android HTTPS-only foreground/status increment
+
+Goal:
+
+- Move the Android client closer to a manually testable VPN service without
+  adding raw WSS as a second internal carrier path.
+
+Decisions:
+
+- First Android builds keep the internal app-owned carrier HTTPS-only via
+  `RawHttpsLocalCoverClientStarter`.
+- WSS remains profile/probe-support and future external-carrier research; it is
+  not implemented as an internal Android FPS wire carrier in this route.
+- Minimal foreground/status UX is more valuable now than adding another carrier
+  protocol.
+
+Completed:
+
+- Added a pure-Kotlin `FpsVpnStatusNotifier` seam and status snapshots derived
+  from `CoordinatedNativeVpnRunnerSnapshot`.
+- Wired `FpsVpnServiceRuntime` to publish metadata-only status on start,
+  snapshot polling and stop.
+- Added Android foreground-service notification support with the `specialUse`
+  service type, a low-importance `fps_vpn_status` channel and a small
+  notification icon.
+- Added JVM coverage for status transitions, repeated snapshot updates,
+  idempotent foreground cleanup and secret/UUID redaction in status metadata.
+- Added a focused product-path negative test proving a WSS-only carrier profile
+  fails closed with `cover_mode_unsupported` through the current HTTPS-only
+  local cover starter.
+- Updated Android planning docs and public beta/spec notes to remove raw WSS as
+  the next internal-carrier step.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed, 26/26 managed-device tests.
+- `git diff --check` passed.
+- Removed the opt-in `fps:android-emulator-ci` tag after the managed-device
+  smoke; kept `fps:android-ci-base` as the reusable Android build cache.
+
+### Android Docker image size audit
+
+Goal:
+
+- Rebuild the Android Docker images after a clean local image reset, explain
+  the unexpectedly large emulator image and verify that routine Android checks
+  do not duplicate image tags or source-copied layers.
+
+Completed:
+
+- Rebuilt `fps:android-ci-base` through `tools/run_android_checks.sh --docker`.
+- Rebuilt `fps:android-emulator-ci` from the current
+  `fps:android-ci-base`.
+- Trimmed `Dockerfile.android` so the reusable base removes vcpkg `.git`,
+  `buildtrees`, `downloads` and `packages` after installing Android OpenSSL
+  triplets. `/opt/vcpkg` dropped from roughly 1.4GB to 277MB while keeping the
+  installed `arm64-android` and `x64-android` OpenSSL outputs.
+- Measured the current image contents:
+  - `fps:android-ci-base`: Docker virtual size about 6.8GB; `/opt/android-sdk`
+    about 2.7GB, dominated by the 2.2GB NDK; `/opt/gradle-cache` about 739MB.
+  - `fps:android-emulator-ci`: Docker virtual size about 12.5GB; it adds the
+    emulator binary, API 30 platform and about 3.2GB of AOSP ATD x86_64 system
+    image data.
+- Confirmed the large emulator tag is caused by the Android emulator/system
+  image stack, not by duplicate FPS tags.
+- Pruned dangling images and bounded Docker build cache without deleting the
+  useful Android base tag.
+- Re-ran the Docker-managed emulator lane; it now passes locally with `/dev/kvm`
+  and executes 26 managed-device instrumented tests.
+- Removed the opt-in `fps:android-emulator-ci` tag after the successful smoke to
+  keep routine local disk usage under control; `fps:android-ci-base` remains
+  tagged for fast Android JVM/native reruns.
+
+Verification:
+
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  passed.
+- `cmake -S . -B build && cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  passed, 26/26 managed-device tests.
+
+### Android Docker image hygiene refactor
+
+Goal:
+
+- Stop routine Android checks from creating heavy dangling source-copied Docker
+  images and make local/CI Android image caching predictable.
+
+Plan:
+
+1. Change `tools/run_android_checks.sh --docker` to build the source-free
+   `android-gradle-base` target as `fps:android-ci-base` and run host checks
+   through a bind-mounted workspace.
+2. Keep the source-containing `fps:android-ci` image only behind an explicit
+   opt-in environment flag.
+3. Remove automatic pre-build tag deletion and add an explicit Android image
+   cleanup mode that prunes dangling images by default and removes known FPS
+   Android tags only when explicitly requested.
+4. Update the GitHub Android CI job and Android testing docs to match the
+   source-free base image model.
+5. Run syntax, Android Docker and local regression checks.
+
+Completed:
+
+- Changed ordinary `tools/run_android_checks.sh --docker` to build
+  `Dockerfile.android --target android-gradle-base` as `fps:android-ci-base`
+  and run `--host` checks through a bind-mounted workspace.
+- Kept the full source-containing `fps:android-ci` path behind
+  `FPS_ANDROID_SOURCE_IMAGE=1`.
+- Removed automatic pre-build tag deletion from Android image builds.
+- Added `--clean-images`: default prunes dangling images only; setting
+  `FPS_ANDROID_CLEAN_TAGS=1` also removes known FPS Android image tags.
+- Updated the Android GitHub CI job to build only the source-free base target
+  with GHA cache scope `fps-android-base-v1`, then run checks through a bind
+  mount.
+- Removed the obsolete local `fps:android-ci` source-containing tag after the
+  new base-image path passed, leaving `fps:android-ci-base` and
+  `fps:android-emulator-ci` as the useful Android cache images.
+
+Verification:
+
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `FPS_ANDROID_CLEAN_DRY_RUN=1 tools/run_android_checks.sh --clean-images`
+  passed.
+- `tools/run_android_checks.sh --docker` passed through
+  `fps:android-ci-base` with a bind-mounted workspace.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker`
+  reused `fps:android-ci-base` and passed.
+- `tools/run_android_checks.sh --clean-images` passed and preserved useful
+  Android image tags.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+- `FPS_ANDROID_REUSE_DOCKER_IMAGE=1 tools/run_android_checks.sh --docker-managed-device`
+  still fails in the Gradle managed-device setup because the Android emulator
+  cannot start and reports an empty emulator process error. `/dev/kvm` is
+  present and `emulator -accel-check` inside the image reports KVM usable, so
+  this remains an existing emulator-infra lane issue rather than a regression in
+  the source-free base image refactor.
+
+### Android native surface hardening
+
+Goal:
+
+- Reduce Android production native attack surface and lifecycle risk before
+  adding more carrier modes.
+
+Plan:
+
+1. Gate debug/test-only JNI hooks behind an explicit Android native compile
+   definition enabled only for debug/instrumented builds.
+2. Verify release native symbols do not expose test hook entrypoints.
+3. Refactor `AndroidNativeRuntimeRegistry` so registry locks are held only for
+   lookup/erase, not while runtime methods post to Asio, wait on futures or stop
+   threads.
+4. Update Android developer docs and run Android Docker/JVM checks plus local
+   source/script/C++ sanity checks.
+
+Completed:
+
+- Added Android CMake/Gradle gating for `FPS_ANDROID_ENABLE_TEST_HOOKS`.
+  Debug and instrumented builds keep JNI test hooks; release native builds do
+  not export those entrypoints.
+- Extended `tools/run_android_checks.sh` with a release native symbol guard for
+  forbidden debug/test JNI exports.
+- Refactored `AndroidNativeRuntimeRegistry` to keep the global mutex scoped to
+  map lookup/removal. Runtime calls remain serialized by a per-runtime entry
+  mutex outside the registry mutex.
+- Updated Android boundary, app plan, testing and specification docs.
+
+Verification:
+
+- `docker run --rm -v /workspaces:/workspaces -w /workspaces fps:android-ci tools/run_android_checks.sh --host` passed during iteration.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+- `tools/run_android_checks.sh --docker` passed after rebuilding `fps:android-ci` from the Dockerfile.
+
 ## 2026-06-10
 
 ### Android service runner seam hardening

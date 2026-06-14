@@ -26,6 +26,7 @@ namespace {
 
 [[nodiscard]] auto ignored_trace_value() noexcept -> int { return 42; }
 
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
 [[nodiscard]] auto string_array(JNIEnv* env, const std::vector<std::string>& values) -> jobjectArray {
     auto* string_class = env->FindClass("java/lang/String");
     if(string_class == nullptr) {
@@ -54,6 +55,7 @@ namespace {
     env->DeleteLocalRef(string_class);
     return array;
 }
+#endif
 
 [[nodiscard]] auto core_smoke() -> std::string {
     auto random = fps::random_bytes(32);
@@ -261,17 +263,18 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
 
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_org_fpsproject_client_nativebridge_FpsNative_nativeDrainNativeEvents(JNIEnv* env, jobject /* self */, jlong handle, jint max_events) {
+    const auto events = fps::android_native::drain_native_events(static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(max_events));
+    return fps::android_jni::native_event_array(env, events);
+}
+
+#if defined(FPS_ANDROID_ENABLE_TEST_HOOKS)
 extern "C" JNIEXPORT jobject JNICALL
 Java_org_fpsproject_client_nativebridge_FpsNative_runClientAuthSmokeForTest(JNIEnv* env, jobject /* self */, jlong handle, jboolean tamper_server_accept) {
     const auto snapshot =
         fps::android_native::run_client_auth_smoke_for_test(static_cast<fps::android_native::NativeRuntimeHandle>(handle), tamper_server_accept == JNI_TRUE);
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
-}
-
-extern "C" JNIEXPORT jobjectArray JNICALL
-Java_org_fpsproject_client_nativebridge_FpsNative_nativeDrainNativeEvents(JNIEnv* env, jobject /* self */, jlong handle, jint max_events) {
-    const auto events = fps::android_native::drain_native_events(static_cast<fps::android_native::NativeRuntimeHandle>(handle), static_cast<int>(max_events));
-    return fps::android_jni::native_event_array(env, events);
 }
 
 extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_FpsNativeTestHooks_nativeInstallTunPacketCaptureSinkForTest(
@@ -343,3 +346,4 @@ extern "C" JNIEXPORT jobject JNICALL Java_org_fpsproject_client_nativebridge_Fps
     );
     return fps::android_jni::runtime_snapshot_object(env, snapshot);
 }
+#endif

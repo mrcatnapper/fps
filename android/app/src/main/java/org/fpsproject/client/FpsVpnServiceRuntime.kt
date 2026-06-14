@@ -18,26 +18,39 @@ internal fun interface FpsVpnServiceRunnerFactory {
 
 internal class FpsVpnServiceRuntime(
     private val runnerFactory: FpsVpnServiceRunnerFactory,
+    private val statusNotifier: FpsVpnStatusNotifier = NoopFpsVpnStatusNotifier,
 ) {
     private var runner: FpsVpnServiceRunner? = null
 
     fun startProfile(profileText: String): CoordinatedNativeVpnRunnerState {
         val next = runnerFactory.create(profileText)
+        statusNotifier.show(FpsVpnStatusSnapshot.starting())
         runner?.close()
         runner = next
         next.start()
-        return next.snapshot().state
+        val snapshot = next.snapshot()
+        statusNotifier.show(FpsVpnStatusSnapshot.fromRunner(snapshot))
+        return snapshot.state
     }
 
     fun stop(): VpnRuntimeState {
-        val active = runner ?: return VpnRuntimeState.STOPPED
+        val active = runner
+        if (active == null) {
+            statusNotifier.clear()
+            return VpnRuntimeState.STOPPED
+        }
         runner = null
         active.close()
+        statusNotifier.clear()
         return VpnRuntimeState.STOPPED
     }
 
     fun runnerSnapshot(): CoordinatedNativeVpnRunnerSnapshot {
-        return runner?.snapshot() ?: CoordinatedNativeVpnRunnerSnapshot.stopped()
+        val snapshot = runner?.snapshot() ?: CoordinatedNativeVpnRunnerSnapshot.stopped()
+        if (runner != null) {
+            statusNotifier.show(FpsVpnStatusSnapshot.fromRunner(snapshot))
+        }
+        return snapshot
     }
 
     fun nativeSnapshot(): NativeVpnRuntimeSnapshot {

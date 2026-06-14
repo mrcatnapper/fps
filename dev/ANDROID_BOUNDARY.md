@@ -135,6 +135,11 @@ devices and future Gradle-managed emulators.
   options derived from the validated Android profile, emits metadata-only
   encrypted `tun_lease` events and reports tampered server-accept failure
   without registering a lease.
+- Hardened the Android native production surface. Debug/instrumented JNI hooks
+  are built only with `FPS_ANDROID_ENABLE_TEST_HOOKS`, release native builds are
+  checked for forbidden test exports, and the runtime registry now holds the
+  global mutex only for map lookup/removal. Runtime calls are serialized by a
+  per-runtime entry mutex outside the global registry lock.
 - Extended the Android native smoke to compile reusable protocol codec/crypto,
   generic covert datagram transport and TLS/TCP carrier session sources with
   Android OpenSSL and Boost.Asio.
@@ -163,25 +168,26 @@ product flow.
      reconnect/backoff, fail-closed branches and observable counters, not
      individual helper arithmetic.
 
-2. **Harden the API surface after the product path exists.**
-   - Gate debug-only JNI hooks out of production variants.
-   - Reduce native runtime registry mutex scope so registry locks are not held
-     while runtime methods post to Asio, wait on futures or stop threads.
-   - Add UI/foreground-service/status work only after the headless path can
-     authenticate, lease, establish TUN and move packets both ways.
+2. **Harden the next product surface.**
+   - Minimal UI/foreground-service/status work exists.
+   - Keep raw HTTPS GET as the only internal app-owned carrier for the first
+     versions and focus next on HTTPS cover hardening plus static
+     shaper-profile UX. WSS remains probe-support/future external-carrier
+     material, not another internal wire carrier path.
 
 ## Accepted Android Direction
 
-- First Android beta should use app-owned carrier sessions. The Android app
-  opens and maintains the cover connections itself instead of relying on a
+- First Android beta should use app-owned HTTPS carrier sessions. The Android
+  app opens and maintains the cover connections itself instead of relying on a
   browser/game/third-party app to create them.
 - Carrier behavior is app-configurable at the Android profile/runtime layer.
-  The current headless model supports HTTPS GET and WSS metadata, fake
+  The current headless model supports HTTPS GET and WSS probe metadata, fake
   transport coverage, live OkHttp cover traffic support, first `VpnService` TUN
   fd ownership and a native raw TLS/TCP bridge with real Zero-RTT lease
   delivery. Native TUN movement is bidirectional through the shared
-  `CovertDatagramTransport`; the next step is one lifecycle coordinator, not
-  changing protocol core and not adding another wire carrier path.
+  `CovertDatagramTransport`; the next steps are HTTPS cover hardening and
+  shaper-profile UX, not changing protocol core and not adding another internal
+  wire carrier path.
 - Use the platform socket-protection hook before Android carrier `connect`.
   Linux remains no-op; Android native sockets now use a two-phase fd hook, and
   OkHttp-owned sockets use the Java `Socket` hook before the socket can be

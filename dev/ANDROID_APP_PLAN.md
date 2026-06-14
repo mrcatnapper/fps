@@ -22,10 +22,12 @@ when Android test infrastructure or emulator strategy changes.
 - Keep the application headless while product behavior is still incomplete.
   The next Android milestone is not more isolated smoke coverage; it is a
   production-like runtime path that composes the existing pieces into one VPN
-  lifecycle. The current raw carrier bridge now runs real client-side Zero-RTT
-  over `TlsTcpCarrierSession` and emits encrypted lease metadata, but native
-  TUN read/policy/enqueue exists only in the outbound direction and
-  `FpsVpnService` does not yet drive carrier/lease/TUN/policy loops by itself.
+  lifecycle. The current service-owned runner drives native carrier auth,
+  encrypted lease delivery, TUN establishment, split-tunnel policy and
+  bidirectional datagram/TUN movement for a raw HTTPS cover profile and exposes
+  a minimal foreground/status surface. The next product gaps are HTTPS cover
+  hardening, static shaper-profile UX and later external-carrier design, not
+  another internal carrier protocol.
 
 ## Implemented Headless Core Slice
 
@@ -120,6 +122,11 @@ Delivered:
   TLS HTTPS GET keep-alive loop through the native loopback bridge and preserves
   raw TLS bytes for `TlsTcpCarrierSession`. It is separate from OkHttp probes,
   which still terminate TLS and remain health/probe support machinery.
+- Android release native builds exclude debug/instrumented JNI test hooks. The
+  release APK smoke verifies that `FpsNativeTestHooks` and auth/fake-carrier
+  test entrypoints are not exported by `libfps_android_native.so`. The native
+  runtime registry now copies a per-runtime entry under the global lock, then
+  serializes calls with the entry mutex after releasing the registry mutex.
 - Split-tunnel allowlist metadata is parsed into Kotlin and exercised through
   a fail-closed policy decision API backed by the platform UID lookup hook.
 - Required verification remains Docker/JVM-first. Connected Android runtime
@@ -148,15 +155,23 @@ profile
 
 Tactical implementation order:
 
-1. **WSS local cover client.**
-   Add a raw WSS local cover mode only after the HTTPS GET loop is wired through
-   the coordinator/service path. It must still feed raw TLS bytes to the native
-   loopback bridge and must not reuse OkHttp as an FPS wire carrier.
+Completed product step:
 
-2. **Production surface cleanup.**
-   Gate debug/test-only JNI hooks, reduce native runtime registry lock scope,
-   and then add operator/UI-facing lifecycle/status features. Do this after the
-   headless product path works, so cleanup does not harden the wrong API shape.
+- **Foreground service and status UX.**
+  The smallest user-visible daemon surface exists: foreground notification,
+  start/stop/status runtime seam and non-secret error reporting.
+
+Remaining tactical implementation order:
+
+1. **HTTPS cover hardening and shaper profile UX.**
+   Keep the first app-owned internal carrier as raw HTTPS GET through the
+   native loopback bridge. Add only the profile/config pieces needed to make
+   static shaper CDF use practical on Android.
+
+2. **External carrier design.**
+   After the HTTPS path is stable, design external carrier support explicitly
+   instead of adding raw WSS as a second internal carrier. That design must
+   revisit DNS mapping, VPN-loop prevention and Android per-app routing.
 
 Testing expectation:
 
@@ -209,35 +224,40 @@ tools/run_android_checks.sh --docker
 ```
 
 `Dockerfile.android` is a CI/build image, not an Android emulator image and not
-the Linux product runtime image. It installs the Android SDK/NDK and Android
-OpenSSL triplets, then runs the host Android checks inside the container.
-Outside Docker, `tools/run_android_checks.sh` defaults to this Docker path; host
-SDK use must be requested explicitly with `--host`. The source-free
-`android-gradle-base` stage owns SDK/NDK/vcpkg plus Gradle dependency cache;
-the final `ci` stage is the only Android stage that copies the whole
-repository.
+the Linux product runtime image. Its source-free `android-gradle-base` stage
+installs the Android SDK/NDK, Android OpenSSL triplets and Gradle dependency
+cache. Outside Docker, `tools/run_android_checks.sh` defaults to building that
+base image and running host Android checks with the current workspace
+bind-mounted; host SDK use must be requested explicitly with `--host`. The final
+source-containing `ci` stage is kept only for explicit image-shape experiments.
 
 Post-JVM runtime checks use `Dockerfile.android-emulator`, a heavier child image
 that adds the Android emulator and the API 30 AOSP ATD x86_64 system image. Run
 it explicitly with `tools/run_android_checks.sh --docker-managed-device` on
-hosts where `/dev/kvm` can be passed through to Docker. For repeated local
-runs after the images have already been built, set
-`FPS_ANDROID_REUSE_DOCKER_IMAGE=1` to rerun the checks without rebuilding the
-base/emulator images. The emulator image inherits from the source-free
+hosts where `/dev/kvm` can be passed through to Docker. Repeated local runs
+reuse the default `fps:android-ci-base` and `fps:android-emulator-ci` tags by
+default and build only missing images. Set
+`FPS_ANDROID_FORCE_DOCKER_REBUILD=1` only after Dockerfile layer, apt/sdk
+package or base-image changes. The emulator image inherits from the source-free
 `android-gradle-base` image and receives the current source tree through the
 test container bind mount, so ordinary source edits do not force the
-emulator/system-image layers to rebuild.
+emulator/system-image layers to rebuild. Use
+`tools/run_android_checks.sh --clean-images` for allowlisted Android image
+cleanup instead of broad Docker prunes or pre-build tag deletion; it preserves
+cache tags unless `FPS_ANDROID_CLEAN_TAGS=1` is set.
 
 ## Accepted Runtime Direction
 
 - The first Android beta uses app-owned carrier sessions. The app opens and
-  maintains HTTPS/WSS carrier traffic itself.
+  maintains HTTPS carrier traffic itself.
 - Carrier/cover requests are configured at the Android layer: for example a
-  periodic HTTPS GET or a WSS stream. The existing OkHttp code is support
-  machinery for app-owned cover traffic only. It must not become a direct FPS
-  wire carrier because OkHttp terminates TLS and does not expose raw TLS record
-  bytes. Production cover traffic should feed the native loopback bridge so
-  `TlsTcpCarrierSession` remains the single FPS wire implementation.
+  periodic HTTPS GET. The existing OkHttp HTTPS/WSS code is support machinery
+  for app-owned cover probes only. It must not become a direct FPS wire carrier
+  because OkHttp terminates TLS and does not expose raw TLS record bytes.
+  Production cover traffic should feed the native loopback bridge so
+  `TlsTcpCarrierSession` remains the single FPS wire implementation. WSS may
+  remain as probe metadata and future external-carrier research, but it is not
+  an internal Android product carrier for the first versions.
 - Real FPS carrier traffic must use native raw TCP/TLS stream handling through
   `TlsTcpCarrierSession`. Do not extend the OkHttp probe path into a second FPS
   wire protocol. The native runtime already exposes the first protected raw TCP
