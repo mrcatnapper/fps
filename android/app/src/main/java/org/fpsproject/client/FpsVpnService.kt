@@ -16,6 +16,7 @@ class FpsVpnService : VpnService() {
     companion object {
         const val ACTION_START = "org.fpsproject.client.action.START"
         const val ACTION_STOP = "org.fpsproject.client.action.STOP"
+        const val ACTION_CLEAR_PROFILE = "org.fpsproject.client.action.CLEAR_PROFILE"
         const val EXTRA_PROFILE = "org.fpsproject.client.extra.PROFILE"
     }
 
@@ -31,6 +32,7 @@ class FpsVpnService : VpnService() {
                 )
             },
             statusNotifier = AndroidFpsVpnStatusNotifier(this),
+            profileRepository = SharedPreferencesFpsVpnProfileRepository(this),
         )
     }
 
@@ -43,10 +45,18 @@ class FpsVpnService : VpnService() {
             }
             ACTION_START, null -> {
                 val profileText = intent?.getStringExtra(EXTRA_PROFILE)
-                if (profileText != null) {
+                val state = if (profileText != null) {
                     startProfile(profileText)
+                } else {
+                    startSavedProfile()
                 }
-                return START_STICKY
+                return if (state == CoordinatedNativeVpnRunnerState.FAILED) START_NOT_STICKY else START_STICKY
+            }
+            ACTION_CLEAR_PROFILE -> {
+                stopRuntime()
+                serviceRuntime.clearProfile()
+                stopSelf(startId)
+                return START_NOT_STICKY
             }
             else -> return START_NOT_STICKY
         }
@@ -63,7 +73,11 @@ class FpsVpnService : VpnService() {
     }
 
     internal fun startProfile(profileText: String): CoordinatedNativeVpnRunnerState {
-        return serviceRuntime.startProfile(profileText)
+        return serviceRuntime.saveAndStartProfile(profileText)
+    }
+
+    internal fun startSavedProfile(): CoordinatedNativeVpnRunnerState {
+        return serviceRuntime.startSavedProfile()
     }
 
     internal fun stopRuntime(): VpnRuntimeState {

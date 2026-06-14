@@ -120,6 +120,7 @@ class VpnServiceEstablishInstrumentedTest {
     fun coordinatedProductFlowAuthenticatesLeaseAndAttachesRealVpnTun() {
         TestVpnServiceProbe.reset()
         val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val profileText = productFlowProfileJson(server.localPort)
         val peerResult = AtomicReference<String?>()
         val peerError = AtomicReference<Throwable?>()
         val accepted = thread(start = true, name = "fps-test-zrt-server-peer") {
@@ -144,7 +145,18 @@ class VpnServiceEstablishInstrumentedTest {
         }
 
         try {
-            targetContext.startActivity(productFlowIntent(server.localPort))
+            targetContext.startService(Intent(targetContext, TestVpnEstablishService::class.java).apply {
+                action = TestVpnEstablishService.ACTION_CLEAR_PROFILE
+            })
+            targetContext.startService(Intent(targetContext, TestVpnEstablishService::class.java).apply {
+                action = TestVpnEstablishService.ACTION_SAVE_PROFILE
+                putExtra(TestVpnHarnessActivity.EXTRA_PROFILE, profileText)
+            })
+            val saved = TestVpnServiceProbe.awaitProfileSaved(timeoutMs = 10_000)
+            assertNotNull("Profile save result was not reported", saved)
+            assertTrue("Profile save failed: ${saved!!.error}", saved.success)
+
+            targetContext.startActivity(storedProductFlowIntent())
             acceptVpnPermissionDialogIfPresent()
 
             val permission = TestVpnServiceProbe.awaitPermission(timeoutMs = 15_000)
@@ -184,6 +196,9 @@ class VpnServiceEstablishInstrumentedTest {
             assertFalse(stopped.runtime.native.tunPumpRunning)
             assertFalse(stopped.runtime.vpn.tun.fdPresent)
         } finally {
+            targetContext.startService(Intent(targetContext, TestVpnEstablishService::class.java).apply {
+                action = TestVpnEstablishService.ACTION_CLEAR_PROFILE
+            })
             server.close()
             accepted.join(1_000)
         }
@@ -207,11 +222,10 @@ class VpnServiceEstablishInstrumentedTest {
         }
     }
 
-    private fun productFlowIntent(serverPort: Int): Intent {
+    private fun storedProductFlowIntent(): Intent {
         return Intent(targetContext, TestVpnHarnessActivity::class.java).apply {
-            action = TestVpnHarnessActivity.ACTION_COORDINATED_PRODUCT_FLOW
+            action = TestVpnHarnessActivity.ACTION_COORDINATED_PRODUCT_FLOW_STORED
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            putExtra(TestVpnHarnessActivity.EXTRA_PROFILE, productFlowProfileJson(serverPort))
         }
     }
 

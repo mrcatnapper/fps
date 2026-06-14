@@ -222,9 +222,10 @@ release APKs, and assembles the instrumented test APK. It does not require an
 emulator. The release APK smoke checks the release native library's exported
 symbols so debug-only JNI test hooks cannot become an accidental production
 dependency. The JVM tests cover Android client-profile
-parsing, fail-closed split-tunnel policy, the headless VPN runtime state machine
-and the headless carrier probe runner with fake platform hooks/transports. They
-also cover profile-driven carrier probe planning,
+parsing, private profile persistence/start-from-stored-profile behavior,
+fail-closed split-tunnel policy, the headless VPN runtime state machine and the
+headless carrier probe runner with fake platform hooks/transports. They also
+cover profile-driven carrier probe planning,
 underlying-network endpoint resolution, socket-protection ordering,
 reconnect/backoff behavior, UID allowlist decisions and the live OkHttp
 HTTPS/WSS carrier probe transport factory through MockWebServer. They also
@@ -304,9 +305,9 @@ smoke requests consent through the system dialog when needed, verifies a real
 TUN fd, routes that fd through `HeadlessNativeVpnRuntime`, starts the native TUN
 pump and closes it through explicit stop/debug-revoke paths. It also includes a
 small local product-flow smoke for the service-owned coordinator: protected raw
-socket connect, native TLS/TCP bridge auth, encrypted lease delivery, real TUN
-fd attach and native pump startup. This lane is opt-in and is not part of
-ordinary PR CI until repeated local runs prove it stable.
+socket connect from a stored profile, native TLS/TCP bridge auth, encrypted
+lease delivery, real TUN fd attach and native pump startup. This lane is opt-in
+and is not part of ordinary PR CI until repeated local runs prove it stable.
 
 GitHub Actions also has a manual-only `Android Emulator` workflow that runs the
 same `--docker-managed-device` command on demand. It is intentionally not a

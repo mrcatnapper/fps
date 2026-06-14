@@ -4,6 +4,59 @@
 
 ## 2026-06-14
 
+### Android profile persistence and stored-profile start
+
+Goal:
+
+- Close the next Android product-flow gap after managed-device coordinator
+  smoke: let the app save a validated client profile and start `FpsVpnService`
+  from that stored profile without carrying the full profile in every start
+  intent.
+
+Decisions:
+
+- Use private app `SharedPreferences` as the first storage backend. This is a
+  UX/runtime wiring increment, not a device-compromise resistance claim.
+- Store validated normalized JSON. Both raw JSON and `fps://v1` input are
+  accepted through the existing Android profile parser.
+- Treat missing/corrupted stored profiles as safe metadata-only failures
+  (`profile_missing` / `profile_invalid`) and do not create a runner/native
+  runtime for those paths.
+- `ACTION_STOP` stops the runtime but preserves the stored profile. Deletion is
+  explicit.
+- Extend the debug managed-device product-flow harness to save the profile
+  first and then start from storage, while keeping the synthetic TLS cover
+  local and deterministic.
+
+Completed:
+
+- Added `FpsVpnProfileRepository` with a validating repository and production
+  `SharedPreferences` backend.
+- Added `AndroidClientProfileParser.normalizeJsonText(...)` so storage can
+  decode URI input and validate the complete client profile contract before
+  saving.
+- Wired `FpsVpnService` to save explicit profiles and start from the stored
+  profile when `ACTION_START` has no profile extra.
+- Added JVM tests for repository save/load/clear, URI decoding, overwrite
+  protection on invalid input, missing/invalid stored-profile start failures
+  and stop-without-clear behavior.
+- Updated the debug Android harness and managed-device product-flow test to
+  exercise stored-profile startup.
+- Updated Android planning/testing docs and beta status.
+
+Verification:
+
+- `tools/run_android_checks.sh --docker` passed before and after final
+  self-review fixes.
+- `tools/run_android_checks.sh --docker-managed-device` passed before and after
+  final test cleanup, 28/28 managed-device tests.
+- `python3 -m py_compile tests/integration/*.py tools/*.py` passed.
+- `bash -n tools/*.sh docker/*.sh` passed.
+- `cmake --build build -j 2` passed.
+- `ctest --test-dir build -L local --output-on-failure` passed, 16/16 tests.
+- `ctest --test-dir build --output-on-failure` passed, 16/16 tests.
+- `git diff --check` passed.
+
 ### Android managed-device product-flow smoke
 
 Goal:

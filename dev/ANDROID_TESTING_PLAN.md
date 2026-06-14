@@ -282,10 +282,10 @@ Prioritize these emulator/device scenarios in order:
   the native/JNI smoke and debug-only real `VpnService`
   consent/establish/full-runtime fd attach/pump/stop/revoke smoke.
 - It now also validates the first service-owned coordinator product flow:
-  protected raw socket connect, native bridge auth, encrypted TUN lease, real
-  TUN fd attach and native pump startup. The local cover side uses synthetic
-  TLS Application Data records so the test remains deterministic and does not
-  depend on external origins.
+  stored-profile startup, protected raw socket connect, native bridge auth,
+  encrypted TUN lease, real TUN fd attach and native pump startup. The local
+  cover side uses synthetic TLS Application Data records so the test remains
+  deterministic and does not depend on external origins.
 - It also covers native raw TCP carrier socket lifecycle through a local
   loopback server: native exposes the pre-connect fd, Kotlin has a chance to
   call the protect hook, native connects only after positive protection and
@@ -311,8 +311,9 @@ Prioritize these emulator/device scenarios in order:
    WSS remains probe-support code and future external-carrier research; do not
    add a raw WSS internal carrier unless the Android product direction changes
    explicitly.
-3. Add profile persistence/import/manual UX around the current headless service
-   path before widening carrier protocols.
+3. Profile persistence is now covered by JVM repository/runtime tests and by
+   the managed-device product-flow smoke. Add a minimal manual import/start/stop
+   surface around this stored-profile path before widening carrier protocols.
 4. Keep managed-device CI manual/scheduled until repeated runs show it is
    stable enough for PR gating, and add physical-device release validation for
    vendor VPN/background-network behavior.

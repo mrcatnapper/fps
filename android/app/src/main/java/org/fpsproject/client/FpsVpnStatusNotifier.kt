@@ -29,6 +29,11 @@ internal data class FpsVpnStatusSnapshot(
     companion object {
         fun starting() = FpsVpnStatusSnapshot(state = FpsVpnStatusState.STARTING)
 
+        fun failed(error: String) = FpsVpnStatusSnapshot(
+            state = FpsVpnStatusState.FAILED,
+            error = safeErrorName(error),
+        )
+
         fun stopped() = FpsVpnStatusSnapshot(state = FpsVpnStatusState.STOPPED)
 
         fun fromRunner(snapshot: CoordinatedNativeVpnRunnerSnapshot): FpsVpnStatusSnapshot {

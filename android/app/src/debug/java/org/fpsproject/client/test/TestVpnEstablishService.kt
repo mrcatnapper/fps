@@ -2,6 +2,7 @@ package org.fpsproject.client.test
 
 import android.content.Intent
 import android.net.VpnService
+import org.fpsproject.client.SharedPreferencesFpsVpnProfileRepository
 import org.fpsproject.client.VpnServicePlatformHooks
 import org.fpsproject.client.config.AndroidClientProfileParser
 import org.fpsproject.client.nativebridge.CoordinatedNativeVpnRunner
@@ -30,6 +31,8 @@ class TestVpnEstablishService : VpnService() {
             ACTION_ESTABLISH -> establishFromIntent(intent)
             ACTION_NATIVE_RUNTIME_START -> startNativeRuntimeFromIntent(intent)
             ACTION_COORDINATED_PRODUCT_FLOW_START -> startCoordinatedProductFlowFromIntent(intent)
+            ACTION_SAVE_PROFILE -> saveProfileFromIntent(intent)
+            ACTION_CLEAR_PROFILE -> clearProfile()
             ACTION_NATIVE_RUNTIME_STOP -> {
                 closeNativeRuntime(report = true)
                 closeProductFlow(report = true)
@@ -112,9 +115,8 @@ class TestVpnEstablishService : VpnService() {
         closeProductFlow(report = false)
         closeNativeRuntime(report = false)
         closeTun()
-        val profileText = intent.getStringExtra(TestVpnHarnessActivity.EXTRA_PROFILE)
+        val profileText = loadProfileFromIntentOrStorage(intent)
         if (profileText == null) {
-            TestVpnServiceProbe.reportProductFlowFailure("missing_profile", null)
             return
         }
         thread(start = true, name = "fps-test-product-flow") {
@@ -145,6 +147,41 @@ class TestVpnEstablishService : VpnService() {
                 )
             }
         }
+    }
+
+    private fun saveProfileFromIntent(intent: Intent) {
+        val profileText = intent.getStringExtra(TestVpnHarnessActivity.EXTRA_PROFILE)
+        if (profileText == null) {
+            TestVpnServiceProbe.reportProfileSaved(success = false, error = "missing_profile")
+            return
+        }
+        try {
+            SharedPreferencesFpsVpnProfileRepository(this).saveProfile(profileText)
+            TestVpnServiceProbe.reportProfileSaved(success = true, error = null)
+        } catch (_: RuntimeException) {
+            TestVpnServiceProbe.reportProfileSaved(success = false, error = "profile_invalid")
+        }
+    }
+
+    private fun clearProfile() {
+        SharedPreferencesFpsVpnProfileRepository(this).clearProfile()
+    }
+
+    private fun loadProfileFromIntentOrStorage(intent: Intent): String? {
+        val explicitProfile = intent.getStringExtra(TestVpnHarnessActivity.EXTRA_PROFILE)
+        if (explicitProfile != null) {
+            return explicitProfile
+        }
+        val storedProfile = try {
+            SharedPreferencesFpsVpnProfileRepository(this).loadProfile()
+        } catch (_: RuntimeException) {
+            TestVpnServiceProbe.reportProductFlowFailure("profile_invalid", null)
+            return null
+        }
+        if (storedProfile == null) {
+            TestVpnServiceProbe.reportProductFlowFailure("missing_profile", null)
+        }
+        return storedProfile
     }
 
     private fun closeNativeRuntime(report: Boolean) {
@@ -190,6 +227,8 @@ class TestVpnEstablishService : VpnService() {
         const val ACTION_NATIVE_RUNTIME_STOP = "org.fpsproject.client.test.action.NATIVE_RUNTIME_STOP"
         const val ACTION_NATIVE_RUNTIME_REVOKE = "org.fpsproject.client.test.action.NATIVE_RUNTIME_REVOKE"
         const val ACTION_COORDINATED_PRODUCT_FLOW_START = "org.fpsproject.client.test.action.COORDINATED_PRODUCT_FLOW_START"
+        const val ACTION_SAVE_PROFILE = "org.fpsproject.client.test.action.SAVE_PROFILE"
+        const val ACTION_CLEAR_PROFILE = "org.fpsproject.client.test.action.CLEAR_PROFILE"
 
         private const val PRODUCT_FLOW_POLL_COUNT = 100
         private const val PRODUCT_FLOW_POLL_INTERVAL_MS = 100L
